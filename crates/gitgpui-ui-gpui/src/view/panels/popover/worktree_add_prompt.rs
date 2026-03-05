@@ -44,8 +44,8 @@ pub(super) fn panel(
                         .child(this.worktree_path_input.clone()),
                 )
                 .child(
-                    zed::Button::new("worktree_browse", "Browse")
-                        .style(zed::ButtonStyle::Outlined)
+                    components::Button::new("worktree_browse", "Browse")
+                        .style(components::ButtonStyle::Outlined)
                         .on_click(theme, cx, |_this, _e, window, cx| {
                             cx.stop_propagation();
                             let view = cx.weak_entity();
@@ -103,8 +103,8 @@ pub(super) fn panel(
                 .items_center()
                 .justify_between()
                 .child(
-                    zed::Button::new("worktree_add_cancel", "Cancel")
-                        .style(zed::ButtonStyle::Outlined)
+                    components::Button::new("worktree_add_cancel", "Cancel")
+                        .style(components::ButtonStyle::Outlined)
                         .on_click(theme, cx, |this, _e, _w, cx| {
                             this.popover = None;
                             this.popover_anchor = None;
@@ -112,15 +112,15 @@ pub(super) fn panel(
                         }),
                 )
                 .child(
-                    zed::Button::new("worktree_add_go", "Add")
-                        .style(zed::ButtonStyle::Filled)
+                    components::Button::new("worktree_add_go", "Add")
+                        .style(components::ButtonStyle::Filled)
                         .on_click(theme, cx, move |this, _e, _w, cx| {
                             let folder = this
                                 .worktree_path_input
                                 .read_with(cx, |i, _| i.text().trim().to_string());
                             if folder.is_empty() {
                                 this.push_toast(
-                                    zed::ToastKind::Error,
+                                    components::ToastKind::Error,
                                     "Worktree folder is required".to_string(),
                                     cx,
                                 );

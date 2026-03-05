@@ -235,7 +235,7 @@ impl Render for RepoTabsBarView {
         let active_ix = active.and_then(|id| self.state.repos.iter().position(|r| r.id == id));
         let spinner = |id: (&'static str, u64), color: gpui::Rgba| svg_spinner(id, color, px(12.0));
 
-        let mut bar = zed::TabBar::new("repo_tab_bar");
+        let mut bar = components::TabBar::new("repo_tab_bar");
         for (ix, repo) in self.state.repos.iter().enumerate() {
             let repo_id = repo.id;
             let is_active = Some(repo_id) == active;
@@ -258,16 +258,16 @@ impl Render for RepoTabsBarView {
             let label_for_drag = label.clone();
 
             let position = if ix == 0 {
-                zed::TabPosition::First
+                components::TabPosition::First
             } else if ix + 1 == repos_len {
-                zed::TabPosition::Last
+                components::TabPosition::Last
             } else {
                 let ordering = match (is_active, active_ix) {
                     (true, _) => std::cmp::Ordering::Equal,
                     (false, Some(active_ix)) => ix.cmp(&active_ix),
                     (false, None) => std::cmp::Ordering::Equal,
                 };
-                zed::TabPosition::Middle(ordering)
+                components::TabPosition::Middle(ordering)
             };
 
             let tooltip: SharedString = repo.spec.workdir.display().to_string().into();
@@ -310,7 +310,7 @@ impl Render for RepoTabsBarView {
                     }
                 }));
 
-            let mut tab = zed::Tab::new(("repo_tab", repo_id.0))
+            let mut tab = components::Tab::new(("repo_tab", repo_id.0))
                 .selected(is_active)
                 .position(position);
             if show_close {
@@ -432,9 +432,9 @@ impl Render for RepoTabsBarView {
         let icon = |path: &'static str| svg_icon(path, theme.colors.accent, px(14.0));
 
         let root_view = self.root_view.clone();
-        let open_repo = zed::Button::new("open_repo", "")
+        let open_repo = components::Button::new("open_repo", "")
             .start_slot(icon("icons/folder.svg"))
-            .style(zed::ButtonStyle::Subtle)
+            .style(components::ButtonStyle::Subtle)
             .on_click(theme, cx, move |_this, _e, window, cx| {
                 let _ = root_view.update(cx, |root, cx| root.prompt_open_repo(window, cx));
             })
@@ -448,9 +448,9 @@ impl Render for RepoTabsBarView {
             }));
 
         let root_view = self.root_view.clone();
-        let clone_repo = zed::Button::new("clone_repo", "")
+        let clone_repo = components::Button::new("clone_repo", "")
             .start_slot(icon("icons/cloud.svg"))
-            .style(zed::ButtonStyle::Subtle)
+            .style(components::ButtonStyle::Subtle)
             .on_click(theme, cx, move |_this, e, window, cx| {
                 let _ = root_view.update(cx, |root, cx| {
                     root.open_popover_at(PopoverKind::CloneRepo, e.position(), window, cx);

@@ -23,9 +23,9 @@ pub(super) fn panel(
     let names = remotes.iter().map(|r| r.name.clone()).collect::<Vec<_>>();
 
     if let Some(search) = this.remote_picker_search_input.clone() {
-        zed::context_menu(
+        components::context_menu(
             theme,
-            zed::PickerPrompt::new(search)
+            components::PickerPrompt::new(search)
                 .items(items)
                 .empty_text("No remotes")
                 .max_height(px(260.0))

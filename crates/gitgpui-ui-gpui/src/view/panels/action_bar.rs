@@ -148,7 +148,12 @@ impl ActionBarView {
         });
     }
 
-    fn push_toast(&mut self, kind: zed::ToastKind, message: String, cx: &mut gpui::Context<Self>) {
+    fn push_toast(
+        &mut self,
+        kind: components::ToastKind,
+        message: String,
+        cx: &mut gpui::Context<Self>,
+    ) {
         let _ = self.root_view.update(cx, |root, cx| {
             root.push_toast(kind, message, cx);
         });
@@ -327,14 +332,14 @@ impl Render for ActionBarView {
         };
         let menu_selected_bg =
             with_alpha(theme.colors.accent, if theme.is_dark { 0.26 } else { 0.20 });
-        let mut pull_main = zed::Button::new("pull_main", "Pull")
+        let mut pull_main = components::Button::new("pull_main", "Pull")
             .borderless()
             .start_slot(if pull_loading {
                 spinner(("pull_spinner", active_repo_key), pull_color).into_any_element()
             } else {
                 icon("icons/arrow_down.svg", pull_color).into_any_element()
             })
-            .style(zed::ButtonStyle::Subtle)
+            .style(components::ButtonStyle::Subtle)
             .no_hover_border();
         if pull_count > 0 {
             pull_main = pull_main.end_slot(count_badge(pull_count, pull_color));
@@ -349,10 +354,10 @@ impl Render for ActionBarView {
         } else {
             icon_muted
         };
-        let pull_menu = zed::Button::new("pull_menu", "")
+        let pull_menu = components::Button::new("pull_menu", "")
             .borderless()
             .start_slot(icon("icons/chevron_down.svg", pull_menu_icon_color))
-            .style(zed::ButtonStyle::Subtle)
+            .style(components::ButtonStyle::Subtle)
             .no_hover_border()
             .selected(pull_picker_active)
             .selected_bg(menu_selected_bg);
@@ -360,7 +365,7 @@ impl Render for ActionBarView {
         let pull = div()
             .id("pull")
             .child(
-                zed::SplitButton::new(
+                components::SplitButton::new(
                     pull_main.on_click(theme, cx, |this, _e, _w, _cx| {
                         if let Some(repo_id) = this.active_repo_id() {
                             this.store.dispatch(Msg::Pull {
@@ -383,7 +388,7 @@ impl Render for ActionBarView {
                         },
                     ),
                 )
-                .style(zed::SplitButtonStyle::Outlined)
+                .style(components::SplitButtonStyle::Outlined)
                 .render(theme),
             )
             .on_hover(cx.listener(move |this, hovering: &bool, _w, cx| {
@@ -400,14 +405,14 @@ impl Render for ActionBarView {
         } else {
             icon_muted
         };
-        let mut push_main = zed::Button::new("push_main", "Push")
+        let mut push_main = components::Button::new("push_main", "Push")
             .borderless()
             .start_slot(if push_loading {
                 spinner(("push_spinner", active_repo_key), push_color).into_any_element()
             } else {
                 icon("icons/arrow_up.svg", push_color).into_any_element()
             })
-            .style(zed::ButtonStyle::Subtle)
+            .style(components::ButtonStyle::Subtle)
             .no_hover_border();
         if push_count > 0 {
             push_main = push_main.end_slot(count_badge(push_count, push_color));
@@ -422,10 +427,10 @@ impl Render for ActionBarView {
         } else {
             icon_muted
         };
-        let push_menu = zed::Button::new("push_menu", "")
+        let push_menu = components::Button::new("push_menu", "")
             .borderless()
             .start_slot(icon("icons/chevron_down.svg", push_menu_icon_color))
-            .style(zed::ButtonStyle::Subtle)
+            .style(components::ButtonStyle::Subtle)
             .no_hover_border()
             .selected(push_picker_active)
             .selected_bg(menu_selected_bg);
@@ -433,7 +438,7 @@ impl Render for ActionBarView {
         let push = div()
             .id("push")
             .child(
-                zed::SplitButton::new(
+                components::SplitButton::new(
                     push_main.on_click(theme, cx, |this, e, window, cx| {
                         let Some(repo) = this.active_repo() else {
                             return;
@@ -480,7 +485,7 @@ impl Render for ActionBarView {
                             }
 
                             this.push_toast(
-                                zed::ToastKind::Error,
+                                components::ToastKind::Error,
                                 "Cannot push: no remotes configured".to_string(),
                                 cx,
                             );
@@ -503,7 +508,7 @@ impl Render for ActionBarView {
                         },
                     ),
                 )
-                .style(zed::SplitButtonStyle::Outlined)
+                .style(components::SplitButtonStyle::Outlined)
                 .render(theme),
             )
             .on_hover(cx.listener(move |this, hovering: &bool, _w, cx| {
@@ -520,9 +525,9 @@ impl Render for ActionBarView {
             .active_context_menu_invoker
             .as_ref()
             .is_some_and(|id| id.as_ref() == stash_prompt_invoker.as_ref());
-        let stash = zed::Button::new("stash", "Stash")
+        let stash = components::Button::new("stash", "Stash")
             .start_slot(icon("icons/box.svg", icon_primary))
-            .style(zed::ButtonStyle::Outlined)
+            .style(components::ButtonStyle::Outlined)
             .selected(stash_prompt_active)
             .selected_bg(menu_selected_bg)
             .disabled(!can_stash)
@@ -548,9 +553,9 @@ impl Render for ActionBarView {
             .active_context_menu_invoker
             .as_ref()
             .is_some_and(|id| id.as_ref() == create_branch_invoker.as_ref());
-        let create_branch = zed::Button::new("create_branch", "Branch")
+        let create_branch = components::Button::new("create_branch", "Branch")
             .start_slot(icon("icons/git_branch.svg", icon_primary))
-            .style(zed::ButtonStyle::Outlined)
+            .style(components::ButtonStyle::Outlined)
             .selected(create_branch_active)
             .selected_bg(menu_selected_bg)
             .on_click_with_bounds(theme, cx, move |this, _e, bounds, window, cx| {
@@ -597,8 +602,8 @@ impl Render for ActionBarView {
                                         .child("MERGING"),
                                 )
                                 .child(
-                                    zed::Button::new("abort_merge", "Abort merge")
-                                        .style(zed::ButtonStyle::Danger)
+                                    components::Button::new("abort_merge", "Abort merge")
+                                        .style(components::ButtonStyle::Danger)
                                         .on_click(theme, cx, |this, e: &ClickEvent, window, cx| {
                                             if let Some(repo_id) = this.active_repo_id() {
                                                 this.open_popover_at(

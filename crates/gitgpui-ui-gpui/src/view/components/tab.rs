@@ -10,7 +10,7 @@ pub enum TabPosition {
     Middle(Ordering),
     Last,
 }
-/// Ported/adapted from Zed's `ui::Tab`.
+
 pub struct Tab {
     div: Stateful<Div>,
     selected: bool,

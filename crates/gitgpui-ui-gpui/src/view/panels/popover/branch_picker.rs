@@ -16,7 +16,7 @@ pub(super) fn panel(this: &mut PopoverHost, cx: &mut gpui::Context<PopoverHost>)
                         .collect::<Vec<SharedString>>();
 
                     menu = menu.child(
-                        zed::PickerPrompt::new(search)
+                        components::PickerPrompt::new(search)
                             .items(items)
                             .empty_text("No branches")
                             .max_height(px(240.0))
@@ -35,7 +35,7 @@ pub(super) fn panel(this: &mut PopoverHost, cx: &mut gpui::Context<PopoverHost>)
                         let name = branch.name.clone();
                         let label: SharedString = name.clone().into();
                         menu = menu.child(
-                            zed::context_menu_entry(
+                            components::context_menu_entry(
                                 ("branch_item", ix),
                                 theme,
                                 false,
@@ -61,16 +61,18 @@ pub(super) fn panel(this: &mut PopoverHost, cx: &mut gpui::Context<PopoverHost>)
                 }
             }
             Loadable::Loading => {
-                menu = menu.child(zed::context_menu_label(theme, "Loading"));
+                menu = menu.child(components::context_menu_label(theme, "Loading"));
             }
             Loadable::Error(e) => {
-                menu = menu.child(zed::context_menu_label(theme, e.clone()));
+                menu = menu.child(components::context_menu_label(theme, e.clone()));
             }
             Loadable::NotLoaded => {
-                menu = menu.child(zed::context_menu_label(theme, "Not loaded"));
+                menu = menu.child(components::context_menu_label(theme, "Not loaded"));
             }
         }
     }
 
-    zed::context_menu(theme, menu).w(px(420.0)).max_w(px(820.0))
+    components::context_menu(theme, menu)
+        .w(px(420.0))
+        .max_w(px(820.0))
 }

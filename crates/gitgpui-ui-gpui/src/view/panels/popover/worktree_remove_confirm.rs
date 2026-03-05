@@ -38,8 +38,8 @@ pub(super) fn panel(
                 .items_center()
                 .justify_between()
                 .child(
-                    zed::Button::new("worktree_remove_cancel", "Cancel")
-                        .style(zed::ButtonStyle::Outlined)
+                    components::Button::new("worktree_remove_cancel", "Cancel")
+                        .style(components::ButtonStyle::Outlined)
                         .on_click(theme, cx, |this, _e, _w, cx| {
                             this.popover = None;
                             this.popover_anchor = None;
@@ -47,8 +47,8 @@ pub(super) fn panel(
                         }),
                 )
                 .child(
-                    zed::Button::new("worktree_remove_go", "Remove")
-                        .style(zed::ButtonStyle::Danger)
+                    components::Button::new("worktree_remove_go", "Remove")
+                        .style(components::ButtonStyle::Danger)
                         .on_click(theme, cx, move |this, _e, _w, cx| {
                             this.store.dispatch(Msg::RemoveWorktree {
                                 repo_id,

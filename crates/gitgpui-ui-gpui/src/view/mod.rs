@@ -1,4 +1,4 @@
-use crate::{theme::AppTheme, zed_port as zed};
+use crate::theme::AppTheme;
 use gitgpui_core::diff::{AnnotatedDiffLine, annotate_unified};
 use gitgpui_core::domain::{
     Branch, Commit, CommitId, DiffArea, DiffTarget, FileStatus, FileStatusKind, RepoStatus, Tag,
@@ -35,6 +35,7 @@ mod branch_sidebar;
 mod caches;
 mod chrome;
 mod color;
+pub(crate) mod components;
 pub(crate) mod conflict_resolver;
 mod date_time;
 mod diff_navigation;
@@ -385,8 +386,8 @@ struct DiffTextHitbox {
 #[derive(Clone)]
 struct ToastState {
     id: u64,
-    kind: zed::ToastKind,
-    input: Entity<zed::TextInput>,
+    kind: components::ToastKind,
+    input: Entity<components::TextInput>,
     is_code_message: bool,
     ttl: Option<Duration>,
 }
@@ -1016,7 +1017,7 @@ pub struct GitGpuiView {
     timezone: Timezone,
 
     open_repo_panel: bool,
-    open_repo_input: Entity<zed::TextInput>,
+    open_repo_input: Entity<components::TextInput>,
 
     hover_resize_edge: Option<ResizeEdge>,
 
@@ -1028,7 +1029,7 @@ pub struct GitGpuiView {
     pending_pull_reconcile_prompt: Option<RepoId>,
     pending_force_delete_branch_prompt: Option<(RepoId, String)>,
 
-    error_banner_input: Entity<zed::TextInput>,
+    error_banner_input: Entity<components::TextInput>,
     active_context_menu_invoker: Option<SharedString>,
 }
 
@@ -1334,8 +1335,8 @@ impl GitGpuiView {
         };
 
         let open_repo_input = cx.new(|cx| {
-            zed::TextInput::new(
-                zed::TextInputOptions {
+            components::TextInput::new(
+                components::TextInputOptions {
                     placeholder: "/path/to/repo".into(),
                     multiline: false,
                     read_only: false,
@@ -1348,8 +1349,8 @@ impl GitGpuiView {
         });
 
         let error_banner_input = cx.new(|cx| {
-            zed::TextInput::new(
-                zed::TextInputOptions {
+            components::TextInput::new(
+                components::TextInputOptions {
                     placeholder: "".into(),
                     multiline: true,
                     read_only: true,
@@ -1601,7 +1602,12 @@ impl GitGpuiView {
         rows
     }
 
-    fn push_toast(&mut self, kind: zed::ToastKind, message: String, cx: &mut gpui::Context<Self>) {
+    fn push_toast(
+        &mut self,
+        kind: components::ToastKind,
+        message: String,
+        cx: &mut gpui::Context<Self>,
+    ) {
         self.toast_host
             .update(cx, |host, cx| host.push_toast(kind, message, cx));
     }
@@ -1793,8 +1799,8 @@ impl Render for GitGpuiView {
                 input.set_read_only(true, cx);
             });
 
-            let dismiss = zed::Button::new("repo_error_banner_close", "✕")
-                .style(zed::ButtonStyle::Transparent)
+            let dismiss = components::Button::new("repo_error_banner_close", "✕")
+                .style(components::ButtonStyle::Transparent)
                 .on_click(theme, cx, move |this, _e, _w, cx| {
                     this.store.dispatch(Msg::DismissRepoError { repo_id });
                     cx.notify();

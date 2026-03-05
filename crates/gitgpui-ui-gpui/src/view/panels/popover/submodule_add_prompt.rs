@@ -61,8 +61,8 @@ pub(super) fn panel(
                 .items_center()
                 .justify_between()
                 .child(
-                    zed::Button::new("submodule_add_cancel", "Cancel")
-                        .style(zed::ButtonStyle::Outlined)
+                    components::Button::new("submodule_add_cancel", "Cancel")
+                        .style(components::ButtonStyle::Outlined)
                         .on_click(theme, cx, |this, _e, _w, cx| {
                             this.popover = None;
                             this.popover_anchor = None;
@@ -70,8 +70,8 @@ pub(super) fn panel(
                         }),
                 )
                 .child(
-                    zed::Button::new("submodule_add_go", "Add")
-                        .style(zed::ButtonStyle::Filled)
+                    components::Button::new("submodule_add_go", "Add")
+                        .style(components::ButtonStyle::Filled)
                         .on_click(theme, cx, move |this, _e, _w, cx| {
                             let url = this
                                 .submodule_url_input
@@ -81,7 +81,7 @@ pub(super) fn panel(
                                 .read_with(cx, |i, _| i.text().trim().to_string());
                             if url.is_empty() || path_text.is_empty() {
                                 this.push_toast(
-                                    zed::ToastKind::Error,
+                                    components::ToastKind::Error,
                                     "Submodule URL and path are required".to_string(),
                                     cx,
                                 );

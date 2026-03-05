@@ -9,9 +9,9 @@ pub(super) fn panel(
     let theme = this.theme;
 
     let Some(repo) = this.state.repos.iter().find(|r| r.id == repo_id) else {
-        return zed::context_menu(
+        return components::context_menu(
             theme,
-            zed::context_menu_label(theme, "Repository not found"),
+            components::context_menu_label(theme, "Repository not found"),
         )
         .w(px(520.0))
         .max_w(px(820.0));
@@ -20,25 +20,28 @@ pub(super) fn panel(
     let branches = match &repo.remote_branches {
         Loadable::Ready(branches) => branches,
         Loadable::Loading => {
-            return zed::context_menu(
+            return components::context_menu(
                 theme,
-                zed::context_menu_label(theme, "Loading remote branches"),
+                components::context_menu_label(theme, "Loading remote branches"),
             )
             .w(px(520.0))
             .max_w(px(820.0));
         }
         Loadable::NotLoaded => {
-            return zed::context_menu(
+            return components::context_menu(
                 theme,
-                zed::context_menu_label(theme, "Remote branches not loaded"),
+                components::context_menu_label(theme, "Remote branches not loaded"),
             )
             .w(px(520.0))
             .max_w(px(820.0));
         }
         Loadable::Error(e) => {
-            return zed::context_menu(theme, zed::context_menu_label(theme, e.clone()))
-                .w(px(520.0))
-                .max_w(px(820.0));
+            return components::context_menu(
+                theme,
+                components::context_menu_label(theme, e.clone()),
+            )
+            .w(px(520.0))
+            .max_w(px(820.0));
         }
     };
 
@@ -59,9 +62,9 @@ pub(super) fn panel(
     let items: Vec<SharedString> = entries.iter().map(|(label, ..)| label.clone()).collect();
 
     if let Some(search) = this.branch_picker_search_input.clone() {
-        zed::context_menu(
+        components::context_menu(
             theme,
-            zed::PickerPrompt::new(search)
+            components::PickerPrompt::new(search)
                 .items(items)
                 .empty_text("No remote branches")
                 .max_height(px(260.0))

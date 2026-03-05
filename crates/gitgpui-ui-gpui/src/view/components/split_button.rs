@@ -10,9 +10,6 @@ pub enum SplitButtonStyle {
     Outlined,
 }
 
-/// A button composed of a primary action and a secondary affordance (typically a menu).
-///
-/// Ported/adapted from Zed's `ui::SplitButton`.
 pub struct SplitButton {
     left: AnyElement,
     right: AnyElement,

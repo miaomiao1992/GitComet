@@ -9,9 +9,9 @@ pub(super) fn panel(
 
     if let Some(repo) = this.state.repos.iter().find(|r| r.id == repo_id) {
         match &repo.worktrees {
-            Loadable::Loading => zed::context_menu_label(theme, "Loading"),
-            Loadable::NotLoaded => zed::context_menu_label(theme, "Not loaded"),
-            Loadable::Error(e) => zed::context_menu_label(theme, e.clone()),
+            Loadable::Loading => components::context_menu_label(theme, "Loading"),
+            Loadable::NotLoaded => components::context_menu_label(theme, "Not loaded"),
+            Loadable::Error(e) => components::context_menu_label(theme, e.clone()),
             Loadable::Ready(worktrees) => {
                 let workdir = repo.spec.workdir.clone();
                 let items = worktrees
@@ -26,9 +26,9 @@ pub(super) fn panel(
                     .collect::<Vec<_>>();
 
                 if let Some(search) = this.worktree_picker_search_input.clone() {
-                    zed::context_menu(
+                    components::context_menu(
                         theme,
-                        zed::PickerPrompt::new(search)
+                        components::PickerPrompt::new(search)
                             .items(items)
                             .empty_text("No worktrees")
                             .max_height(px(260.0))
@@ -47,11 +47,11 @@ pub(super) fn panel(
                     .w(px(520.0))
                     .max_w(px(820.0))
                 } else {
-                    zed::context_menu_label(theme, "Search input not initialized")
+                    components::context_menu_label(theme, "Search input not initialized")
                 }
             }
         }
     } else {
-        zed::context_menu_label(theme, "No repository")
+        components::context_menu_label(theme, "No repository")
     }
 }

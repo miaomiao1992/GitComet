@@ -127,8 +127,8 @@ impl MainPaneView {
             .items_center()
             .gap_2()
             .child(
-                zed::Button::new("keep_delete_keep", spec.keep_label)
-                    .style(zed::ButtonStyle::Filled)
+                components::Button::new("keep_delete_keep", spec.keep_label)
+                    .style(components::ButtonStyle::Filled)
                     .disabled(!keep_available)
                     .on_click(theme, cx, move |this, _e, _w, _cx| {
                         this.store.dispatch(Msg::CheckoutConflictSide {
@@ -139,8 +139,8 @@ impl MainPaneView {
                     }),
             )
             .child(
-                zed::Button::new("keep_delete_delete", spec.delete_label)
-                    .style(zed::ButtonStyle::Outlined)
+                components::Button::new("keep_delete_delete", spec.delete_label)
+                    .style(components::ButtonStyle::Outlined)
                     .on_click(theme, cx, move |this, _e, _w, _cx| {
                         this.store.dispatch(Msg::AcceptConflictDeletion {
                             repo_id,
@@ -151,8 +151,8 @@ impl MainPaneView {
             .when(show_external_mergetool_actions(self.view_mode), |d| {
                 d.child(div().w(px(1.0)).h(px(16.0)).bg(theme.colors.border))
                     .child(
-                        zed::Button::new("keep_delete_mergetool", "External Mergetool")
-                            .style(zed::ButtonStyle::Outlined)
+                        components::Button::new("keep_delete_mergetool", "External Mergetool")
+                            .style(components::ButtonStyle::Outlined)
                             .on_click(theme, cx, move |this, _e, _w, _cx| {
                                 this.store.dispatch(Msg::LaunchMergetool {
                                     repo_id,

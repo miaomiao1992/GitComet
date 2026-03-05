@@ -45,8 +45,8 @@ pub(super) fn panel(
                 ),
         )
         .child(
-            zed::Button::new("blame_close", "Close")
-                .style(zed::ButtonStyle::Outlined)
+            components::Button::new("blame_close", "Close")
+                .style(components::ButtonStyle::Outlined)
                 .on_click(theme, cx, |this, _e, _w, cx| {
                     this.popover = None;
                     this.popover_anchor = None;
@@ -55,11 +55,15 @@ pub(super) fn panel(
         );
 
     let body: AnyElement = match repo.map(|r| &r.blame) {
-        None => zed::context_menu_label(theme, "No repository").into_any_element(),
-        Some(Loadable::Loading) => zed::context_menu_label(theme, "Loading").into_any_element(),
-        Some(Loadable::Error(e)) => zed::context_menu_label(theme, e.clone()).into_any_element(),
+        None => components::context_menu_label(theme, "No repository").into_any_element(),
+        Some(Loadable::Loading) => {
+            components::context_menu_label(theme, "Loading").into_any_element()
+        }
+        Some(Loadable::Error(e)) => {
+            components::context_menu_label(theme, e.clone()).into_any_element()
+        }
         Some(Loadable::NotLoaded) => {
-            zed::context_menu_label(theme, "Not loaded").into_any_element()
+            components::context_menu_label(theme, "Not loaded").into_any_element()
         }
         Some(Loadable::Ready(lines)) => {
             let count = lines.len();
@@ -78,7 +82,10 @@ pub(super) fn panel(
             div()
                 .relative()
                 .child(list)
-                .child(zed::Scrollbar::new("blame_popover_scrollbar", scroll_handle).render(theme))
+                .child(
+                    components::Scrollbar::new("blame_popover_scrollbar", scroll_handle)
+                        .render(theme),
+                )
                 .into_any_element()
         }
     };

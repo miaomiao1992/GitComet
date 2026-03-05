@@ -41,21 +41,21 @@ impl ToastHost {
 
     pub(super) fn push_toast(
         &mut self,
-        kind: zed::ToastKind,
+        kind: components::ToastKind,
         message: String,
         cx: &mut gpui::Context<Self>,
     ) {
         let ttl = match kind {
-            zed::ToastKind::Error => Duration::from_secs(15),
-            zed::ToastKind::Warning => Duration::from_secs(10),
-            zed::ToastKind::Success => Duration::from_secs(6),
+            components::ToastKind::Error => Duration::from_secs(15),
+            components::ToastKind::Warning => Duration::from_secs(10),
+            components::ToastKind::Success => Duration::from_secs(6),
         };
         let _ = self.push_toast_inner(kind, message, Some(ttl), cx);
     }
 
     pub(super) fn push_persistent_toast(
         &mut self,
-        kind: zed::ToastKind,
+        kind: components::ToastKind,
         message: String,
         cx: &mut gpui::Context<Self>,
     ) -> u64 {
@@ -64,7 +64,7 @@ impl ToastHost {
 
     fn push_toast_inner(
         &mut self,
-        kind: zed::ToastKind,
+        kind: components::ToastKind,
         message: String,
         ttl: Option<Duration>,
         cx: &mut gpui::Context<Self>,
@@ -82,8 +82,8 @@ impl ToastHost {
             message
         };
         let input = cx.new(|cx| {
-            zed::TextInput::new_inert(
-                zed::TextInputOptions {
+            components::TextInput::new_inert(
+                components::TextInputOptions {
                     placeholder: "".into(),
                     multiline: true,
                     read_only: true,
@@ -173,7 +173,7 @@ impl ToastHost {
                         self.clone_progress_dest = Some(op.dest.clone());
 
                         let id = self.push_persistent_toast(
-                            zed::ToastKind::Success,
+                            components::ToastKind::Success,
                             format!("Cloning repository…\n{}\n→ {}", op.url, op.dest.display()),
                             cx,
                         );
@@ -207,7 +207,7 @@ impl ToastHost {
                         self.clone_progress_dest = None;
                         self.clone_progress_last_seq = op.seq;
                         self.push_toast(
-                            zed::ToastKind::Success,
+                            components::ToastKind::Success,
                             format!("Clone finished: {}", op.dest.display()),
                             cx,
                         );
@@ -220,7 +220,7 @@ impl ToastHost {
                         }
                         self.clone_progress_dest = None;
                         self.clone_progress_last_seq = op.seq;
-                        self.push_toast(zed::ToastKind::Error, err.clone(), cx);
+                        self.push_toast(components::ToastKind::Error, err.clone(), cx);
                     }
                 }
             },
@@ -293,8 +293,8 @@ impl Render for ToastHost {
                 None => vec![Animation::new(fade_in).with_easing(gpui::quadratic)],
             };
 
-            let close = zed::Button::new(format!("toast_close_{}", t.id), "✕")
-                .style(zed::ButtonStyle::Transparent)
+            let close = components::Button::new(format!("toast_close_{}", t.id), "✕")
+                .style(components::ButtonStyle::Transparent)
                 .on_click(theme, cx, move |this, _e, _w, cx| {
                     this.remove_toast(t.id, cx);
                 })
@@ -328,7 +328,7 @@ impl Render for ToastHost {
 
             div()
                 .relative()
-                .child(zed::toast(theme, t.kind, message))
+                .child(components::toast(theme, t.kind, message))
                 .child(div().absolute().top(px(8.0)).right(px(8.0)).child(close))
                 .with_animations(
                     ("toast", t.id),

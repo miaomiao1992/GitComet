@@ -238,9 +238,9 @@ impl MainPaneView {
             let prev_tooltip: SharedString = "Previous file (F1)".into();
             let next_tooltip: SharedString = "Next file (F4)".into();
 
-            let prev_btn = zed::Button::new("diff_prev_file", "Prev file")
+            let prev_btn = components::Button::new("diff_prev_file", "Prev file")
                 .end_slot(diff_nav_hotkey_hint("F1"))
-                .style(zed::ButtonStyle::Outlined)
+                .style(components::ButtonStyle::Outlined)
                 .disabled(prev_disabled)
                 .on_click(theme, cx, move |this, _e, window, cx| {
                     if this.try_select_adjacent_status_file(repo_id, -1, window, cx) {
@@ -259,9 +259,9 @@ impl MainPaneView {
                     }
                 }));
 
-            let next_btn = zed::Button::new("diff_next_file", "Next file")
+            let next_btn = components::Button::new("diff_next_file", "Next file")
                 .end_slot(diff_nav_hotkey_hint("F4"))
-                .style(zed::ButtonStyle::Outlined)
+                .style(components::ButtonStyle::Outlined)
                 .disabled(next_disabled)
                 .on_click(theme, cx, move |this, _e, window, cx| {
                     if this.try_select_adjacent_status_file(repo_id, 1, window, cx) {
@@ -334,9 +334,9 @@ impl MainPaneView {
             controls = controls
                 .when_some(prev_file_btn, |d, btn| d.child(btn))
                 .child(
-                    zed::Button::new("conflict_prev", "Prev")
+                    components::Button::new("conflict_prev", "Prev")
                         .end_slot(diff_nav_hotkey_hint("F2"))
-                        .style(zed::ButtonStyle::Outlined)
+                        .style(components::ButtonStyle::Outlined)
                         .disabled(!can_nav_prev)
                         .on_click(theme, cx, |this, _e, _w, cx| {
                             this.conflict_jump_prev();
@@ -344,9 +344,9 @@ impl MainPaneView {
                         }),
                 )
                 .child(
-                    zed::Button::new("conflict_next", "Next")
+                    components::Button::new("conflict_next", "Next")
                         .end_slot(diff_nav_hotkey_hint("F3"))
-                        .style(zed::ButtonStyle::Outlined)
+                        .style(components::ButtonStyle::Outlined)
                         .disabled(!can_nav_next)
                         .on_click(theme, cx, |this, _e, _w, cx| {
                             this.conflict_jump_next();
@@ -382,8 +382,8 @@ impl MainPaneView {
                 let save_path = path.clone();
                 controls = controls
                     .child(
-                        zed::Button::new("conflict_save", save_label)
-                            .style(zed::ButtonStyle::Outlined)
+                        components::Button::new("conflict_save", save_label)
+                            .style(components::ButtonStyle::Outlined)
                             .on_click(theme, cx, move |this, _e, _w, cx| {
                                 if this.view_mode == GitGpuiViewMode::FocusedMergetool {
                                     this.focused_mergetool_save_and_exit(
@@ -408,8 +408,8 @@ impl MainPaneView {
                     .when(show_conflict_save_stage_action(self.view_mode), |d| {
                         let save_path = path.clone();
                         d.child(
-                            zed::Button::new("conflict_save_stage", "Save & stage")
-                                .style(zed::ButtonStyle::Filled)
+                            components::Button::new("conflict_save_stage", "Save & stage")
+                                .style(components::ButtonStyle::Filled)
                                 .on_click(theme, cx, move |this, e, window, cx| {
                                     let text = this
                                         .conflict_resolver_input
@@ -458,9 +458,9 @@ impl MainPaneView {
                 let can_nav_next =
                     diff_navigation::diff_nav_next_target(&nav_entries, current_nav_ix).is_some();
 
-                let prev_hunk_btn = zed::Button::new("diff_prev_hunk", "Prev")
+                let prev_hunk_btn = components::Button::new("diff_prev_hunk", "Prev")
                     .end_slot(diff_nav_hotkey_hint("F2"))
-                    .style(zed::ButtonStyle::Outlined)
+                    .style(components::ButtonStyle::Outlined)
                     .disabled(!can_nav_prev)
                     .on_click(theme, cx, |this, _e, _w, cx| {
                         this.diff_jump_prev();
@@ -479,9 +479,9 @@ impl MainPaneView {
                         }
                     }));
 
-                let next_hunk_btn = zed::Button::new("diff_next_hunk", "Next")
+                let next_hunk_btn = components::Button::new("diff_next_hunk", "Next")
                     .end_slot(diff_nav_hotkey_hint("F3"))
-                    .style(zed::ButtonStyle::Outlined)
+                    .style(components::ButtonStyle::Outlined)
                     .disabled(!can_nav_next)
                     .on_click(theme, cx, |this, _e, _w, cx| {
                         this.diff_jump_next();
@@ -507,9 +507,9 @@ impl MainPaneView {
                     if theme.is_dark { 0.38 } else { 0.28 },
                 );
                 let view_toggle_divider = with_alpha(view_toggle_border, 0.90);
-                let diff_inline_btn = zed::Button::new("diff_inline", "Inline")
+                let diff_inline_btn = components::Button::new("diff_inline", "Inline")
                     .borderless()
-                    .style(zed::ButtonStyle::Subtle)
+                    .style(components::ButtonStyle::Subtle)
                     .selected(self.diff_view == DiffViewMode::Inline)
                     .selected_bg(view_toggle_selected_bg)
                     .on_click(theme, cx, |this, _e, _w, cx| {
@@ -535,9 +535,9 @@ impl MainPaneView {
                         }
                     }));
 
-                let diff_split_btn = zed::Button::new("diff_split", "Split")
+                let diff_split_btn = components::Button::new("diff_split", "Split")
                     .borderless()
-                    .style(zed::ButtonStyle::Subtle)
+                    .style(components::ButtonStyle::Subtle)
                     .selected(self.diff_view == DiffViewMode::Split)
                     .selected_bg(view_toggle_selected_bg)
                     .on_click(theme, cx, |this, _e, _w, cx| {
@@ -567,7 +567,7 @@ impl MainPaneView {
                     .id("diff_view_toggle")
                     .flex()
                     .items_center()
-                    .h(px(zed::CONTROL_HEIGHT_PX))
+                    .h(px(components::CONTROL_HEIGHT_PX))
                     .rounded(px(theme.radii.row))
                     .border_1()
                     .border_color(view_toggle_border)
@@ -585,8 +585,8 @@ impl MainPaneView {
                     .child(view_toggle)
                     .when(!wants_file_diff, |controls| {
                         controls.child(
-                            zed::Button::new("diff_hunks", "Hunks")
-                                .style(zed::ButtonStyle::Outlined)
+                            components::Button::new("diff_hunks", "Hunks")
+                                .style(components::ButtonStyle::Outlined)
                                 .on_click(theme, cx, |this, e, window, cx| {
                                     this.open_popover_at(
                                         PopoverKind::DiffHunks,
@@ -618,11 +618,11 @@ impl MainPaneView {
             if show_svg_view_toggle {
                 controls = controls
                     .child(
-                        zed::Button::new("svg_diff_view_image", "Image")
+                        components::Button::new("svg_diff_view_image", "Image")
                             .style(if self.svg_diff_view_mode == SvgDiffViewMode::Image {
-                                zed::ButtonStyle::Filled
+                                components::ButtonStyle::Filled
                             } else {
-                                zed::ButtonStyle::Outlined
+                                components::ButtonStyle::Outlined
                             })
                             .on_click(theme, cx, |this, _e, _w, cx| {
                                 this.svg_diff_view_mode = SvgDiffViewMode::Image;
@@ -630,11 +630,11 @@ impl MainPaneView {
                             }),
                     )
                     .child(
-                        zed::Button::new("svg_diff_view_code", "Code")
+                        components::Button::new("svg_diff_view_code", "Code")
                             .style(if self.svg_diff_view_mode == SvgDiffViewMode::Code {
-                                zed::ButtonStyle::Filled
+                                components::ButtonStyle::Filled
                             } else {
-                                zed::ButtonStyle::Outlined
+                                components::ButtonStyle::Outlined
                             })
                             .on_click(theme, cx, |this, _e, _w, cx| {
                                 this.svg_diff_view_mode = SvgDiffViewMode::Code;
@@ -650,8 +650,8 @@ impl MainPaneView {
 
         if let Some(repo_id) = repo_id {
             controls = controls.child(
-                zed::Button::new("diff_close", "✕")
-                    .style(zed::ButtonStyle::Transparent)
+                components::Button::new("diff_close", "✕")
+                    .style(components::ButtonStyle::Transparent)
                     .on_click(theme, cx, move |this, _e, _w, cx| {
                         this.clear_diff_selection_or_exit(repo_id, cx);
                         cx.notify();
@@ -699,8 +699,8 @@ impl MainPaneView {
                         .child(match_label),
                 )
                 .child(
-                    zed::Button::new("diff_search_close", "✕")
-                        .style(zed::ButtonStyle::Transparent)
+                    components::Button::new("diff_search_close", "✕")
+                        .style(components::ButtonStyle::Transparent)
                         .on_click(theme, cx, |this, _e, window, cx| {
                             this.diff_search_active = false;
                             this.diff_search_matches.clear();
@@ -719,7 +719,7 @@ impl MainPaneView {
             .flex()
             .items_center()
             .justify_between()
-            .h(px(zed::CONTROL_HEIGHT_MD_PX))
+            .h(px(components::CONTROL_HEIGHT_MD_PX))
             .child(
                 div()
                     .flex_1()
@@ -738,7 +738,7 @@ impl MainPaneView {
             }
             match &self.worktree_preview {
                 Loadable::NotLoaded | Loadable::Loading => {
-                    zed::empty_state(theme, "File", "Loading").into_any_element()
+                    components::empty_state(theme, "File", "Loading").into_any_element()
                 }
                 Loadable::Error(e) => {
                     self.diff_raw_input.update(cx, |input, cx| {
@@ -758,7 +758,7 @@ impl MainPaneView {
                 }
                 Loadable::Ready(lines) => {
                     if lines.is_empty() {
-                        zed::empty_state(theme, "File", "Empty file.").into_any_element()
+                        components::empty_state(theme, "File", "Empty file.").into_any_element()
                     } else {
                         let list = uniform_list(
                             "worktree_preview_list",
@@ -779,8 +779,11 @@ impl MainPaneView {
                             .min_h(px(0.0))
                             .child(list)
                             .child(
-                                zed::Scrollbar::new("worktree_preview_scrollbar", scroll_handle)
-                                    .render(theme),
+                                components::Scrollbar::new(
+                                    "worktree_preview_scrollbar",
+                                    scroll_handle,
+                                )
+                                .render(theme),
                             )
                             .into_any_element()
                     }
@@ -789,24 +792,26 @@ impl MainPaneView {
         } else if is_conflict_resolver {
             match (repo, conflict_target_path) {
                 (None, _) => {
-                    zed::empty_state(theme, "Resolve", "No repository.").into_any_element()
+                    components::empty_state(theme, "Resolve", "No repository.").into_any_element()
                 }
-                (_, None) => zed::empty_state(theme, "Resolve", "No conflicted file selected.")
-                    .into_any_element(),
+                (_, None) => {
+                    components::empty_state(theme, "Resolve", "No conflicted file selected.")
+                        .into_any_element()
+                }
                 (Some(repo), Some(path)) => {
                     let title: SharedString =
                         format!("Resolve conflict: {}", self.cached_path_display(&path)).into();
 
                     match &repo.conflict_file {
                         Loadable::NotLoaded | Loadable::Loading => {
-                            zed::empty_state(theme, title, "Loading conflict data…")
+                            components::empty_state(theme, title, "Loading conflict data…")
                                 .into_any_element()
                         }
                         Loadable::Error(e) => {
-                            zed::empty_state(theme, title, e.clone()).into_any_element()
+                            components::empty_state(theme, title, e.clone()).into_any_element()
                         }
                         Loadable::Ready(None) => {
-                            zed::empty_state(theme, title, "No conflict data.").into_any_element()
+                            components::empty_state(theme, title, "No conflict data.").into_any_element()
                         }
                         Loadable::Ready(Some(file))
                             if self.conflict_resolver.is_binary_conflict =>
@@ -920,7 +925,7 @@ impl MainPaneView {
                             };
                             let show_whitespace_control = div()
                                 .id("conflict_show_whitespace_pill")
-                                .h(px(zed::CONTROL_HEIGHT_PX))
+                                .h(px(components::CONTROL_HEIGHT_PX))
                                 .px(px(8.0))
                                 .py(px(2.0))
                                 .rounded(px(theme.radii.pill))
@@ -969,7 +974,7 @@ impl MainPaneView {
                                 .id("conflict_view_mode_toggle")
                                 .flex()
                                 .items_center()
-                                .h(px(zed::CONTROL_HEIGHT_PX))
+                                .h(px(components::CONTROL_HEIGHT_PX))
                                 .rounded(px(theme.radii.row))
                                 .border_1()
                                 .border_color(view_toggle_border)
@@ -977,18 +982,18 @@ impl MainPaneView {
                                 .overflow_hidden()
                                 .p(px(1.0))
                                 .child(
-                                    zed::Button::new("conflict_view_three_way", "3-way")
+                                    components::Button::new("conflict_view_three_way", "3-way")
                                         .borderless()
-                                        .style(zed::ButtonStyle::Subtle)
+                                        .style(components::ButtonStyle::Subtle)
                                         .selected(view_mode == ConflictResolverViewMode::ThreeWay)
                                         .selected_bg(view_toggle_selected_bg)
                                         .on_click(theme, cx, set_view_three_way),
                                 )
                                 .child(div().h_full().w(px(1.0)).bg(view_toggle_divider))
                                 .child(
-                                    zed::Button::new("conflict_view_two_way", "2-way")
+                                    components::Button::new("conflict_view_two_way", "2-way")
                                         .borderless()
-                                        .style(zed::ButtonStyle::Subtle)
+                                        .style(components::ButtonStyle::Subtle)
                                         .selected(view_mode == ConflictResolverViewMode::TwoWayDiff)
                                         .selected_bg(view_toggle_selected_bg)
                                         .on_click(theme, cx, set_view_two_way),
@@ -1012,7 +1017,7 @@ impl MainPaneView {
                                 .id("conflict_mode_toggle")
                                 .flex()
                                 .items_center()
-                                .h(px(zed::CONTROL_HEIGHT_PX))
+                                .h(px(components::CONTROL_HEIGHT_PX))
                                 .rounded(px(theme.radii.row))
                                 .border_1()
                                 .border_color(view_toggle_border)
@@ -1020,18 +1025,18 @@ impl MainPaneView {
                                 .overflow_hidden()
                                 .p(px(1.0))
                                 .child(
-                                    zed::Button::new("conflict_mode_split", "Split")
+                                    components::Button::new("conflict_mode_split", "Split")
                                         .borderless()
-                                        .style(zed::ButtonStyle::Subtle)
+                                        .style(components::ButtonStyle::Subtle)
                                         .selected(mode == ConflictDiffMode::Split)
                                         .selected_bg(view_toggle_selected_bg)
                                         .on_click(theme, cx, toggle_mode_split),
                                 )
                                 .child(div().h_full().w(px(1.0)).bg(view_toggle_divider))
                                 .child(
-                                    zed::Button::new("conflict_mode_inline", "Inline")
+                                    components::Button::new("conflict_mode_inline", "Inline")
                                         .borderless()
-                                        .style(zed::ButtonStyle::Subtle)
+                                        .style(components::ButtonStyle::Subtle)
                                         .selected(mode == ConflictDiffMode::Inline)
                                         .selected_bg(view_toggle_selected_bg)
                                         .on_click(theme, cx, toggle_mode_inline),
@@ -1128,11 +1133,11 @@ impl MainPaneView {
                                     d
                                 })
                                 .child(
-                                    zed::Button::new(
+                                    components::Button::new(
                                         "conflict_reset_markers",
                                         "Reset from markers",
                                     )
-                                    .style(zed::ButtonStyle::Transparent)
+                                    .style(components::ButtonStyle::Transparent)
                                     .disabled(!has_current)
                                     .on_click(
                                         theme,
@@ -1143,11 +1148,11 @@ impl MainPaneView {
                                 .when(has_conflicts && unresolved_count > 0, |d| {
                                     d.child(div().w(px(1.0)).h(px(12.0)).bg(theme.colors.border))
                                         .child(
-                                            zed::Button::new(
+                                            components::Button::new(
                                                 "conflict_auto_resolve",
                                                 "Auto-resolve safe",
                                             )
-                                            .style(zed::ButtonStyle::Outlined)
+                                            .style(components::ButtonStyle::Outlined)
                                             .on_click(
                                                 theme,
                                                 cx,
@@ -1156,28 +1161,28 @@ impl MainPaneView {
                                         )
                                         .when(regex_autosolve_enabled, |d| {
                                             d.child(
-                                                zed::Button::new(
+                                                components::Button::new(
                                                     "conflict_auto_resolve_regex",
                                                     "Auto-resolve regex",
                                                 )
-                                                .style(zed::ButtonStyle::Transparent)
+                                                .style(components::ButtonStyle::Transparent)
                                                 .on_click(theme, cx, auto_resolve_regex),
                                             )
                                         })
                                         .when(history_autosolve_enabled, |d| {
                                             d.child(
-                                                zed::Button::new(
+                                                components::Button::new(
                                                     "conflict_auto_resolve_history",
                                                     "Auto-resolve history",
                                                 )
-                                                .style(zed::ButtonStyle::Transparent)
+                                                .style(components::ButtonStyle::Transparent)
                                                 .on_click(theme, cx, auto_resolve_history),
                                             )
                                         })
                                 })
                                 .when(has_conflicts && resolved_count > 0, |d| {
                                     d.child(
-                                        zed::Button::new(
+                                        components::Button::new(
                                             "conflict_hide_resolved",
                                             if hide_resolved {
                                                 "Show resolved"
@@ -1186,9 +1191,9 @@ impl MainPaneView {
                                             },
                                         )
                                         .style(if hide_resolved {
-                                            zed::ButtonStyle::Outlined
+                                            components::ButtonStyle::Outlined
                                         } else {
-                                            zed::ButtonStyle::Transparent
+                                            components::ButtonStyle::Transparent
                                         })
                                         .on_click(
                                             theme,
@@ -1211,7 +1216,7 @@ impl MainPaneView {
                                     .id("conflict_preview_toggle")
                                     .flex()
                                     .items_center()
-                                    .h(px(zed::CONTROL_HEIGHT_PX))
+                                    .h(px(components::CONTROL_HEIGHT_PX))
                                     .rounded(px(theme.radii.row))
                                     .border_1()
                                     .border_color(view_toggle_border)
@@ -1219,9 +1224,9 @@ impl MainPaneView {
                                     .overflow_hidden()
                                     .p(px(1.0))
                                     .child(
-                                        zed::Button::new("conflict_preview_text", "Text")
+                                        components::Button::new("conflict_preview_text", "Text")
                                             .borderless()
-                                            .style(zed::ButtonStyle::Subtle)
+                                            .style(components::ButtonStyle::Subtle)
                                             .selected(preview_mode == ConflictResolverPreviewMode::Text)
                                             .selected_bg(view_toggle_selected_bg)
                                             .on_click(theme, cx, |this, _e, _w, cx| {
@@ -1232,12 +1237,12 @@ impl MainPaneView {
                                     )
                                     .child(div().h_full().w(px(1.0)).bg(view_toggle_divider))
                                     .child(
-                                        zed::Button::new(
+                                        components::Button::new(
                                             "conflict_preview_preview",
                                             if is_svg_conflict { "Image" } else { "Preview" },
                                         )
                                         .borderless()
-                                        .style(zed::ButtonStyle::Subtle)
+                                        .style(components::ButtonStyle::Subtle)
                                         .selected(
                                             preview_mode == ConflictResolverPreviewMode::Preview,
                                         )
@@ -1610,7 +1615,7 @@ impl MainPaneView {
                                 });
 
                             let top_body: AnyElement = if diff_len == 0 {
-                                zed::empty_state(theme, "Inputs", "Stage data not available.")
+                                components::empty_state(theme, "Inputs", "Stage data not available.")
                                     .into_any_element()
                             } else if preview_mode == ConflictResolverPreviewMode::Preview
                                 && is_svg_conflict
@@ -1738,7 +1743,7 @@ impl MainPaneView {
                                     .bg(theme.colors.window_bg)
                                     .child(list)
                                     .child(
-                                        zed::Scrollbar::new(
+                                        components::Scrollbar::new(
                                             "conflict_resolver_diff_scrollbar",
                                             scroll_handle,
                                         )
@@ -2127,7 +2132,7 @@ impl MainPaneView {
                                                         )
                                                         )
                                                         .child(
-                                                            zed::Scrollbar::new(
+                                                            components::Scrollbar::new(
                                                                 "conflict_resolver_output_scrollbar",
                                                                 output_scroll_handle.clone(),
                                                             )
@@ -2149,28 +2154,31 @@ impl MainPaneView {
         } else if is_conflict_compare {
             match (repo, conflict_target_path) {
                 (None, _) => {
-                    zed::empty_state(theme, "Resolve", "No repository.").into_any_element()
+                    components::empty_state(theme, "Resolve", "No repository.").into_any_element()
                 }
-                (_, None) => zed::empty_state(theme, "Resolve", "No conflicted file selected.")
-                    .into_any_element(),
+                (_, None) => {
+                    components::empty_state(theme, "Resolve", "No conflicted file selected.")
+                        .into_any_element()
+                }
                 (Some(repo), Some(path)) => {
                     let title: SharedString =
                         format!("Resolve conflict: {}", self.cached_path_display(&path)).into();
 
                     match &repo.conflict_file {
                         Loadable::NotLoaded | Loadable::Loading => {
-                            zed::empty_state(theme, title, "Loading conflict data…")
+                            components::empty_state(theme, title, "Loading conflict data…")
                                 .into_any_element()
                         }
                         Loadable::Error(e) => {
-                            zed::empty_state(theme, title, e.clone()).into_any_element()
+                            components::empty_state(theme, title, e.clone()).into_any_element()
                         }
                         Loadable::Ready(None) => {
-                            zed::empty_state(theme, title, "No conflict data.").into_any_element()
+                            components::empty_state(theme, title, "No conflict data.")
+                                .into_any_element()
                         }
                         Loadable::Ready(Some(file)) => {
                             if file.path != path {
-                                zed::empty_state(theme, title, "Loading conflict data…")
+                                components::empty_state(theme, title, "Loading conflict data…")
                                     .into_any_element()
                             } else {
                                 let ours_label: SharedString = if file.ours.is_some() {
@@ -2184,8 +2192,11 @@ impl MainPaneView {
                                     "Theirs (deleted)".into()
                                 };
 
-                                let columns_header =
-                                    zed::split_columns_header(theme, ours_label, theirs_label);
+                                let columns_header = components::split_columns_header(
+                                    theme,
+                                    ours_label,
+                                    theirs_label,
+                                );
 
                                 let diff_len = match self.diff_view {
                                     DiffViewMode::Split => self.conflict_resolver.diff_rows.len(),
@@ -2195,8 +2206,12 @@ impl MainPaneView {
                                 };
 
                                 let diff_body: AnyElement = if diff_len == 0 {
-                                    zed::empty_state(theme, "Diff", "No conflict diff to show.")
-                                        .into_any_element()
+                                    components::empty_state(
+                                        theme,
+                                        "Diff",
+                                        "No conflict diff to show.",
+                                    )
+                                    .into_any_element()
                                 } else {
                                     let scroll_handle =
                                         self.diff_scroll.0.borrow().base_handle.clone();
@@ -2229,7 +2244,7 @@ impl MainPaneView {
                                                 .min_h(px(0.0))
                                                 .child(list)
                                                 .child(
-                                                    zed::Scrollbar::new(
+                                                    components::Scrollbar::new(
                                                         "conflict_compare_scrollbar",
                                                         scroll_handle.clone(),
                                                     )
@@ -2237,7 +2252,7 @@ impl MainPaneView {
                                                     .render(theme),
                                                 )
                                                 .child(
-                                                    zed::Scrollbar::horizontal(
+                                                    components::Scrollbar::horizontal(
                                                         "conflict_compare_hscrollbar",
                                                         scroll_handle,
                                                     )
@@ -2258,13 +2273,13 @@ impl MainPaneView {
             self.render_selected_file_diff(theme, cx)
         } else {
             match repo {
-                None => zed::empty_state(theme, "Diff", "No repository.").into_any_element(),
+                None => components::empty_state(theme, "Diff", "No repository.").into_any_element(),
                 Some(repo) => match &repo.diff {
                     Loadable::NotLoaded => {
-                        zed::empty_state(theme, "Diff", "Select a file.").into_any_element()
+                        components::empty_state(theme, "Diff", "Select a file.").into_any_element()
                     }
                     Loadable::Loading => {
-                        zed::empty_state(theme, "Diff", "Loading").into_any_element()
+                        components::empty_state(theme, "Diff", "Loading").into_any_element()
                     }
                     Loadable::Error(e) => {
                         self.diff_raw_input.update(cx, |input, cx| {
@@ -2325,10 +2340,10 @@ impl MainPaneView {
                                 self.ensure_diff_visible_indices();
                                 self.maybe_autoscroll_diff_to_first_change();
                                 if self.diff_cache.is_empty() {
-                                    zed::empty_state(theme, "Diff", "No differences.")
+                                    components::empty_state(theme, "Diff", "No differences.")
                                         .into_any_element()
                                 } else if self.diff_visible_indices.is_empty() {
-                                    zed::empty_state(theme, "Diff", "Nothing to render.")
+                                    components::empty_state(theme, "Diff", "Nothing to render.")
                                         .into_any_element()
                                 } else {
                                     let scroll_handle =
@@ -2355,7 +2370,7 @@ impl MainPaneView {
                                                 .bg(theme.colors.window_bg)
                                                 .child(list)
                                                 .child(
-                                                    zed::Scrollbar::new(
+                                                    components::Scrollbar::new(
                                                         "diff_scrollbar",
                                                         scroll_handle.clone(),
                                                     )
@@ -2364,7 +2379,7 @@ impl MainPaneView {
                                                     .render(theme),
                                                 )
                                                 .child(
-                                                    zed::Scrollbar::horizontal(
+                                                    components::Scrollbar::horizontal(
                                                         "diff_hscrollbar",
                                                         scroll_handle,
                                                     )
@@ -2523,7 +2538,7 @@ impl MainPaneView {
 
                                             let columns_header = div()
                                                 .id("diff_split_columns_header")
-                                                .h(px(zed::CONTROL_HEIGHT_PX))
+                                                .h(px(components::CONTROL_HEIGHT_PX))
                                                 .flex()
                                                 .items_center()
                                                 .text_xs()
@@ -2575,7 +2590,7 @@ impl MainPaneView {
                                                                 .h_full()
                                                                 .child(left)
                                                                 .child(
-                                                                    zed::Scrollbar::horizontal(
+                                                                    components::Scrollbar::horizontal(
                                                                         "diff_split_left_hscrollbar",
                                                                         scroll_handle.clone(),
                                                                     )
@@ -2594,7 +2609,7 @@ impl MainPaneView {
                                                                 .h_full()
                                                                 .child(right)
                                                                 .child(
-                                                                    zed::Scrollbar::horizontal(
+                                                                    components::Scrollbar::horizontal(
                                                                         "diff_split_right_hscrollbar",
                                                                         right_scroll_handle,
                                                                     )
@@ -2604,7 +2619,7 @@ impl MainPaneView {
                                                         ),
                                                 )
                                                 .child(
-                                                    zed::Scrollbar::new(
+                                                    components::Scrollbar::new(
                                                         "diff_scrollbar",
                                                         scroll_handle.clone(),
                                                     )
@@ -3040,7 +3055,7 @@ impl MainPaneView {
             }))
             .child(
                 header
-                    .h(px(zed::CONTROL_HEIGHT_MD_PX))
+                    .h(px(components::CONTROL_HEIGHT_MD_PX))
                     .px_2()
                     .bg(theme.colors.surface_bg_elevated)
                     .border_b_1()

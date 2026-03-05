@@ -26,8 +26,8 @@ impl GitGpuiView {
             )
             .child(div().flex_1().child(self.open_repo_input.clone()))
             .child(
-                zed::Button::new("open_repo_go", "Open")
-                    .style(zed::ButtonStyle::Filled)
+                components::Button::new("open_repo_go", "Open")
+                    .style(components::ButtonStyle::Filled)
                     .on_click(theme, cx, |this, _e, _w, cx| {
                         let path = this
                             .open_repo_input
@@ -39,13 +39,15 @@ impl GitGpuiView {
                         cx.notify();
                     }),
             )
-            .child(zed::Button::new("open_repo_cancel", "Cancel").on_click(
-                theme,
-                cx,
-                |this, _e, _w, cx| {
-                    this.open_repo_panel = false;
-                    cx.notify();
-                },
-            ))
+            .child(
+                components::Button::new("open_repo_cancel", "Cancel").on_click(
+                    theme,
+                    cx,
+                    |this, _e, _w, cx| {
+                        this.open_repo_panel = false;
+                        cx.notify();
+                    },
+                ),
+            )
     }
 }

@@ -1467,12 +1467,12 @@ pub(in super::super) struct MainPaneView {
     pub(in super::super) diff_split_cache_len: usize,
     pub(in super::super) diff_panel_focus_handle: FocusHandle,
     pub(in super::super) diff_autoscroll_pending: bool,
-    pub(in super::super) diff_raw_input: Entity<zed::TextInput>,
+    pub(in super::super) diff_raw_input: Entity<components::TextInput>,
     pub(in super::super) diff_visible_indices: Vec<usize>,
     pub(in super::super) diff_visible_cache_len: usize,
     pub(in super::super) diff_visible_view: DiffViewMode,
     pub(in super::super) diff_visible_is_file_view: bool,
-    pub(in super::super) diff_scrollbar_markers_cache: Vec<zed::ScrollbarMarker>,
+    pub(in super::super) diff_scrollbar_markers_cache: Vec<components::ScrollbarMarker>,
     pub(in super::super) diff_word_highlights: Vec<Option<Vec<Range<usize>>>>,
     pub(in super::super) diff_word_highlights_seq: u64,
     pub(in super::super) diff_word_highlights_inflight: Option<u64>,
@@ -1490,12 +1490,12 @@ pub(in super::super) struct MainPaneView {
     pub(in super::super) diff_text_hitboxes: HashMap<(usize, DiffTextRegion), DiffTextHitbox>,
     pub(in super::super) diff_text_layout_cache_epoch: u64,
     pub(in super::super) diff_text_layout_cache: HashMap<u64, DiffTextLayoutCacheEntry>,
-    pub(in super::super) diff_hunk_picker_search_input: Option<Entity<zed::TextInput>>,
+    pub(in super::super) diff_hunk_picker_search_input: Option<Entity<components::TextInput>>,
     pub(in super::super) diff_search_active: bool,
     pub(in super::super) diff_search_query: SharedString,
     pub(in super::super) diff_search_matches: Vec<usize>,
     pub(in super::super) diff_search_match_ix: Option<usize>,
-    pub(in super::super) diff_search_input: Entity<zed::TextInput>,
+    pub(in super::super) diff_search_input: Entity<components::TextInput>,
     _diff_search_subscription: gpui::Subscription,
 
     pub(in super::super) file_diff_cache_repo_id: Option<RepoId>,
@@ -1526,7 +1526,7 @@ pub(in super::super) struct MainPaneView {
     pub(in super::super) diff_preview_is_new_file: bool,
     pub(in super::super) diff_preview_new_file_lines: Arc<Vec<String>>,
 
-    pub(in super::super) conflict_resolver_input: Entity<zed::TextInput>,
+    pub(in super::super) conflict_resolver_input: Entity<components::TextInput>,
     _conflict_resolver_input_subscription: gpui::Subscription,
     pub(in super::super) conflict_resolver: ConflictResolverUiState,
     pub(in super::super) conflict_resolver_vsplit_ratio: f32,
@@ -1739,8 +1739,8 @@ impl MainPaneView {
         });
 
         let diff_raw_input = cx.new(|cx| {
-            zed::TextInput::new(
-                zed::TextInputOptions {
+            components::TextInput::new(
+                components::TextInputOptions {
                     placeholder: "".into(),
                     multiline: true,
                     read_only: true,
@@ -1753,8 +1753,8 @@ impl MainPaneView {
         });
 
         let conflict_resolver_input = cx.new(|cx| {
-            let mut input = zed::TextInput::new(
-                zed::TextInputOptions {
+            let mut input = components::TextInput::new(
+                components::TextInputOptions {
                     placeholder: "Resolve file contents…".into(),
                     multiline: true,
                     read_only: false,
@@ -1789,8 +1789,8 @@ impl MainPaneView {
             });
 
         let diff_search_input = cx.new(|cx| {
-            zed::TextInput::new(
-                zed::TextInputOptions {
+            components::TextInput::new(
+                components::TextInputOptions {
                     placeholder: "Search diff".into(),
                     multiline: false,
                     read_only: false,

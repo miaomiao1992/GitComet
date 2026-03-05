@@ -46,8 +46,8 @@ pub(super) fn panel(
                 .items_center()
                 .justify_between()
                 .child(
-                    zed::Button::new("push_upstream_cancel", "Cancel")
-                        .style(zed::ButtonStyle::Outlined)
+                    components::Button::new("push_upstream_cancel", "Cancel")
+                        .style(components::ButtonStyle::Outlined)
                         .on_click(theme, cx, |this, _e, _w, cx| {
                             this.popover = None;
                             this.popover_anchor = None;
@@ -55,8 +55,8 @@ pub(super) fn panel(
                         }),
                 )
                 .child(
-                    zed::Button::new("push_upstream_go", "Push")
-                        .style(zed::ButtonStyle::Filled)
+                    components::Button::new("push_upstream_go", "Push")
+                        .style(components::ButtonStyle::Filled)
                         .on_click(theme, cx, move |this, _e, _w, cx| {
                             let branch = this
                                 .push_upstream_branch_input

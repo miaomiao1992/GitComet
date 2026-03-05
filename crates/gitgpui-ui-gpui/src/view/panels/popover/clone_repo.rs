@@ -56,8 +56,8 @@ pub(super) fn panel(this: &mut PopoverHost, cx: &mut gpui::Context<PopoverHost>)
                         .child(this.clone_repo_parent_dir_input.clone()),
                 )
                 .child(
-                    zed::Button::new("clone_repo_browse", "Browse")
-                        .style(zed::ButtonStyle::Outlined)
+                    components::Button::new("clone_repo_browse", "Browse")
+                        .style(components::ButtonStyle::Outlined)
                         .on_click(theme, cx, |_this, _e, window, cx| {
                             cx.stop_propagation();
                             let view = cx.weak_entity();
@@ -99,8 +99,8 @@ pub(super) fn panel(this: &mut PopoverHost, cx: &mut gpui::Context<PopoverHost>)
                 .items_center()
                 .justify_between()
                 .child(
-                    zed::Button::new("clone_repo_cancel", "Cancel")
-                        .style(zed::ButtonStyle::Outlined)
+                    components::Button::new("clone_repo_cancel", "Cancel")
+                        .style(components::ButtonStyle::Outlined)
                         .on_click(theme, cx, |this, _e, _w, cx| {
                             this.popover = None;
                             this.popover_anchor = None;
@@ -108,8 +108,8 @@ pub(super) fn panel(this: &mut PopoverHost, cx: &mut gpui::Context<PopoverHost>)
                         }),
                 )
                 .child(
-                    zed::Button::new("clone_repo_go", "Clone")
-                        .style(zed::ButtonStyle::Filled)
+                    components::Button::new("clone_repo_go", "Clone")
+                        .style(components::ButtonStyle::Filled)
                         .on_click(theme, cx, |this, _e, _w, cx| {
                             let url = this
                                 .clone_repo_url_input
@@ -119,7 +119,7 @@ pub(super) fn panel(this: &mut PopoverHost, cx: &mut gpui::Context<PopoverHost>)
                                 .read_with(cx, |i, _| i.text().trim().to_string());
                             if url.is_empty() || parent.is_empty() {
                                 this.push_toast(
-                                    zed::ToastKind::Error,
+                                    components::ToastKind::Error,
                                     "Clone: URL and destination are required".to_string(),
                                     cx,
                                 );

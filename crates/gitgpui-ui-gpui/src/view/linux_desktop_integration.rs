@@ -113,7 +113,7 @@ impl GitGpuiView {
                 let _ = view.update(cx, |this, cx| match result {
                     Ok((desktop_path, icon_path)) => {
                         this.push_toast(
-                            zed::ToastKind::Success,
+                            components::ToastKind::Success,
                             format!(
                                 "Installed desktop entry + icon to:\n{}\n{}\n\nIf GNOME still shows a generic icon, log out/in (or restart GNOME Shell).",
                                 desktop_path.display(),
@@ -123,7 +123,7 @@ impl GitGpuiView {
                         );
                     }
                     Err(message) => {
-                        this.push_toast(zed::ToastKind::Error, message, cx);
+                        this.push_toast(components::ToastKind::Error, message, cx);
                     }
                 });
             },

@@ -146,7 +146,7 @@ impl SidebarPaneView {
                 .flex_col()
                 .h_full()
                 .min_h(px(0.0))
-                .child(zed::empty_state(
+                .child(components::empty_state(
                     theme,
                     "Branches",
                     "No repository selected.",
@@ -172,7 +172,9 @@ impl SidebarPaneView {
             .flex_1()
             .h_full()
             .child(list.into_any_element())
-            .child(zed::Scrollbar::new("branch_sidebar_scrollbar", scroll_handle).render(theme))
+            .child(
+                components::Scrollbar::new("branch_sidebar_scrollbar", scroll_handle).render(theme),
+            )
             .into_any_element();
 
         div()

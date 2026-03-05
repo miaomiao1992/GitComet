@@ -508,7 +508,7 @@ impl MainPaneView {
         self.diff_split_cache = build_patch_split_rows(&self.diff_cache);
     }
 
-    fn diff_scrollbar_markers_patch(&self) -> Vec<zed::ScrollbarMarker> {
+    fn diff_scrollbar_markers_patch(&self) -> Vec<components::ScrollbarMarker> {
         match self.diff_view {
             DiffViewMode::Inline => {
                 scrollbar_markers_from_flags(self.diff_visible_indices.len(), |visible_ix| {
@@ -547,7 +547,7 @@ impl MainPaneView {
         }
     }
 
-    fn compute_diff_scrollbar_markers(&self) -> Vec<zed::ScrollbarMarker> {
+    fn compute_diff_scrollbar_markers(&self) -> Vec<components::ScrollbarMarker> {
         if !self.is_file_diff_view_active() {
             return self.diff_scrollbar_markers_patch();
         }

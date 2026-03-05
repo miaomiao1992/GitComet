@@ -1,4 +1,5 @@
-use crate::{theme::AppTheme, view, zed_port as zed};
+use crate::view::components;
+use crate::{theme::AppTheme, view};
 use gitgpui_core::error::{Error, ErrorKind};
 use gitgpui_core::services::{GitBackend, GitRepository, Result};
 use gitgpui_state::model::RepoId;
@@ -22,60 +23,60 @@ fn assert_no_panic(label: &str, f: impl FnOnce()) {
 #[test]
 fn builds_pure_components_without_panics() {
     for theme in [AppTheme::zed_ayu_dark(), AppTheme::zed_one_light()] {
-        assert_no_panic("zed::pill", || {
-            let _ = zed::pill(theme, "Label", theme.colors.accent);
+        assert_no_panic("components::pill", || {
+            let _ = components::pill(theme, "Label", theme.colors.accent);
         });
 
-        assert_no_panic("zed::empty_state", || {
-            let _ = zed::empty_state(theme, "Title", "Message");
+        assert_no_panic("components::empty_state", || {
+            let _ = components::empty_state(theme, "Title", "Message");
         });
 
-        assert_no_panic("zed::panel", || {
-            let _ = zed::panel(theme, "Panel", None, div().child("body"));
+        assert_no_panic("components::panel", || {
+            let _ = components::panel(theme, "Panel", None, div().child("body"));
         });
 
-        assert_no_panic("zed::diff_stat", || {
-            let _ = zed::diff_stat(theme, 12, 4);
+        assert_no_panic("components::diff_stat", || {
+            let _ = components::diff_stat(theme, 12, 4);
         });
 
-        assert_no_panic("zed::toast", || {
-            let _ = zed::toast(theme, zed::ToastKind::Success, "Hello");
+        assert_no_panic("components::toast", || {
+            let _ = components::toast(theme, components::ToastKind::Success, "Hello");
         });
 
-        assert_no_panic("zed::Button render variants", || {
-            let _ = zed::Button::new("z1", "Filled")
-                .style(zed::ButtonStyle::Filled)
+        assert_no_panic("components::Button render variants", || {
+            let _ = components::Button::new("z1", "Filled")
+                .style(components::ButtonStyle::Filled)
                 .render(theme);
-            let _ = zed::Button::new("z2", "Outlined")
-                .style(zed::ButtonStyle::Outlined)
+            let _ = components::Button::new("z2", "Outlined")
+                .style(components::ButtonStyle::Outlined)
                 .render(theme);
-            let _ = zed::Button::new("z3", "Subtle")
-                .style(zed::ButtonStyle::Subtle)
+            let _ = components::Button::new("z3", "Subtle")
+                .style(components::ButtonStyle::Subtle)
                 .render(theme);
-            let _ = zed::Button::new("z4", "Disabled")
-                .style(zed::ButtonStyle::Outlined)
+            let _ = components::Button::new("z4", "Disabled")
+                .style(components::ButtonStyle::Outlined)
                 .disabled(true)
                 .render(theme);
         });
 
-        assert_no_panic("zed::SplitButton", || {
-            let left = zed::Button::new("s1", "Left")
-                .style(zed::ButtonStyle::Outlined)
+        assert_no_panic("components::SplitButton", || {
+            let left = components::Button::new("s1", "Left")
+                .style(components::ButtonStyle::Outlined)
                 .render(theme);
-            let right = zed::Button::new("s2", "Right")
-                .style(zed::ButtonStyle::Outlined)
+            let right = components::Button::new("s2", "Right")
+                .style(components::ButtonStyle::Outlined)
                 .render(theme);
-            let _ = zed::SplitButton::new(left, right)
-                .style(zed::SplitButtonStyle::Outlined)
+            let _ = components::SplitButton::new(left, right)
+                .style(components::SplitButtonStyle::Outlined)
                 .render(theme);
         });
 
-        assert_no_panic("zed::Tab + TabBar", || {
-            let tab = zed::Tab::new(("t", 1u64))
+        assert_no_panic("components::Tab + TabBar", || {
+            let tab = components::Tab::new(("t", 1u64))
                 .selected(true)
                 .child(div().child("Repo"))
                 .render(theme);
-            let _ = zed::TabBar::new("tb").tab(tab).render(theme);
+            let _ = components::TabBar::new("tb").tab(tab).render(theme);
         });
 
         assert_no_panic("view::window_frame", || {
@@ -102,14 +103,14 @@ fn builds_pure_components_without_panics() {
 
 struct SmokeView {
     theme: AppTheme,
-    input: gpui::Entity<zed::TextInput>,
+    input: gpui::Entity<components::TextInput>,
 }
 
 impl SmokeView {
     fn new(window: &mut gpui::Window, cx: &mut gpui::Context<Self>) -> Self {
         let input = cx.new(|cx| {
-            zed::TextInput::new(
-                zed::TextInputOptions {
+            components::TextInput::new(
+                components::TextInputOptions {
                     placeholder: "Enter".into(),
                     multiline: false,
                     read_only: false,
@@ -135,15 +136,15 @@ impl gpui::Render for SmokeView {
         _cx: &mut gpui::Context<Self>,
     ) -> impl IntoElement {
         let theme = self.theme;
-        let tabs = zed::TabBar::new("smoke_tabs")
+        let tabs = components::TabBar::new("smoke_tabs")
             .tab(
-                zed::Tab::new(("t", 0u64))
+                components::Tab::new(("t", 0u64))
                     .selected(true)
                     .child(div().child("One"))
                     .render(theme),
             )
             .tab(
-                zed::Tab::new(("t", 1u64))
+                components::Tab::new(("t", 1u64))
                     .selected(false)
                     .child(div().child("Two"))
                     .render(theme),
@@ -154,9 +155,9 @@ impl gpui::Render for SmokeView {
             .flex()
             .flex_col()
             .gap_2()
-            .child(zed::panel(theme, "Tabs", None, tabs))
-            .child(zed::panel(theme, "Input", None, self.input.clone()))
-            .child(zed::panel(
+            .child(components::panel(theme, "Tabs", None, tabs))
+            .child(components::panel(theme, "Input", None, self.input.clone()))
+            .child(components::panel(
                 theme,
                 "Buttons",
                 None,
@@ -164,13 +165,13 @@ impl gpui::Render for SmokeView {
                     .flex()
                     .gap_2()
                     .child(
-                        zed::Button::new("b1", "Primary")
-                            .style(zed::ButtonStyle::Filled)
+                        components::Button::new("b1", "Primary")
+                            .style(components::ButtonStyle::Filled)
                             .render(theme),
                     )
                     .child(
-                        zed::Button::new("b2", "Secondary")
-                            .style(zed::ButtonStyle::Outlined)
+                        components::Button::new("b2", "Secondary")
+                            .style(components::ButtonStyle::Outlined)
                             .render(theme),
                     ),
             ))
@@ -195,8 +196,8 @@ fn text_input_constructs_without_panicking(cx: &mut gpui::TestAppContext) {
     cx.update(|cx| {
         cx.open_window(Default::default(), |window, cx| {
             cx.new(|cx| {
-                zed::TextInput::new(
-                    zed::TextInputOptions {
+                components::TextInput::new(
+                    components::TextInputOptions {
                         placeholder: "Commit message".into(),
                         multiline: false,
                         read_only: false,
@@ -756,22 +757,22 @@ impl gpui::Render for PanelLayoutTestView {
 
         let scroll_handle = self.handle.0.borrow().base_handle.clone();
 
-        let body =
-            div()
-                .id("diff_body")
-                .debug_selector(|| "diff_body".to_string())
-                .flex()
-                .flex_col()
-                .h_full()
-                .child(header)
-                .child(div().flex_1().min_h(px(0.0)).relative().child(list).child(
-                    zed::Scrollbar::new("diff_scrollbar_test", scroll_handle).render(theme),
-                ));
+        let body = div()
+            .id("diff_body")
+            .debug_selector(|| "diff_body".to_string())
+            .flex()
+            .flex_col()
+            .h_full()
+            .child(header)
+            .child(div().flex_1().min_h(px(0.0)).relative().child(list).child(
+                components::Scrollbar::new("diff_scrollbar_test", scroll_handle).render(theme),
+            ));
 
-        div()
-            .size_full()
-            .bg(theme.colors.window_bg)
-            .child(zed::panel(theme, "Panel", None, body).flex_1().h_full())
+        div().size_full().bg(theme.colors.window_bg).child(
+            components::panel(theme, "Panel", None, body)
+                .flex_1()
+                .h_full(),
+        )
     }
 }
 
@@ -930,7 +931,7 @@ impl gpui::Render for ScrollbarTestView {
                 .track_scroll(&self.handle)
                 .child(div().flex().flex_col().children(rows))
                 .child(
-                    zed::Scrollbar::new("test_scrollbar", self.handle.clone())
+                    components::Scrollbar::new("test_scrollbar", self.handle.clone())
                         .debug_selector("test_scrollbar")
                         .render(theme),
                 ),
@@ -947,7 +948,7 @@ fn scrollbar_thumb_visible_when_overflowing(cx: &mut gpui::TestAppContext) {
     cx.update(|_window, app| {
         let handle = &view.read(app).handle;
         assert!(
-            zed::Scrollbar::thumb_visible_for_test(handle, px(120.0)),
+            components::Scrollbar::thumb_visible_for_test(handle, px(120.0)),
             "expected scrollbar thumb to be visible when overflowing"
         );
     });
@@ -962,7 +963,7 @@ fn scrollbar_thumb_hidden_when_not_overflowing(cx: &mut gpui::TestAppContext) {
     cx.update(|_window, app| {
         let handle = &view.read(app).handle;
         assert!(
-            !zed::Scrollbar::thumb_visible_for_test(handle, px(120.0)),
+            !components::Scrollbar::thumb_visible_for_test(handle, px(120.0)),
             "expected scrollbar thumb to be hidden when not overflowing"
         );
     });
@@ -1065,7 +1066,7 @@ impl gpui::Render for ScrollbarMismatchedBoundsView {
                         .child(div().flex().flex_col().children(rows)),
                 )
                 .child(
-                    zed::Scrollbar::new("outer_scrollbar", self.handle.clone())
+                    components::Scrollbar::new("outer_scrollbar", self.handle.clone())
                         .debug_selector("outer_scrollbar")
                         .render(theme),
                 ),

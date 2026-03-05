@@ -42,7 +42,8 @@ impl MainPaneView {
 
             let diff_file_state = match self.active_repo().map(|repo| &repo.diff_file_image) {
                 None => {
-                    return zed::empty_state(theme, "Diff", "No repository.").into_any_element();
+                    return components::empty_state(theme, "Diff", "No repository.")
+                        .into_any_element();
                 }
                 Some(Loadable::NotLoaded) => DiffFileImageState::NotLoaded,
                 Some(Loadable::Loading) => DiffFileImageState::Loading,
@@ -55,10 +56,10 @@ impl MainPaneView {
             self.ensure_file_image_diff_cache();
             match diff_file_state {
                 DiffFileImageState::NotLoaded => {
-                    zed::empty_state(theme, "Diff", "Select a file.").into_any_element()
+                    components::empty_state(theme, "Diff", "Select a file.").into_any_element()
                 }
                 DiffFileImageState::Loading => {
-                    zed::empty_state(theme, "Diff", "Loading").into_any_element()
+                    components::empty_state(theme, "Diff", "Loading").into_any_element()
                 }
                 DiffFileImageState::Error(e) => {
                     self.diff_raw_input.update(cx, |input, cx| {
@@ -79,7 +80,7 @@ impl MainPaneView {
                 }
                 DiffFileImageState::Ready { has_file } => {
                     if !has_file || !self.is_file_image_diff_view_active() {
-                        zed::empty_state(theme, "Diff", "No image contents available.")
+                        components::empty_state(theme, "Diff", "No image contents available.")
                             .into_any_element()
                     } else {
                         let old = self.file_image_diff_cache_old.clone();
@@ -110,7 +111,7 @@ impl MainPaneView {
                         };
 
                         let columns_header =
-                            zed::split_columns_header(theme, "A (before)", "B (after)");
+                            components::split_columns_header(theme, "A (before)", "B (after)");
 
                         div()
                             .id("diff_image_container")
@@ -144,7 +145,8 @@ impl MainPaneView {
 
             let diff_file_state = match self.active_repo().map(|repo| &repo.diff_file) {
                 None => {
-                    return zed::empty_state(theme, "Diff", "No repository.").into_any_element();
+                    return components::empty_state(theme, "Diff", "No repository.")
+                        .into_any_element();
                 }
                 Some(Loadable::NotLoaded) => DiffFileState::NotLoaded,
                 Some(Loadable::Loading) => DiffFileState::Loading,
@@ -155,17 +157,17 @@ impl MainPaneView {
             };
 
             if is_svg && matches!(diff_file_state, DiffFileState::NotLoaded) {
-                return zed::empty_state(theme, "Diff", "SVG code view is not available.")
+                return components::empty_state(theme, "Diff", "SVG code view is not available.")
                     .into_any_element();
             }
 
             self.ensure_file_diff_cache(cx);
             match diff_file_state {
                 DiffFileState::NotLoaded => {
-                    zed::empty_state(theme, "Diff", "Select a file.").into_any_element()
+                    components::empty_state(theme, "Diff", "Select a file.").into_any_element()
                 }
                 DiffFileState::Loading => {
-                    zed::empty_state(theme, "Diff", "Loading").into_any_element()
+                    components::empty_state(theme, "Diff", "Loading").into_any_element()
                 }
                 DiffFileState::Error(e) => {
                     self.diff_raw_input.update(cx, |input, cx| {
@@ -186,10 +188,11 @@ impl MainPaneView {
                 }
                 DiffFileState::Ready { has_file } => {
                     if !has_file || !self.is_file_diff_view_active() {
-                        zed::empty_state(theme, "Diff", "No file contents available.")
+                        components::empty_state(theme, "Diff", "No file contents available.")
                             .into_any_element()
                     } else if self.file_diff_cache_inflight.is_some() {
-                        zed::empty_state(theme, "Diff", "Processing file…").into_any_element()
+                        components::empty_state(theme, "Diff", "Processing file…")
+                            .into_any_element()
                     } else {
                         self.ensure_diff_visible_indices();
                         self.maybe_autoscroll_diff_to_first_change();
@@ -229,9 +232,10 @@ impl MainPaneView {
                             DiffViewMode::Split => self.file_diff_cache_rows.len(),
                         };
                         if total_len == 0 {
-                            zed::empty_state(theme, "Diff", "Empty file.").into_any_element()
+                            components::empty_state(theme, "Diff", "Empty file.").into_any_element()
                         } else if self.diff_visible_indices.is_empty() {
-                            zed::empty_state(theme, "Diff", "Nothing to render.").into_any_element()
+                            components::empty_state(theme, "Diff", "Nothing to render.")
+                                .into_any_element()
                         } else {
                             let scroll_handle = self.diff_scroll.0.borrow().base_handle.clone();
                             let markers = self.diff_scrollbar_markers_cache.clone();
@@ -256,7 +260,7 @@ impl MainPaneView {
                                         .bg(theme.colors.window_bg)
                                         .child(list)
                                         .child(
-                                            zed::Scrollbar::new(
+                                            components::Scrollbar::new(
                                                 "diff_scrollbar",
                                                 scroll_handle.clone(),
                                             )
@@ -265,7 +269,7 @@ impl MainPaneView {
                                             .render(theme),
                                         )
                                         .child(
-                                            zed::Scrollbar::horizontal(
+                                            components::Scrollbar::horizontal(
                                                 "diff_hscrollbar",
                                                 scroll_handle,
                                             )
@@ -411,7 +415,7 @@ impl MainPaneView {
 
                                     let columns_header = div()
                                         .id("diff_split_columns_header")
-                                        .h(px(zed::CONTROL_HEIGHT_PX))
+                                        .h(px(components::CONTROL_HEIGHT_PX))
                                         .flex()
                                         .items_center()
                                         .text_xs()
@@ -461,7 +465,7 @@ impl MainPaneView {
                                                         .h_full()
                                                         .child(left)
                                                         .child(
-                                                            zed::Scrollbar::horizontal(
+                                                            components::Scrollbar::horizontal(
                                                                 "diff_split_left_hscrollbar",
                                                                 scroll_handle.clone(),
                                                             )
@@ -480,7 +484,7 @@ impl MainPaneView {
                                                         .h_full()
                                                         .child(right)
                                                         .child(
-                                                            zed::Scrollbar::horizontal(
+                                                            components::Scrollbar::horizontal(
                                                                 "diff_split_right_hscrollbar",
                                                                 right_scroll_handle,
                                                             )
@@ -490,7 +494,7 @@ impl MainPaneView {
                                                 ),
                                         )
                                         .child(
-                                            zed::Scrollbar::new(
+                                            components::Scrollbar::new(
                                                 "diff_scrollbar",
                                                 scroll_handle.clone(),
                                             )

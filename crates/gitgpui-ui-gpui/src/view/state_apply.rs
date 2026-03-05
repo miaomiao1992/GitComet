@@ -21,9 +21,11 @@ impl GitGpuiView {
             .collect::<Vec<_>>();
         for notification in new_notifications {
             let kind = match notification.kind {
-                AppNotificationKind::Error => zed::ToastKind::Error,
-                AppNotificationKind::Warning => zed::ToastKind::Warning,
-                AppNotificationKind::Info | AppNotificationKind::Success => zed::ToastKind::Success,
+                AppNotificationKind::Error => components::ToastKind::Error,
+                AppNotificationKind::Warning => components::ToastKind::Warning,
+                AppNotificationKind::Info | AppNotificationKind::Success => {
+                    components::ToastKind::Success
+                }
             };
             self.push_toast(kind, notification.message, cx);
         }
@@ -50,7 +52,7 @@ impl GitGpuiView {
                 {
                     self.pending_force_delete_branch_prompt = Some((next_repo.id, name));
                 }
-                self.push_toast(zed::ToastKind::Error, msg, cx);
+                self.push_toast(components::ToastKind::Error, msg, cx);
             }
 
             let new_command_entries = next_repo
@@ -64,9 +66,9 @@ impl GitGpuiView {
                 }
                 self.push_toast(
                     if entry.ok {
-                        zed::ToastKind::Success
+                        components::ToastKind::Success
                     } else {
-                        zed::ToastKind::Error
+                        components::ToastKind::Error
                     },
                     entry.summary.clone(),
                     cx,

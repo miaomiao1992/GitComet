@@ -1,8 +1,3 @@
-//! Small reusable UI building blocks.
-//!
-//! These are kept in `zed_port` so the rest of the UI can consistently depend on
-//! a single "Zed-style" component surface without pulling in Zed's crate graph.
-
 use crate::theme::AppTheme;
 use gpui::prelude::*;
 use gpui::{Div, FontWeight, SharedString, div, px};

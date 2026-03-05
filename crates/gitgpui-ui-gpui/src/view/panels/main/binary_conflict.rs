@@ -103,8 +103,8 @@ impl MainPaneView {
             .gap_2()
             .p_3()
             .child(
-                zed::Button::new("binary_use_base", "Use Base (ancestor)")
-                    .style(zed::ButtonStyle::Outlined)
+                components::Button::new("binary_use_base", "Use Base (ancestor)")
+                    .style(components::ButtonStyle::Outlined)
                     .disabled(!has_base)
                     .on_click(theme, cx, move |this, _e, _w, _cx| {
                         this.store.dispatch(Msg::CheckoutConflictBase {
@@ -114,8 +114,8 @@ impl MainPaneView {
                     }),
             )
             .child(
-                zed::Button::new("binary_use_ours", "Use Ours (local)")
-                    .style(zed::ButtonStyle::Outlined)
+                components::Button::new("binary_use_ours", "Use Ours (local)")
+                    .style(components::ButtonStyle::Outlined)
                     .disabled(!has_ours)
                     .on_click(theme, cx, move |this, _e, _w, _cx| {
                         this.store.dispatch(Msg::CheckoutConflictSide {
@@ -126,8 +126,8 @@ impl MainPaneView {
                     }),
             )
             .child(
-                zed::Button::new("binary_use_theirs", "Use Theirs (remote)")
-                    .style(zed::ButtonStyle::Outlined)
+                components::Button::new("binary_use_theirs", "Use Theirs (remote)")
+                    .style(components::ButtonStyle::Outlined)
                     .disabled(!has_theirs)
                     .on_click(theme, cx, move |this, _e, _w, _cx| {
                         this.store.dispatch(Msg::CheckoutConflictSide {
@@ -140,8 +140,8 @@ impl MainPaneView {
             .when(show_external_mergetool_actions(self.view_mode), |d| {
                 d.child(div().w(px(1.0)).h(px(16.0)).bg(theme.colors.border))
                     .child(
-                        zed::Button::new("binary_launch_mergetool", "External Mergetool")
-                            .style(zed::ButtonStyle::Outlined)
+                        components::Button::new("binary_launch_mergetool", "External Mergetool")
+                            .style(components::ButtonStyle::Outlined)
                             .on_click(theme, cx, move |this, _e, _w, _cx| {
                                 this.store.dispatch(Msg::LaunchMergetool {
                                     repo_id,

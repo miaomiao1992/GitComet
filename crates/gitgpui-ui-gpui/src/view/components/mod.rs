@@ -1,8 +1,3 @@
-//! Minimal Zed UI ports.
-//!
-//! These components are adapted from Zed's GPL-licensed UI implementation
-//! and trimmed to fit GitGpui's smaller codebase.
-
 mod button;
 mod components;
 mod context_menu;
@@ -30,7 +25,6 @@ pub use tab_bar::TabBar;
 pub use toast::{ToastKind, toast};
 pub use tokens::*;
 
-// Re-exports for "Zed surface area" consistency within this repo.
 pub use crate::kit::{
     Scrollbar, ScrollbarMarker, ScrollbarMarkerKind, TextInput, TextInputOptions,
 };

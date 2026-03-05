@@ -58,8 +58,8 @@ pub(super) fn panel(
                 .items_center()
                 .justify_between()
                 .child(
-                    zed::Button::new("checkout_remote_branch_cancel", "Cancel")
-                        .style(zed::ButtonStyle::Outlined)
+                    components::Button::new("checkout_remote_branch_cancel", "Cancel")
+                        .style(components::ButtonStyle::Outlined)
                         .on_click(theme, cx, |this, _e, _w, cx| {
                             this.popover = None;
                             this.popover_anchor = None;
@@ -67,15 +67,15 @@ pub(super) fn panel(
                         }),
                 )
                 .child(
-                    zed::Button::new("checkout_remote_branch_go", "Checkout")
-                        .style(zed::ButtonStyle::Filled)
+                    components::Button::new("checkout_remote_branch_go", "Checkout")
+                        .style(components::ButtonStyle::Filled)
                         .on_click(theme, cx, move |this, _e, _w, cx| {
                             let local_branch = this
                                 .create_branch_input
                                 .read_with(cx, |i, _| i.text().trim().to_string());
                             if local_branch.is_empty() {
                                 this.push_toast(
-                                    zed::ToastKind::Error,
+                                    components::ToastKind::Error,
                                     "Branch name cannot be empty".to_string(),
                                     cx,
                                 );
@@ -96,7 +96,7 @@ pub(super) fn panel(
                                 .unwrap_or(false);
                             if local_branch_exists {
                                 this.push_toast(
-                                    zed::ToastKind::Error,
+                                    components::ToastKind::Error,
                                     format!("Branch already exists: {local_branch}"),
                                     cx,
                                 );

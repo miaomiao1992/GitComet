@@ -1,5 +1,3 @@
-//! Context menu building blocks (Zed-inspired styling).
-
 use crate::theme::AppTheme;
 use gpui::prelude::*;
 use gpui::{AnyElement, CursorStyle, Div, ElementId, FontWeight, SharedString, Stateful, div, px};

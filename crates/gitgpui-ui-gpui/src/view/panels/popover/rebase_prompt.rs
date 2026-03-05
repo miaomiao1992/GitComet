@@ -45,8 +45,8 @@ pub(super) fn panel(
                 .items_center()
                 .justify_between()
                 .child(
-                    zed::Button::new("rebase_cancel", "Cancel")
-                        .style(zed::ButtonStyle::Outlined)
+                    components::Button::new("rebase_cancel", "Cancel")
+                        .style(components::ButtonStyle::Outlined)
                         .on_click(theme, cx, |this, _e, _w, cx| {
                             this.popover = None;
                             this.popover_anchor = None;
@@ -54,15 +54,15 @@ pub(super) fn panel(
                         }),
                 )
                 .child(
-                    zed::Button::new("rebase_go", "Rebase")
-                        .style(zed::ButtonStyle::Filled)
+                    components::Button::new("rebase_go", "Rebase")
+                        .style(components::ButtonStyle::Filled)
                         .on_click(theme, cx, move |this, _e, _w, cx| {
                             let onto = this
                                 .rebase_onto_input
                                 .read_with(cx, |i, _| i.text().trim().to_string());
                             if onto.is_empty() {
                                 this.push_toast(
-                                    zed::ToastKind::Error,
+                                    components::ToastKind::Error,
                                     "Rebase: target is required".to_string(),
                                     cx,
                                 );

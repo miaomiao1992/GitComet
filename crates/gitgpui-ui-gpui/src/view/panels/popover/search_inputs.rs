@@ -5,12 +5,12 @@ impl PopoverHost {
         &mut self,
         window: &mut Window,
         cx: &mut gpui::Context<Self>,
-    ) -> Entity<zed::TextInput> {
+    ) -> Entity<components::TextInput> {
         let theme = self.theme;
         let input = self.repo_picker_search_input.get_or_insert_with(|| {
             cx.new(|cx| {
-                zed::TextInput::new(
-                    zed::TextInputOptions {
+                components::TextInput::new(
+                    components::TextInputOptions {
                         placeholder: "Filter repositories".into(),
                         multiline: false,
                         read_only: false,
@@ -35,12 +35,12 @@ impl PopoverHost {
         &mut self,
         window: &mut Window,
         cx: &mut gpui::Context<Self>,
-    ) -> Entity<zed::TextInput> {
+    ) -> Entity<components::TextInput> {
         let theme = self.theme;
         let input = self.branch_picker_search_input.get_or_insert_with(|| {
             cx.new(|cx| {
-                zed::TextInput::new(
-                    zed::TextInputOptions {
+                components::TextInput::new(
+                    components::TextInputOptions {
                         placeholder: "Filter branches".into(),
                         multiline: false,
                         read_only: false,
@@ -65,12 +65,12 @@ impl PopoverHost {
         &mut self,
         window: &mut Window,
         cx: &mut gpui::Context<Self>,
-    ) -> Entity<zed::TextInput> {
+    ) -> Entity<components::TextInput> {
         let theme = self.theme;
         let input = self.remote_picker_search_input.get_or_insert_with(|| {
             cx.new(|cx| {
-                zed::TextInput::new(
-                    zed::TextInputOptions {
+                components::TextInput::new(
+                    components::TextInputOptions {
                         placeholder: "Filter remotes".into(),
                         multiline: false,
                         read_only: false,
@@ -95,12 +95,12 @@ impl PopoverHost {
         &mut self,
         window: &mut Window,
         cx: &mut gpui::Context<Self>,
-    ) -> Entity<zed::TextInput> {
+    ) -> Entity<components::TextInput> {
         let theme = self.theme;
         let input = self.worktree_picker_search_input.get_or_insert_with(|| {
             cx.new(|cx| {
-                zed::TextInput::new(
-                    zed::TextInputOptions {
+                components::TextInput::new(
+                    components::TextInputOptions {
                         placeholder: "Filter worktrees".into(),
                         multiline: false,
                         read_only: false,
@@ -125,12 +125,12 @@ impl PopoverHost {
         &mut self,
         window: &mut Window,
         cx: &mut gpui::Context<Self>,
-    ) -> Entity<zed::TextInput> {
+    ) -> Entity<components::TextInput> {
         let theme = self.theme;
         let input = self.submodule_picker_search_input.get_or_insert_with(|| {
             cx.new(|cx| {
-                zed::TextInput::new(
-                    zed::TextInputOptions {
+                components::TextInput::new(
+                    components::TextInputOptions {
                         placeholder: "Filter submodules".into(),
                         multiline: false,
                         read_only: false,
@@ -155,12 +155,12 @@ impl PopoverHost {
         &mut self,
         window: &mut Window,
         cx: &mut gpui::Context<Self>,
-    ) -> Entity<zed::TextInput> {
+    ) -> Entity<components::TextInput> {
         let theme = self.theme;
         let input = self.file_history_search_input.get_or_insert_with(|| {
             cx.new(|cx| {
-                zed::TextInput::new(
-                    zed::TextInputOptions {
+                components::TextInput::new(
+                    components::TextInputOptions {
                         placeholder: "Filter commits".into(),
                         multiline: false,
                         read_only: false,
@@ -185,12 +185,12 @@ impl PopoverHost {
         &mut self,
         window: &mut Window,
         cx: &mut gpui::Context<Self>,
-    ) -> Entity<zed::TextInput> {
+    ) -> Entity<components::TextInput> {
         let theme = self.theme;
         let input = self.diff_hunk_picker_search_input.get_or_insert_with(|| {
             cx.new(|cx| {
-                zed::TextInput::new(
-                    zed::TextInputOptions {
+                components::TextInput::new(
+                    components::TextInputOptions {
                         placeholder: "Filter hunks".into(),
                         multiline: false,
                         read_only: false,

@@ -68,28 +68,28 @@ pub(in super::super) struct PopoverHost {
     context_menu_focus_handle: FocusHandle,
     context_menu_selected_ix: Option<usize>,
 
-    repo_picker_search_input: Option<Entity<zed::TextInput>>,
-    branch_picker_search_input: Option<Entity<zed::TextInput>>,
-    remote_picker_search_input: Option<Entity<zed::TextInput>>,
-    file_history_search_input: Option<Entity<zed::TextInput>>,
-    worktree_picker_search_input: Option<Entity<zed::TextInput>>,
-    submodule_picker_search_input: Option<Entity<zed::TextInput>>,
-    diff_hunk_picker_search_input: Option<Entity<zed::TextInput>>,
+    repo_picker_search_input: Option<Entity<components::TextInput>>,
+    branch_picker_search_input: Option<Entity<components::TextInput>>,
+    remote_picker_search_input: Option<Entity<components::TextInput>>,
+    file_history_search_input: Option<Entity<components::TextInput>>,
+    worktree_picker_search_input: Option<Entity<components::TextInput>>,
+    submodule_picker_search_input: Option<Entity<components::TextInput>>,
+    diff_hunk_picker_search_input: Option<Entity<components::TextInput>>,
 
-    clone_repo_url_input: Entity<zed::TextInput>,
-    clone_repo_parent_dir_input: Entity<zed::TextInput>,
-    rebase_onto_input: Entity<zed::TextInput>,
-    create_tag_input: Entity<zed::TextInput>,
-    remote_name_input: Entity<zed::TextInput>,
-    remote_url_input: Entity<zed::TextInput>,
-    remote_url_edit_input: Entity<zed::TextInput>,
-    create_branch_input: Entity<zed::TextInput>,
-    stash_message_input: Entity<zed::TextInput>,
-    push_upstream_branch_input: Entity<zed::TextInput>,
-    worktree_path_input: Entity<zed::TextInput>,
-    worktree_ref_input: Entity<zed::TextInput>,
-    submodule_url_input: Entity<zed::TextInput>,
-    submodule_path_input: Entity<zed::TextInput>,
+    clone_repo_url_input: Entity<components::TextInput>,
+    clone_repo_parent_dir_input: Entity<components::TextInput>,
+    rebase_onto_input: Entity<components::TextInput>,
+    create_tag_input: Entity<components::TextInput>,
+    remote_name_input: Entity<components::TextInput>,
+    remote_url_input: Entity<components::TextInput>,
+    remote_url_edit_input: Entity<components::TextInput>,
+    create_branch_input: Entity<components::TextInput>,
+    stash_message_input: Entity<components::TextInput>,
+    push_upstream_branch_input: Entity<components::TextInput>,
+    worktree_path_input: Entity<components::TextInput>,
+    worktree_ref_input: Entity<components::TextInput>,
+    submodule_url_input: Entity<components::TextInput>,
+    submodule_path_input: Entity<components::TextInput>,
 
     blame_scroll: UniformListScrollHandle,
 }
@@ -146,8 +146,8 @@ impl PopoverHost {
         });
 
         let clone_repo_url_input = cx.new(|cx| {
-            zed::TextInput::new(
-                zed::TextInputOptions {
+            components::TextInput::new(
+                components::TextInputOptions {
                     placeholder: "https://example.com/org/repo.git".into(),
                     multiline: false,
                     read_only: false,
@@ -160,8 +160,8 @@ impl PopoverHost {
         });
 
         let clone_repo_parent_dir_input = cx.new(|cx| {
-            zed::TextInput::new(
-                zed::TextInputOptions {
+            components::TextInput::new(
+                components::TextInputOptions {
                     placeholder: "/path/to/parent/folder".into(),
                     multiline: false,
                     read_only: false,
@@ -174,8 +174,8 @@ impl PopoverHost {
         });
 
         let rebase_onto_input = cx.new(|cx| {
-            zed::TextInput::new(
-                zed::TextInputOptions {
+            components::TextInput::new(
+                components::TextInputOptions {
                     placeholder: "origin/main".into(),
                     multiline: false,
                     read_only: false,
@@ -188,8 +188,8 @@ impl PopoverHost {
         });
 
         let create_tag_input = cx.new(|cx| {
-            zed::TextInput::new(
-                zed::TextInputOptions {
+            components::TextInput::new(
+                components::TextInputOptions {
                     placeholder: "v1.0.0".into(),
                     multiline: false,
                     read_only: false,
@@ -202,8 +202,8 @@ impl PopoverHost {
         });
 
         let remote_name_input = cx.new(|cx| {
-            zed::TextInput::new(
-                zed::TextInputOptions {
+            components::TextInput::new(
+                components::TextInputOptions {
                     placeholder: "origin".into(),
                     multiline: false,
                     read_only: false,
@@ -216,8 +216,8 @@ impl PopoverHost {
         });
 
         let remote_url_input = cx.new(|cx| {
-            zed::TextInput::new(
-                zed::TextInputOptions {
+            components::TextInput::new(
+                components::TextInputOptions {
                     placeholder: "https://example.com/org/repo.git".into(),
                     multiline: false,
                     read_only: false,
@@ -230,8 +230,8 @@ impl PopoverHost {
         });
 
         let remote_url_edit_input = cx.new(|cx| {
-            zed::TextInput::new(
-                zed::TextInputOptions {
+            components::TextInput::new(
+                components::TextInputOptions {
                     placeholder: "https://example.com/org/repo.git".into(),
                     multiline: false,
                     read_only: false,
@@ -244,8 +244,8 @@ impl PopoverHost {
         });
 
         let create_branch_input = cx.new(|cx| {
-            zed::TextInput::new(
-                zed::TextInputOptions {
+            components::TextInput::new(
+                components::TextInputOptions {
                     placeholder: "branch-name".into(),
                     multiline: false,
                     read_only: false,
@@ -258,8 +258,8 @@ impl PopoverHost {
         });
 
         let stash_message_input = cx.new(|cx| {
-            zed::TextInput::new(
-                zed::TextInputOptions {
+            components::TextInput::new(
+                components::TextInputOptions {
                     placeholder: "Stash message".into(),
                     multiline: false,
                     read_only: false,
@@ -284,8 +284,8 @@ impl PopoverHost {
         });
 
         let push_upstream_branch_input = cx.new(|cx| {
-            zed::TextInput::new(
-                zed::TextInputOptions {
+            components::TextInput::new(
+                components::TextInputOptions {
                     placeholder: "branch-name".into(),
                     multiline: false,
                     read_only: false,
@@ -298,8 +298,8 @@ impl PopoverHost {
         });
 
         let worktree_path_input = cx.new(|cx| {
-            zed::TextInput::new(
-                zed::TextInputOptions {
+            components::TextInput::new(
+                components::TextInputOptions {
                     placeholder: "/path/to/worktree".into(),
                     multiline: false,
                     read_only: false,
@@ -312,8 +312,8 @@ impl PopoverHost {
         });
 
         let worktree_ref_input = cx.new(|cx| {
-            zed::TextInput::new(
-                zed::TextInputOptions {
+            components::TextInput::new(
+                components::TextInputOptions {
                     placeholder: "branch-or-commit".into(),
                     multiline: false,
                     read_only: false,
@@ -326,8 +326,8 @@ impl PopoverHost {
         });
 
         let submodule_url_input = cx.new(|cx| {
-            zed::TextInput::new(
-                zed::TextInputOptions {
+            components::TextInput::new(
+                components::TextInputOptions {
                     placeholder: "https://example.com/org/repo.git".into(),
                     multiline: false,
                     read_only: false,
@@ -340,8 +340,8 @@ impl PopoverHost {
         });
 
         let submodule_path_input = cx.new(|cx| {
-            zed::TextInput::new(
-                zed::TextInputOptions {
+            components::TextInput::new(
+                components::TextInputOptions {
                     placeholder: "path/in/repo".into(),
                     multiline: false,
                     read_only: false,
@@ -859,7 +859,12 @@ impl PopoverHost {
         });
     }
 
-    fn push_toast(&mut self, kind: zed::ToastKind, message: String, cx: &mut gpui::Context<Self>) {
+    fn push_toast(
+        &mut self,
+        kind: components::ToastKind,
+        message: String,
+        cx: &mut gpui::Context<Self>,
+    ) {
         let _ = self
             .toast_host
             .update(cx, |host, cx| host.push_toast(kind, message, cx));
@@ -1025,10 +1030,10 @@ impl PopoverHost {
 
                     match &repo.conflict_file {
                     Loadable::NotLoaded | Loadable::Loading => {
-                        zed::empty_state(theme, title, "Loading…")
+                        components::empty_state(theme, title, "Loading…")
                     }
-                    Loadable::Error(e) => zed::empty_state(theme, title, e.clone()),
-                    Loadable::Ready(None) => zed::empty_state(theme, title, "No conflict data."),
+                    Loadable::Error(e) => components::empty_state(theme, title, e.clone()),
+                    Loadable::Ready(None) => components::empty_state(theme, title, "No conflict data."),
                     Loadable::Ready(Some(file)) => {
                         let ours = file.ours.clone().unwrap_or_default();
                         let theirs = file.theirs.clone().unwrap_or_default();
@@ -1112,20 +1117,20 @@ impl PopoverHost {
                             .items_center()
                             .gap_1()
                             .child(
-                                zed::Button::new("conflict_mode_split", "Split")
+                                components::Button::new("conflict_mode_split", "Split")
                                     .style(if mode == ConflictDiffMode::Split {
-                                        zed::ButtonStyle::Filled
+                                        components::ButtonStyle::Filled
                                     } else {
-                                        zed::ButtonStyle::Outlined
+                                        components::ButtonStyle::Outlined
                                     })
                                     .on_click(theme, cx, toggle_mode_split),
                             )
                             .child(
-                                zed::Button::new("conflict_mode_inline", "Inline")
+                                components::Button::new("conflict_mode_inline", "Inline")
                                     .style(if mode == ConflictDiffMode::Inline {
-                                        zed::ButtonStyle::Filled
+                                        components::ButtonStyle::Filled
                                     } else {
-                                        zed::ButtonStyle::Outlined
+                                        components::ButtonStyle::Outlined
                                     })
                                     .on_click(theme, cx, toggle_mode_inline),
                             );
@@ -1135,20 +1140,20 @@ impl PopoverHost {
                             .items_center()
                             .gap_1()
                             .child(
-                                zed::Button::new("conflict_use_ours", "Use ours")
-                                    .style(zed::ButtonStyle::Transparent)
+                                components::Button::new("conflict_use_ours", "Use ours")
+                                    .style(components::ButtonStyle::Transparent)
                                     .disabled(file.ours.is_none())
                                     .on_click(theme, cx, set_output_ours),
                             )
                             .child(
-                                zed::Button::new("conflict_use_theirs", "Use theirs")
-                                    .style(zed::ButtonStyle::Transparent)
+                                components::Button::new("conflict_use_theirs", "Use theirs")
+                                    .style(components::ButtonStyle::Transparent)
                                     .disabled(file.theirs.is_none())
                                     .on_click(theme, cx, set_output_theirs),
                             )
                             .child(
-                                zed::Button::new("conflict_reset_markers", "Reset from markers")
-                                    .style(zed::ButtonStyle::Transparent)
+                                components::Button::new("conflict_reset_markers", "Reset from markers")
+                                    .style(components::ButtonStyle::Transparent)
                                     .disabled(!has_current)
                                     .on_click(theme, cx, reset_from_markers),
                             );
@@ -1191,7 +1196,7 @@ impl PopoverHost {
                             .when(mode == ConflictDiffMode::Inline, |d| d);
 
                         let diff_body: AnyElement = if diff_len == 0 {
-                            zed::empty_state(theme, "Diff", "Ours/Theirs content not available.")
+                            components::empty_state(theme, "Diff", "Ours/Theirs content not available.")
                                 .into_any_element()
                         } else {
                             let list = uniform_list(
@@ -1217,7 +1222,7 @@ impl PopoverHost {
                                 .min_h(px(0.0))
                                 .child(list)
                                 .child(
-                                    zed::Scrollbar::new(
+                                    components::Scrollbar::new(
                                         "conflict_resolver_diff_scrollbar",
                                         scroll_handle,
                                     )
@@ -1264,13 +1269,13 @@ impl PopoverHost {
                                             .items_center()
                                             .gap_1()
                                                 .child(
-                                                    zed::Button::new("conflict_save_close", "Save & close")
-                                                        .style(zed::ButtonStyle::Outlined)
+                                                    components::Button::new("conflict_save_close", "Save & close")
+                                                        .style(components::ButtonStyle::Outlined)
                                                         .on_click(theme, cx, save_close),
                                                 )
                                                 .child(
-                                                    zed::Button::new("conflict_save_stage_close", "Save & stage & close")
-                                                        .style(zed::ButtonStyle::Filled)
+                                                    components::Button::new("conflict_save_stage_close", "Save & stage & close")
+                                                        .style(components::ButtonStyle::Filled)
                                                         .on_click(theme, cx, save_stage_close),
                                                 ),
                                     ),
@@ -1316,7 +1321,7 @@ impl PopoverHost {
                     }
                     }
                 } else {
-                    zed::empty_state(theme, "Conflicts", "Repository not found.")
+                    components::empty_state(theme, "Conflicts", "Repository not found.")
                 }
             } */
             PopoverKind::BranchPicker => branch_picker::panel(self, cx),

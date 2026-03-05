@@ -1,15 +1,10 @@
-//! Picker prompt port.
-//!
-//! Adapted from Zed's `git_ui::picker_prompt` and simplified to avoid pulling in
-//! Zed's `picker`, `ui`, and `workspace` crates.
-
-use crate::{theme::AppTheme, zed_port::TextInput};
+use super::CONTROL_HEIGHT_MD_PX;
+use crate::kit::TextInput;
+use crate::theme::AppTheme;
 use gpui::prelude::*;
 use gpui::{ClickEvent, CursorStyle, Div, Entity, FontWeight, SharedString, Window, div, px};
 use std::ops::Range;
 use std::sync::Arc;
-
-use super::CONTROL_HEIGHT_MD_PX;
 
 pub struct PickerPrompt {
     query_input: Entity<TextInput>,

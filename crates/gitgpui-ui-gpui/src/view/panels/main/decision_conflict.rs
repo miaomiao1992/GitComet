@@ -69,8 +69,8 @@ impl MainPaneView {
             .items_center()
             .gap_2()
             .child(
-                zed::Button::new("decision_accept_delete", "Accept Deletion")
-                    .style(zed::ButtonStyle::Filled)
+                components::Button::new("decision_accept_delete", "Accept Deletion")
+                    .style(components::ButtonStyle::Filled)
                     .on_click(theme, cx, move |this, _e, _w, _cx| {
                         this.store.dispatch(Msg::AcceptConflictDeletion {
                             repo_id,
@@ -81,8 +81,8 @@ impl MainPaneView {
             .when(restore.has_ours, |d| {
                 let p = restore_ours_path.clone();
                 d.child(
-                    zed::Button::new("decision_restore_ours", "Restore Ours")
-                        .style(zed::ButtonStyle::Outlined)
+                    components::Button::new("decision_restore_ours", "Restore Ours")
+                        .style(components::ButtonStyle::Outlined)
                         .on_click(theme, cx, move |this, _e, _w, _cx| {
                             this.store.dispatch(Msg::CheckoutConflictSide {
                                 repo_id,
@@ -95,8 +95,8 @@ impl MainPaneView {
             .when(restore.has_theirs, |d| {
                 let p = restore_theirs_path.clone();
                 d.child(
-                    zed::Button::new("decision_restore_theirs", "Restore Theirs")
-                        .style(zed::ButtonStyle::Outlined)
+                    components::Button::new("decision_restore_theirs", "Restore Theirs")
+                        .style(components::ButtonStyle::Outlined)
                         .on_click(theme, cx, move |this, _e, _w, _cx| {
                             this.store.dispatch(Msg::CheckoutConflictSide {
                                 repo_id,
@@ -109,8 +109,8 @@ impl MainPaneView {
             .when(restore.has_base, |d| {
                 let p = restore_path.clone();
                 d.child(
-                    zed::Button::new("decision_restore_base", "Restore from Base")
-                        .style(zed::ButtonStyle::Outlined)
+                    components::Button::new("decision_restore_base", "Restore from Base")
+                        .style(components::ButtonStyle::Outlined)
                         .on_click(theme, cx, move |this, _e, _w, _cx| {
                             this.store.dispatch(Msg::CheckoutConflictBase {
                                 repo_id,
@@ -122,8 +122,8 @@ impl MainPaneView {
             .when(show_external_mergetool_actions(self.view_mode), |d| {
                 d.child(div().w(px(1.0)).h(px(16.0)).bg(theme.colors.border))
                     .child(
-                        zed::Button::new("decision_mergetool", "External Mergetool")
-                            .style(zed::ButtonStyle::Outlined)
+                        components::Button::new("decision_mergetool", "External Mergetool")
+                            .style(components::ButtonStyle::Outlined)
                             .on_click(theme, cx, move |this, _e, _w, _cx| {
                                 this.store.dispatch(Msg::LaunchMergetool {
                                     repo_id,

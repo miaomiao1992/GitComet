@@ -35,8 +35,8 @@ pub(super) fn panel(this: &mut PopoverHost, cx: &mut gpui::Context<PopoverHost>)
                 .items_center()
                 .justify_between()
                 .child(
-                    zed::Button::new("stash_cancel", "Cancel")
-                        .style(zed::ButtonStyle::Outlined)
+                    components::Button::new("stash_cancel", "Cancel")
+                        .style(components::ButtonStyle::Outlined)
                         .on_click(theme, cx, |this, _e, _w, cx| {
                             this.popover = None;
                             this.popover_anchor = None;
@@ -44,8 +44,8 @@ pub(super) fn panel(this: &mut PopoverHost, cx: &mut gpui::Context<PopoverHost>)
                         }),
                 )
                 .child(
-                    zed::Button::new("stash_go", "Stash")
-                        .style(zed::ButtonStyle::Filled)
+                    components::Button::new("stash_go", "Stash")
+                        .style(components::ButtonStyle::Filled)
                         .disabled(is_empty)
                         .on_click(theme, cx, |this, _e, _w, cx| {
                             let message = this

@@ -28,15 +28,17 @@ impl HistoryView {
 
         let body: AnyElement = if count == 0 {
             match repo.map(|r| &r.log) {
-                None => zed::empty_state(theme, "History", "No repository.").into_any_element(),
+                None => {
+                    components::empty_state(theme, "History", "No repository.").into_any_element()
+                }
                 Some(Loadable::Loading) => {
-                    zed::empty_state(theme, "History", "Loading").into_any_element()
+                    components::empty_state(theme, "History", "Loading").into_any_element()
                 }
                 Some(Loadable::Error(e)) => {
-                    zed::empty_state(theme, "History", e.clone()).into_any_element()
+                    components::empty_state(theme, "History", e.clone()).into_any_element()
                 }
                 Some(Loadable::NotLoaded) | Some(Loadable::Ready(_)) => {
-                    zed::empty_state(theme, "History", "No commits.").into_any_element()
+                    components::empty_state(theme, "History", "No commits.").into_any_element()
                 }
             }
         } else {
@@ -75,7 +77,10 @@ impl HistoryView {
                 .relative()
                 .h_full()
                 .child(list)
-                .child(zed::Scrollbar::new("history_main_scrollbar", scroll_handle).render(theme))
+                .child(
+                    components::Scrollbar::new("history_main_scrollbar", scroll_handle)
+                        .render(theme),
+                )
                 .into_any_element()
         };
 

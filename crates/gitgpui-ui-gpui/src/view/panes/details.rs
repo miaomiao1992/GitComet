@@ -18,8 +18,8 @@ pub(in super::super) struct DetailsPaneView {
     pub(in super::super) commit_files_scroll: UniformListScrollHandle,
     pub(in super::super) commit_scroll: ScrollHandle,
 
-    pub(in super::super) commit_message_input: Entity<zed::TextInput>,
-    pub(in super::super) commit_details_message_input: Entity<zed::TextInput>,
+    pub(in super::super) commit_message_input: Entity<components::TextInput>,
+    pub(in super::super) commit_details_message_input: Entity<components::TextInput>,
     pub(in super::super) commit_message_user_edited: bool,
     pub(in super::super) commit_message_last_text: SharedString,
     pub(in super::super) commit_message_programmatic_change: bool,
@@ -76,8 +76,8 @@ impl DetailsPaneView {
         });
 
         let commit_message_input = cx.new(|cx| {
-            zed::TextInput::new(
-                zed::TextInputOptions {
+            components::TextInput::new(
+                components::TextInputOptions {
                     placeholder: "Enter commit message".into(),
                     multiline: false,
                     read_only: false,
@@ -90,8 +90,8 @@ impl DetailsPaneView {
         });
 
         let commit_details_message_input = cx.new(|cx| {
-            zed::TextInput::new(
-                zed::TextInputOptions {
+            components::TextInput::new(
+                components::TextInputOptions {
                     placeholder: "".into(),
                     multiline: true,
                     read_only: true,

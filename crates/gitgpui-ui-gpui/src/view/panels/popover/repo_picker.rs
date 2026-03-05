@@ -12,9 +12,9 @@ pub(super) fn panel(this: &mut PopoverHost, cx: &mut gpui::Context<PopoverHost>)
             .map(|r| r.spec.workdir.display().to_string().into())
             .collect::<Vec<SharedString>>();
 
-        zed::context_menu(
+        components::context_menu(
             theme,
-            zed::PickerPrompt::new(search)
+            components::PickerPrompt::new(search)
                 .items(items)
                 .empty_text("No repositories")
                 .max_height(px(260.0))
@@ -35,7 +35,7 @@ pub(super) fn panel(this: &mut PopoverHost, cx: &mut gpui::Context<PopoverHost>)
             let id = repo.id;
             let label: SharedString = repo.spec.workdir.display().to_string().into();
             menu = menu.child(
-                zed::context_menu_entry(
+                components::context_menu_entry(
                     ("repo_item", id.0),
                     theme,
                     false,
@@ -53,6 +53,6 @@ pub(super) fn panel(this: &mut PopoverHost, cx: &mut gpui::Context<PopoverHost>)
                 })),
             );
         }
-        zed::context_menu(theme, menu)
+        components::context_menu(theme, menu)
     }
 }

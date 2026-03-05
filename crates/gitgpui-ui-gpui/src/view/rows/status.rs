@@ -312,8 +312,8 @@ fn status_row(
         format!("status_row_{}_{}_{}", repo_id.0, area_label, ix).into()
     };
 
-    let stage_button = zed::Button::new(format!("stage_btn_{ix}"), stage_label)
-        .style(zed::ButtonStyle::Solid)
+    let stage_button = components::Button::new(format!("stage_btn_{ix}"), stage_label)
+        .style(components::ButtonStyle::Solid)
         .on_click(theme, cx, move |this, e, window, cx| {
             cx.stop_propagation();
             this.focus_diff_panel(window, cx);
@@ -360,8 +360,8 @@ fn status_row(
 
     let conflict_stage_button = if is_conflicted {
         Some(
-            zed::Button::new(format!("conflict_stage_btn_{ix}"), "Stage")
-                .style(zed::ButtonStyle::Outlined)
+            components::Button::new(format!("conflict_stage_btn_{ix}"), "Stage")
+                .style(components::ButtonStyle::Outlined)
                 .on_click(theme, cx, move |this, _e, window, cx| {
                     cx.stop_propagation();
                     this.focus_diff_panel(window, cx);

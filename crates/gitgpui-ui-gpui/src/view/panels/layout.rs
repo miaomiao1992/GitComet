@@ -22,7 +22,7 @@ impl DetailsPaneView {
                 .flex()
                 .items_center()
                 .justify_between()
-                .h(px(zed::CONTROL_HEIGHT_MD_PX))
+                .h(px(components::CONTROL_HEIGHT_MD_PX))
                 .px_2()
                 .bg(theme.colors.surface_bg_elevated)
                 .border_b_1()
@@ -37,8 +37,8 @@ impl DetailsPaneView {
                         .child(header_title),
                 )
                 .child(
-                    zed::Button::new("commit_details_close", "✕")
-                        .style(zed::ButtonStyle::Transparent)
+                    components::Button::new("commit_details_close", "✕")
+                        .style(components::ButtonStyle::Transparent)
                         .on_click(theme, cx, |this, _e, _w, cx| {
                             if let Some(repo_id) = this.active_repo_id() {
                                 this.store.dispatch(Msg::ClearCommitSelection { repo_id });
@@ -61,20 +61,22 @@ impl DetailsPaneView {
                 );
 
             let body: AnyElement = match self.active_repo().map(|r| &r.commit_details) {
-                None => zed::empty_state(theme, "Commit", "No repository.").into_any_element(),
+                None => {
+                    components::empty_state(theme, "Commit", "No repository.").into_any_element()
+                }
                 Some(Loadable::Loading) => {
                     if show_delayed_loading {
-                        zed::empty_state(theme, "Commit", "Loading").into_any_element()
+                        components::empty_state(theme, "Commit", "Loading").into_any_element()
                     } else {
                         div().into_any_element()
                     }
                 }
                 Some(Loadable::Error(e)) => {
-                    zed::empty_state(theme, "Commit", e.clone()).into_any_element()
+                    components::empty_state(theme, "Commit", e.clone()).into_any_element()
                 }
                 Some(Loadable::NotLoaded) => {
                     if show_delayed_loading {
-                        zed::empty_state(theme, "Commit", "Loading").into_any_element()
+                        components::empty_state(theme, "Commit", "Loading").into_any_element()
                     } else {
                         div().into_any_element()
                     }
@@ -82,7 +84,7 @@ impl DetailsPaneView {
                 Some(Loadable::Ready(details)) => {
                     if details.id != selected_id {
                         if show_delayed_loading {
-                            zed::empty_state(theme, "Commit", "Loading").into_any_element()
+                            components::empty_state(theme, "Commit", "Loading").into_any_element()
                         } else {
                             let parent = details
                                 .parent_ids
@@ -121,7 +123,7 @@ impl DetailsPaneView {
                                     .w_full()
                                     .child(list)
                                     .child(
-                                        zed::Scrollbar::new(
+                                        components::Scrollbar::new(
                                             ("commit_details_files_scrollbar", repo_id.0),
                                             scroll_handle,
                                         )
@@ -155,7 +157,7 @@ impl DetailsPaneView {
                                         .child(self.commit_details_message_input.clone()),
                                 )
                                 .child(
-                                    zed::Scrollbar::new(
+                                    components::Scrollbar::new(
                                         ("commit_details_message_scrollbar", repo_id.0),
                                         self.commit_scroll.clone(),
                                     )
@@ -177,12 +179,12 @@ impl DetailsPaneView {
                                         .w_full()
                                         .min_w(px(0.0))
                                         .child(message)
-                                        .child(zed::key_value_monospace_value(
+                                        .child(components::key_value_monospace_value(
                                             theme,
                                             "Commit SHA",
                                             details.id.as_ref().to_string(),
                                         ))
-                                        .child(zed::key_value_monospace_value(
+                                        .child(components::key_value_monospace_value(
                                             theme,
                                             "Commit date",
                                             details.committed_at.clone(),
@@ -264,7 +266,7 @@ impl DetailsPaneView {
                                 .w_full()
                                 .child(list)
                                 .child(
-                                    zed::Scrollbar::new(
+                                    components::Scrollbar::new(
                                         ("commit_details_files_scrollbar", repo_id.0),
                                         scroll_handle,
                                     )
@@ -298,7 +300,7 @@ impl DetailsPaneView {
                                     .child(self.commit_details_message_input.clone()),
                             )
                             .child(
-                                zed::Scrollbar::new(
+                                components::Scrollbar::new(
                                     ("commit_details_message_scrollbar", repo_id.0),
                                     self.commit_scroll.clone(),
                                 )
@@ -320,12 +322,12 @@ impl DetailsPaneView {
                                     .w_full()
                                     .min_w(px(0.0))
                                     .child(message)
-                                    .child(zed::key_value_monospace_value(
+                                    .child(components::key_value_monospace_value(
                                         theme,
                                         "Commit SHA",
                                         details.id.as_ref().to_string(),
                                     ))
-                                    .child(zed::key_value_monospace_value(
+                                    .child(components::key_value_monospace_value(
                                         theme,
                                         "Commit date",
                                         details.committed_at.clone(),
@@ -424,8 +426,8 @@ impl DetailsPaneView {
         let spinner = |id: (&'static str, u64), color: gpui::Rgba| svg_spinner(id, color, px(14.0));
         let repo_key = repo_id.map(|id| id.0).unwrap_or(0);
 
-        let stage_all = zed::Button::new("stage_all", "Stage all changes")
-            .style(zed::ButtonStyle::Subtle)
+        let stage_all = components::Button::new("stage_all", "Stage all changes")
+            .style(components::ButtonStyle::Subtle)
             .disabled(local_actions_in_flight)
             .on_click(theme, cx, |this, _e, _w, cx| {
                 let Some(repo_id) = this.active_repo_id() else {
@@ -453,8 +455,8 @@ impl DetailsPaneView {
             }));
 
         let stage_selected =
-            zed::Button::new("stage_selected", format!("Stage ({selected_unstaged})"))
-                .style(zed::ButtonStyle::Outlined)
+            components::Button::new("stage_selected", format!("Stage ({selected_unstaged})"))
+                .style(components::ButtonStyle::Outlined)
                 .disabled(local_actions_in_flight)
                 .on_click(theme, cx, |this, _e, _w, cx| {
                     let Some(repo_id) = this.active_repo_id() else {
@@ -474,8 +476,8 @@ impl DetailsPaneView {
                 });
 
         let discard_selected =
-            zed::Button::new("discard_selected", format!("Discard ({selected_unstaged})"))
-                .style(zed::ButtonStyle::Outlined)
+            components::Button::new("discard_selected", format!("Discard ({selected_unstaged})"))
+                .style(components::ButtonStyle::Outlined)
                 .disabled(local_actions_in_flight)
                 .on_click(theme, cx, |this, e, window, cx| {
                     let Some(repo_id) = this.active_repo_id() else {
@@ -502,8 +504,8 @@ impl DetailsPaneView {
                     cx.notify();
                 });
 
-        let unstage_all = zed::Button::new("unstage_all", "Unstage all changes")
-            .style(zed::ButtonStyle::Subtle)
+        let unstage_all = components::Button::new("unstage_all", "Unstage all changes")
+            .style(components::ButtonStyle::Subtle)
             .disabled(local_actions_in_flight)
             .on_click(theme, cx, |this, _e, _w, cx| {
                 let Some(repo_id) = this.active_repo_id() else {
@@ -531,8 +533,8 @@ impl DetailsPaneView {
             }));
 
         let unstage_selected =
-            zed::Button::new("unstage_selected", format!("Unstage ({selected_staged})"))
-                .style(zed::ButtonStyle::Outlined)
+            components::Button::new("unstage_selected", format!("Unstage ({selected_staged})"))
+                .style(components::ButtonStyle::Outlined)
                 .disabled(local_actions_in_flight)
                 .on_click(theme, cx, |this, _e, _w, cx| {
                     let Some(repo_id) = this.active_repo_id() else {
@@ -561,7 +563,7 @@ impl DetailsPaneView {
                 .flex()
                 .items_center()
                 .justify_between()
-                .h(px(zed::CONTROL_HEIGHT_MD_PX))
+                .h(px(components::CONTROL_HEIGHT_MD_PX))
                 .px_2()
                 .bg(theme.colors.surface_bg_elevated)
                 .border_b_1()
@@ -606,13 +608,13 @@ impl DetailsPaneView {
         };
 
         let unstaged_body = if unstaged_count == 0 {
-            zed::empty_state(theme, "Unstaged", "Clean.").into_any_element()
+            components::empty_state(theme, "Unstaged", "Clean.").into_any_element()
         } else {
             self.status_list(cx, DiffArea::Unstaged, unstaged_count)
         };
 
         let staged_list = if staged_count == 0 {
-            zed::empty_state(theme, "Staged", "No staged changes.").into_any_element()
+            components::empty_state(theme, "Staged", "No staged changes.").into_any_element()
         } else {
             self.status_list(cx, DiffArea::Staged, staged_count)
         };
@@ -683,7 +685,8 @@ impl DetailsPaneView {
                     )
                     .into_any_element()
             } else {
-                zed::empty_state(theme, "Changes", "No repository selected.").into_any_element()
+                components::empty_state(theme, "Changes", "No repository selected.")
+                    .into_any_element()
             })
             .into_any_element()
     }
@@ -696,7 +699,7 @@ impl DetailsPaneView {
     ) -> AnyElement {
         let theme = self.theme;
         if count == 0 {
-            return zed::empty_state(theme, "Status", "Clean.").into_any_element();
+            return components::empty_state(theme, "Status", "Clean.").into_any_element();
         }
         match area {
             DiffArea::Unstaged => {
@@ -715,7 +718,10 @@ impl DetailsPaneView {
                     .h_full()
                     .min_h(px(0.0))
                     .child(list)
-                    .child(zed::Scrollbar::new("unstaged_scrollbar", scroll_handle).render(theme))
+                    .child(
+                        components::Scrollbar::new("unstaged_scrollbar", scroll_handle)
+                            .render(theme),
+                    )
                     .into_any_element()
             }
             DiffArea::Staged => {
@@ -733,7 +739,9 @@ impl DetailsPaneView {
                     .h_full()
                     .min_h(px(0.0))
                     .child(list)
-                    .child(zed::Scrollbar::new("staged_scrollbar", scroll_handle).render(theme))
+                    .child(
+                        components::Scrollbar::new("staged_scrollbar", scroll_handle).render(theme),
+                    )
                     .into_any_element()
             }
         }
@@ -784,13 +792,13 @@ impl DetailsPaneView {
                     )
                     .child(
                         div().flex().items_center().gap_2().child(
-                            zed::Button::new("commit", "Commit")
+                            components::Button::new("commit", "Commit")
                                 .start_slot(if commit_in_flight {
                                     spinner(("commit_spinner", repo_key)).into_any_element()
                                 } else {
                                     icon("icons/check.svg").into_any_element()
                                 })
-                                .style(zed::ButtonStyle::Filled)
+                                .style(components::ButtonStyle::Filled)
                                 .disabled(!can_commit || commit_in_flight)
                                 .on_click(theme, cx, |this, _e, _w, cx| {
                                     let Some(repo_id) = this.active_repo_id() else {

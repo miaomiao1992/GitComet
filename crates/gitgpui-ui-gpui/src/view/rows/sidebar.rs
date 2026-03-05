@@ -199,8 +199,8 @@ impl SidebarPaneView {
                     let drop_button_id = drop_button_id.clone();
 
                     let apply_tooltip: SharedString = "Apply stash".into();
-                    let apply_button = zed::Button::new(apply_button_id, "Apply")
-                        .style(zed::ButtonStyle::Solid)
+                    let apply_button = components::Button::new(apply_button_id, "Apply")
+                        .style(components::ButtonStyle::Solid)
                         .on_click(theme, cx, move |this, _e, _w, cx| {
                             this.store.dispatch(Msg::ApplyStash { repo_id, index });
                             cx.notify();
@@ -219,8 +219,8 @@ impl SidebarPaneView {
                         }));
 
                     let pop_tooltip: SharedString = "Pop stash".into();
-                    let pop_button = zed::Button::new(pop_button_id, "Pop")
-                        .style(zed::ButtonStyle::Solid)
+                    let pop_button = components::Button::new(pop_button_id, "Pop")
+                        .style(components::ButtonStyle::Solid)
                         .on_click(theme, cx, move |this, _e, _w, cx| {
                             this.store.dispatch(Msg::PopStash { repo_id, index });
                             cx.notify();
@@ -239,8 +239,8 @@ impl SidebarPaneView {
                         }));
 
                     let drop_tooltip: SharedString = "Drop stash".into();
-                    let drop_button = zed::Button::new(drop_button_id, "Drop")
-                        .style(zed::ButtonStyle::DangerSolid)
+                    let drop_button = components::Button::new(drop_button_id, "Drop")
+                        .style(components::ButtonStyle::DangerSolid)
                         .on_click(theme, cx, move |this, _e, _w, cx| {
                             this.store.dispatch(Msg::DropStash { repo_id, index });
                             cx.notify();
@@ -710,8 +710,8 @@ impl SidebarPaneView {
                     let menu_button_id: SharedString = format!("branch_remote_menu_{ix}").into();
                     let remote_name_for_button: String = name.as_ref().to_owned();
                     let context_menu_invoker_for_button = context_menu_invoker.clone();
-                    let menu_button = zed::Button::new(menu_button_id, "⋯")
-                        .style(zed::ButtonStyle::Transparent)
+                    let menu_button = components::Button::new(menu_button_id, "⋯")
+                        .style(components::ButtonStyle::Transparent)
                         .on_click(theme, cx, move |this, e, window, cx| {
                             cx.stop_propagation();
                             this.activate_context_menu_invoker(

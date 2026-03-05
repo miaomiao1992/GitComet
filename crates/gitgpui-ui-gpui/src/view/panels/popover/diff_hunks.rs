@@ -62,7 +62,7 @@ pub(super) fn panel(this: &mut PopoverHost, cx: &mut gpui::Context<PopoverHost>)
     }
 
     if let Some(search) = this.diff_hunk_picker_search_input.clone() {
-        zed::PickerPrompt::new(search)
+        components::PickerPrompt::new(search)
             .items(items)
             .empty_text("No hunks")
             .max_height(px(260.0))

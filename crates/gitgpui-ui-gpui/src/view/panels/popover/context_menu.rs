@@ -308,7 +308,7 @@ impl PopoverHost {
                 let full_path = match self.resolve_workdir_path(repo_id, &path) {
                     Ok(path) => path,
                     Err(err) => {
-                        self.push_toast(zed::ToastKind::Error, err, cx);
+                        self.push_toast(components::ToastKind::Error, err, cx);
                         self.close_popover(cx);
                         return;
                     }
@@ -316,19 +316,23 @@ impl PopoverHost {
 
                 if !full_path.exists() {
                     self.push_toast(
-                        zed::ToastKind::Error,
+                        components::ToastKind::Error,
                         format!("Path not found: {}", full_path.display()),
                         cx,
                     );
                 } else if let Err(err) = self.open_path_default(&full_path) {
-                    self.push_toast(zed::ToastKind::Error, format!("Failed to open: {err}"), cx);
+                    self.push_toast(
+                        components::ToastKind::Error,
+                        format!("Failed to open: {err}"),
+                        cx,
+                    );
                 }
             }
             ContextMenuAction::OpenFileLocation { repo_id, path } => {
                 let full_path = match self.resolve_workdir_path(repo_id, &path) {
                     Ok(path) => path,
                     Err(err) => {
-                        self.push_toast(zed::ToastKind::Error, err, cx);
+                        self.push_toast(components::ToastKind::Error, err, cx);
                         self.close_popover(cx);
                         return;
                     }
@@ -348,13 +352,13 @@ impl PopoverHost {
 
                 if !target.exists() {
                     self.push_toast(
-                        zed::ToastKind::Error,
+                        components::ToastKind::Error,
                         format!("Path not found: {}", target.display()),
                         cx,
                     );
                 } else if let Err(err) = self.open_file_location(&target) {
                     self.push_toast(
-                        zed::ToastKind::Error,
+                        components::ToastKind::Error,
                         format!("Failed to open location: {err}"),
                         cx,
                     );
@@ -656,7 +660,11 @@ impl PopoverHost {
                 reverse,
             } => {
                 if patch.trim().is_empty() {
-                    self.push_toast(zed::ToastKind::Error, "Patch is empty".to_string(), cx);
+                    self.push_toast(
+                        components::ToastKind::Error,
+                        "Patch is empty".to_string(),
+                        cx,
+                    );
                 } else if reverse {
                     self.store.dispatch(Msg::UnstageHunk { repo_id, patch });
                 } else {
@@ -669,7 +677,11 @@ impl PopoverHost {
                 reverse,
             } => {
                 if patch.trim().is_empty() {
-                    self.push_toast(zed::ToastKind::Error, "Patch is empty".to_string(), cx);
+                    self.push_toast(
+                        components::ToastKind::Error,
+                        "Patch is empty".to_string(),
+                        cx,
+                    );
                 } else {
                     self.store.dispatch(Msg::ApplyWorktreePatch {
                         repo_id,
@@ -683,7 +695,7 @@ impl PopoverHost {
                     self.store.dispatch(Msg::StageHunk { repo_id, patch });
                 } else {
                     self.push_toast(
-                        zed::ToastKind::Error,
+                        components::ToastKind::Error,
                         "Couldn't build patch for this hunk".to_string(),
                         cx,
                     );
@@ -694,7 +706,7 @@ impl PopoverHost {
                     self.store.dispatch(Msg::UnstageHunk { repo_id, patch });
                 } else {
                     self.push_toast(
-                        zed::ToastKind::Error,
+                        components::ToastKind::Error,
                         "Couldn't build patch for this hunk".to_string(),
                         cx,
                     );
@@ -849,7 +861,7 @@ impl PopoverHost {
             .filter(|&ix| model.is_selectable(ix))
             .or_else(|| model.first_selectable());
 
-        zed::context_menu(
+        components::context_menu(
             theme,
             div()
                 .w_full()
@@ -943,13 +955,15 @@ impl PopoverHost {
                 )
                 .children(model.items.into_iter().enumerate().map(|(ix, item)| {
                     match item {
-                        ContextMenuItem::Separator => zed::context_menu_separator(theme)
+                        ContextMenuItem::Separator => components::context_menu_separator(theme)
                             .id(("context_menu_sep", ix))
                             .into_any_element(),
-                        ContextMenuItem::Header(title) => zed::context_menu_header(theme, title)
-                            .id(("context_menu_header", ix))
-                            .into_any_element(),
-                        ContextMenuItem::Label(text) => zed::context_menu_label(theme, text)
+                        ContextMenuItem::Header(title) => {
+                            components::context_menu_header(theme, title)
+                                .id(("context_menu_header", ix))
+                                .into_any_element()
+                        }
+                        ContextMenuItem::Label(text) => components::context_menu_label(theme, text)
                             .id(("context_menu_label", ix))
                             .into_any_element(),
                         ContextMenuItem::Entry {
@@ -1050,7 +1064,7 @@ impl PopoverHost {
                                     )
                                     .into_any_element();
 
-                                zed::context_menu_entry_with_end_slot(
+                                components::context_menu_entry_with_end_slot(
                                     ("context_menu_entry", ix),
                                     theme,
                                     selected,
@@ -1062,7 +1076,7 @@ impl PopoverHost {
                                     false,
                                 )
                             } else {
-                                zed::context_menu_entry(
+                                components::context_menu_entry(
                                     ("context_menu_entry", ix),
                                     theme,
                                     selected,

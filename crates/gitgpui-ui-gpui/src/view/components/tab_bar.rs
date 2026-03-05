@@ -4,7 +4,6 @@ use gpui::{AnyElement, Div, ElementId, IntoElement, Stateful, div, px};
 
 use super::Tab;
 
-/// Ported/adapted from Zed's `ui::TabBar`.
 pub struct TabBar {
     id: ElementId,
     tabs: Vec<AnyElement>,

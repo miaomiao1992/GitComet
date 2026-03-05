@@ -318,5 +318,5 @@ pub(super) fn panel(this: &mut PopoverHost, cx: &mut gpui::Context<PopoverHost>)
             .child(tz_dropdown);
     }
 
-    zed::context_menu(theme, content)
+    components::context_menu(theme, content)
 }

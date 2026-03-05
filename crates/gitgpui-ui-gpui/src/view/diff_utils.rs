@@ -3,7 +3,7 @@ use super::*;
 pub(super) fn scrollbar_markers_from_flags(
     len: usize,
     mut flag_at_index: impl FnMut(usize) -> u8,
-) -> Vec<zed::ScrollbarMarker> {
+) -> Vec<components::ScrollbarMarker> {
     if len == 0 {
         return Vec::new();
     }
@@ -38,12 +38,12 @@ pub(super) fn scrollbar_markers_from_flags(
         let end = ix; // exclusive
 
         let kind = match flag {
-            1 => zed::ScrollbarMarkerKind::Add,
-            2 => zed::ScrollbarMarkerKind::Remove,
-            _ => zed::ScrollbarMarkerKind::Modify,
+            1 => components::ScrollbarMarkerKind::Add,
+            2 => components::ScrollbarMarkerKind::Remove,
+            _ => components::ScrollbarMarkerKind::Modify,
         };
 
-        out.push(zed::ScrollbarMarker {
+        out.push(components::ScrollbarMarker {
             start: start as f32 / bucket_count as f32,
             end: end as f32 / bucket_count as f32,
             kind,

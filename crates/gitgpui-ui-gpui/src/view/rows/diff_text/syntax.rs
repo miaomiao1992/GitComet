@@ -300,13 +300,13 @@ fn tree_sitter_highlight_spec(
         DiffSyntaxLanguage::Html => HTML.get_or_init(|| {
             init(
                 tree_sitter_html::LANGUAGE.into(),
-                include_str!("../../../../../../zed/extensions/html/languages/html/highlights.scm"),
+                tree_sitter_html::HIGHLIGHTS_QUERY,
             )
         }),
         DiffSyntaxLanguage::Css => CSS.get_or_init(|| {
             init(
                 tree_sitter_css::LANGUAGE.into(),
-                include_str!("../../../../../../zed/crates/languages/src/css/highlights.scm"),
+                tree_sitter_css::HIGHLIGHTS_QUERY,
             )
         }),
         DiffSyntaxLanguage::Hcl => return None,
@@ -318,19 +318,19 @@ fn tree_sitter_highlight_spec(
         DiffSyntaxLanguage::Rust => RUST.get_or_init(|| {
             init(
                 tree_sitter_rust::LANGUAGE.into(),
-                include_str!("../../../../../../zed/crates/languages/src/rust/highlights.scm"),
+                tree_sitter_rust::HIGHLIGHTS_QUERY,
             )
         }),
         DiffSyntaxLanguage::Python => PY.get_or_init(|| {
             init(
                 tree_sitter_python::LANGUAGE.into(),
-                include_str!("../../../../../../zed/crates/languages/src/python/highlights.scm"),
+                tree_sitter_python::HIGHLIGHTS_QUERY,
             )
         }),
         DiffSyntaxLanguage::Go => GO.get_or_init(|| {
             init(
                 tree_sitter_go::LANGUAGE.into(),
-                include_str!("../../../../../../zed/crates/languages/src/go/highlights.scm"),
+                tree_sitter_go::HIGHLIGHTS_QUERY,
             )
         }),
         DiffSyntaxLanguage::C => return None,
@@ -344,41 +344,37 @@ fn tree_sitter_highlight_spec(
         DiffSyntaxLanguage::Json => JSON.get_or_init(|| {
             init(
                 tree_sitter_json::LANGUAGE.into(),
-                include_str!("../../../../../../zed/crates/languages/src/json/highlights.scm"),
+                tree_sitter_json::HIGHLIGHTS_QUERY,
             )
         }),
         DiffSyntaxLanguage::Yaml => YAML.get_or_init(|| {
             init(
                 tree_sitter_yaml::LANGUAGE.into(),
-                include_str!("../../../../../../zed/crates/languages/src/yaml/highlights.scm"),
+                tree_sitter_yaml::HIGHLIGHTS_QUERY,
             )
         }),
         DiffSyntaxLanguage::TypeScript => TS.get_or_init(|| {
             init(
                 tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
-                include_str!(
-                    "../../../../../../zed/crates/languages/src/typescript/highlights.scm"
-                ),
+                tree_sitter_typescript::HIGHLIGHTS_QUERY,
             )
         }),
         DiffSyntaxLanguage::Tsx => TSX.get_or_init(|| {
             init(
                 tree_sitter_typescript::LANGUAGE_TSX.into(),
-                include_str!("../../../../../../zed/crates/languages/src/tsx/highlights.scm"),
+                tree_sitter_typescript::HIGHLIGHTS_QUERY,
             )
         }),
         DiffSyntaxLanguage::JavaScript => JS.get_or_init(|| {
             init(
                 tree_sitter_typescript::LANGUAGE_TSX.into(),
-                include_str!(
-                    "../../../../../../zed/crates/languages/src/javascript/highlights.scm"
-                ),
+                tree_sitter_typescript::HIGHLIGHTS_QUERY,
             )
         }),
         DiffSyntaxLanguage::Bash => BASH.get_or_init(|| {
             init(
                 tree_sitter_bash::LANGUAGE.into(),
-                include_str!("../../../../../../zed/crates/languages/src/bash/highlights.scm"),
+                tree_sitter_bash::HIGHLIGHT_QUERY,
             )
         }),
         DiffSyntaxLanguage::Sql => return None,
