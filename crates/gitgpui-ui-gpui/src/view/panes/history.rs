@@ -56,6 +56,7 @@ impl HistoryView {
         hasher.finish()
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(in super::super) fn new(
         store: Arc<AppStore>,
         ui_model: Entity<AppUiModel>,
@@ -228,11 +229,7 @@ impl HistoryView {
         cx.notify();
     }
 
-    pub(in super::super) fn set_timezone(
-        &mut self,
-        next: Timezone,
-        cx: &mut gpui::Context<Self>,
-    ) {
+    pub(in super::super) fn set_timezone(&mut self, next: Timezone, cx: &mut gpui::Context<Self>) {
         if self.timezone == next {
             return;
         }

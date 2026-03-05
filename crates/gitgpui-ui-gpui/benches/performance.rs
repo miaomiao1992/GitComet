@@ -1,6 +1,9 @@
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use gitgpui_ui_gpui::benchmarks::{
-    CommitDetailsFixture, LargeFileDiffScrollFixture, OpenRepoFixture,
+    CommitDetailsFixture, ConflictResolvedOutputGutterScrollFixture,
+    ConflictSearchQueryUpdateFixture, ConflictSplitResizeStepFixture,
+    ConflictThreeWayScrollFixture, ConflictTwoWaySplitScrollFixture, LargeFileDiffScrollFixture,
+    OpenRepoFixture,
 };
 use std::env;
 use std::time::Duration;
@@ -71,10 +74,139 @@ fn bench_large_file_diff_scroll(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_conflict_three_way_scroll(c: &mut Criterion) {
+    let lines = env_usize("GITGPUI_BENCH_CONFLICT_LINES", 10_000);
+    let conflict_blocks = env_usize("GITGPUI_BENCH_CONFLICT_BLOCKS", 300);
+    let window = env_usize("GITGPUI_BENCH_CONFLICT_WINDOW", 200);
+    let fixture = ConflictThreeWayScrollFixture::new(lines, conflict_blocks);
+
+    let mut group = c.benchmark_group("conflict_three_way_scroll");
+    group.sample_size(10);
+    group.warm_up_time(Duration::from_secs(1));
+    group.bench_with_input(
+        BenchmarkId::new("style_window", window),
+        &window,
+        |b, &window| {
+            let mut start = 0usize;
+            b.iter(|| {
+                let h = fixture.run_scroll_step(start, window);
+                start = start.wrapping_add(window) % lines.max(1);
+                h
+            })
+        },
+    );
+    group.finish();
+}
+
+fn bench_conflict_two_way_split_scroll(c: &mut Criterion) {
+    let lines = env_usize("GITGPUI_BENCH_CONFLICT_LINES", 10_000);
+    let conflict_blocks = env_usize("GITGPUI_BENCH_CONFLICT_BLOCKS", 300);
+    let fixture = ConflictTwoWaySplitScrollFixture::new(lines, conflict_blocks);
+    let windows = [100usize, 200, 400];
+
+    let mut group = c.benchmark_group("conflict_two_way_split_scroll");
+    group.sample_size(10);
+    group.warm_up_time(Duration::from_secs(1));
+    for &window in &windows {
+        group.bench_with_input(
+            BenchmarkId::from_parameter(format!("window_{window}")),
+            &window,
+            |b, &window| {
+                let mut start = 0usize;
+                b.iter(|| {
+                    let h = fixture.run_scroll_step(start, window);
+                    start = start.wrapping_add(window) % fixture.visible_rows().max(1);
+                    h
+                })
+            },
+        );
+    }
+    group.finish();
+}
+
+fn bench_conflict_resolved_output_gutter_scroll(c: &mut Criterion) {
+    let lines = env_usize("GITGPUI_BENCH_CONFLICT_LINES", 10_000);
+    let conflict_blocks = env_usize("GITGPUI_BENCH_CONFLICT_BLOCKS", 300);
+    let fixture = ConflictResolvedOutputGutterScrollFixture::new(lines, conflict_blocks);
+    let windows = [100usize, 200, 400];
+
+    let mut group = c.benchmark_group("conflict_resolved_output_gutter_scroll");
+    group.sample_size(10);
+    group.warm_up_time(Duration::from_secs(1));
+    for &window in &windows {
+        group.bench_with_input(
+            BenchmarkId::from_parameter(format!("window_{window}")),
+            &window,
+            |b, &window| {
+                let mut start = 0usize;
+                b.iter(|| {
+                    let h = fixture.run_scroll_step(start, window);
+                    start = start.wrapping_add(window) % fixture.visible_rows().max(1);
+                    h
+                })
+            },
+        );
+    }
+    group.finish();
+}
+
+fn bench_conflict_search_query_update(c: &mut Criterion) {
+    let lines = env_usize("GITGPUI_BENCH_CONFLICT_LINES", 10_000);
+    let conflict_blocks = env_usize("GITGPUI_BENCH_CONFLICT_BLOCKS", 300);
+    let window = env_usize("GITGPUI_BENCH_CONFLICT_WINDOW", 200);
+    let mut fixture = ConflictSearchQueryUpdateFixture::new(lines, conflict_blocks);
+    let query_cycle = [
+        "s", "sh", "sha", "shar", "share", "shared", "shared_", "shared_1",
+    ];
+
+    let mut group = c.benchmark_group("conflict_search_query_update");
+    group.sample_size(10);
+    group.warm_up_time(Duration::from_secs(1));
+    group.bench_with_input(BenchmarkId::new("window", window), &window, |b, &window| {
+        let mut start = 0usize;
+        let mut query_ix = 0usize;
+        b.iter(|| {
+            let query = query_cycle[query_ix % query_cycle.len()];
+            let h = fixture.run_query_update_step(query, start, window);
+            query_ix = query_ix.wrapping_add(1);
+            start = start.wrapping_add(window.max(1) / 2 + 1) % fixture.visible_rows().max(1);
+            h
+        })
+    });
+    group.finish();
+}
+
+fn bench_conflict_split_resize_step(c: &mut Criterion) {
+    let lines = env_usize("GITGPUI_BENCH_CONFLICT_LINES", 10_000);
+    let conflict_blocks = env_usize("GITGPUI_BENCH_CONFLICT_BLOCKS", 300);
+    let window = env_usize("GITGPUI_BENCH_CONFLICT_WINDOW", 200);
+    let resize_query =
+        env::var("GITGPUI_BENCH_CONFLICT_RESIZE_QUERY").unwrap_or_else(|_| "shared".to_string());
+    let mut fixture = ConflictSplitResizeStepFixture::new(lines, conflict_blocks);
+
+    let mut group = c.benchmark_group("conflict_split_resize_step");
+    group.sample_size(10);
+    group.warm_up_time(Duration::from_secs(1));
+    group.bench_with_input(BenchmarkId::new("window", window), &window, |b, &window| {
+        let mut start = 0usize;
+        b.iter(|| {
+            let h = fixture.run_resize_step(resize_query.as_str(), start, window);
+            start = start.wrapping_add(window.max(1) / 3 + 1) % fixture.visible_rows().max(1);
+            h
+        })
+    });
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_open_repo,
     bench_commit_details,
-    bench_large_file_diff_scroll
+    bench_large_file_diff_scroll,
+    bench_conflict_three_way_scroll,
+    bench_conflict_two_way_split_scroll,
+    bench_conflict_resolved_output_gutter_scroll,
+    bench_conflict_search_query_update,
+    bench_conflict_split_resize_step
 );
 criterion_main!(benches);

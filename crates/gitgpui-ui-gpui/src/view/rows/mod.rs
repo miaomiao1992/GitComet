@@ -28,6 +28,7 @@ fn line_number_string(n: Option<u32>) -> SharedString {
 }
 
 mod canvas;
+mod conflict_canvas;
 mod conflict_resolver;
 mod diff;
 mod diff_canvas;
@@ -40,4 +41,6 @@ mod status;
 
 pub(crate) mod benchmarks;
 
-pub(super) use diff_text::{DiffSyntaxLanguage, diff_syntax_language_for_path};
+pub(super) use diff_text::{
+    DiffSyntaxLanguage, DiffSyntaxMode, diff_syntax_language_for_path, syntax_highlights_for_line,
+};

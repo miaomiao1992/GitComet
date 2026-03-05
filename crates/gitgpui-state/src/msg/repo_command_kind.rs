@@ -58,6 +58,15 @@ pub enum RepoCommandKind {
         path: PathBuf,
         side: ConflictSide,
     },
+    AcceptConflictDeletion {
+        path: PathBuf,
+    },
+    CheckoutConflictBase {
+        path: PathBuf,
+    },
+    LaunchMergetool {
+        path: PathBuf,
+    },
     SaveWorktreeFile {
         path: PathBuf,
         stage: bool,

@@ -4,6 +4,9 @@ mod branch;
 mod branch_section;
 mod commit;
 mod commit_file;
+mod conflict_resolver_chunk;
+mod conflict_resolver_input_row;
+mod conflict_resolver_output;
 mod diff_editor;
 mod diff_hunk;
 mod history_branch_filter;
@@ -242,6 +245,45 @@ impl PopoverHost {
                 discard_lines_patch,
                 *lines_count,
                 copy_text,
+            )),
+            PopoverKind::ConflictResolverInputRowMenu {
+                line_label,
+                line_target,
+                chunk_label,
+                chunk_target,
+            } => Some(conflict_resolver_input_row::model(
+                line_label,
+                line_target,
+                chunk_label,
+                chunk_target,
+            )),
+            PopoverKind::ConflictResolverChunkMenu {
+                conflict_ix,
+                has_base,
+                is_three_way,
+                selected_choices,
+                output_line_ix,
+            } => Some(conflict_resolver_chunk::model(
+                *conflict_ix,
+                *has_base,
+                *is_three_way,
+                selected_choices,
+                *output_line_ix,
+            )),
+            PopoverKind::ConflictResolverOutputMenu {
+                cursor_line,
+                selected_text,
+                has_source_a,
+                has_source_b,
+                has_source_c,
+                is_three_way,
+            } => Some(conflict_resolver_output::model(
+                *cursor_line,
+                selected_text,
+                *has_source_a,
+                *has_source_b,
+                *has_source_c,
+                *is_three_way,
             )),
             PopoverKind::HistoryBranchFilter { repo_id } => {
                 Some(history_branch_filter::model(*repo_id))
@@ -580,6 +622,27 @@ impl PopoverHost {
                     .unwrap_or_else(|| point(px(64.0), px(64.0)));
                 self.open_popover_at(kind, anchor, window, cx);
                 return;
+            }
+            ContextMenuAction::ConflictResolverPick { target } => {
+                self.main_pane.update(cx, |pane, cx| {
+                    pane.conflict_resolver_apply_pick_target(target, cx);
+                });
+            }
+            ContextMenuAction::ConflictResolverOutputCut { text } => {
+                cx.write_to_clipboard(gpui::ClipboardItem::new_string(text));
+                self.main_pane.update(cx, |pane, cx| {
+                    pane.conflict_resolver_output_delete_selection(cx);
+                });
+            }
+            ContextMenuAction::ConflictResolverOutputPaste => {
+                if let Some(text) = cx
+                    .read_from_clipboard()
+                    .and_then(|item| item.text().map(|s| s.to_string()))
+                {
+                    self.main_pane.update(cx, |pane, cx| {
+                        pane.conflict_resolver_output_paste_text(&text, cx);
+                    });
+                }
             }
             ContextMenuAction::CopyText { text } => {
                 cx.write_to_clipboard(gpui::ClipboardItem::new_string(text));

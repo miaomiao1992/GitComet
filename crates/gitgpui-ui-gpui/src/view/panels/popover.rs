@@ -5,6 +5,7 @@ mod blame;
 mod branch_picker;
 mod checkout_remote_branch_prompt;
 mod clone_repo;
+mod conflict_save_stage_confirm;
 mod context_menu;
 mod create_branch;
 mod create_tag_prompt;
@@ -506,6 +507,9 @@ impl PopoverHost {
                 | PopoverKind::HistoryColumnSettings
                 | PopoverKind::DiffHunkMenu { .. }
                 | PopoverKind::DiffEditorMenu { .. }
+                | PopoverKind::ConflictResolverInputRowMenu { .. }
+                | PopoverKind::ConflictResolverChunkMenu { .. }
+                | PopoverKind::ConflictResolverOutputMenu { .. }
                 | PopoverKind::CommitMenu { .. }
                 | PopoverKind::StatusFileMenu { .. }
                 | PopoverKind::BranchMenu { .. }
@@ -518,8 +522,8 @@ impl PopoverHost {
                 | PopoverKind::CommitFileMenu { .. }
                 | PopoverKind::TagMenu { .. }
         );
-        let keep_active_invoker =
-            is_context_menu || matches!(&kind, PopoverKind::CreateBranch | PopoverKind::StashPrompt);
+        let keep_active_invoker = is_context_menu
+            || matches!(&kind, PopoverKind::CreateBranch | PopoverKind::StashPrompt);
         if !keep_active_invoker {
             self.clear_active_context_menu_invoker(cx);
         }
@@ -795,17 +799,46 @@ impl PopoverHost {
         self.schedule_ui_settings_persist(cx);
     }
 
-    pub(super) fn set_timezone(
-        &mut self,
-        next: Timezone,
-        cx: &mut gpui::Context<Self>,
-    ) {
+    pub(super) fn set_timezone(&mut self, next: Timezone, cx: &mut gpui::Context<Self>) {
         if self.timezone == next {
             return;
         }
         self.timezone = next;
         self.main_pane
             .update(cx, |pane, cx| pane.set_timezone(next, cx));
+        self.schedule_ui_settings_persist(cx);
+    }
+
+    pub(super) fn set_conflict_enable_whitespace_autosolve(
+        &mut self,
+        enabled: bool,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        self.main_pane.update(cx, |pane, cx| {
+            pane.set_conflict_enable_whitespace_autosolve(enabled, cx)
+        });
+        self.schedule_ui_settings_persist(cx);
+    }
+
+    pub(super) fn set_conflict_enable_regex_autosolve(
+        &mut self,
+        enabled: bool,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        self.main_pane.update(cx, |pane, cx| {
+            pane.set_conflict_enable_regex_autosolve(enabled, cx)
+        });
+        self.schedule_ui_settings_persist(cx);
+    }
+
+    pub(super) fn set_conflict_enable_history_autosolve(
+        &mut self,
+        enabled: bool,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        self.main_pane.update(cx, |pane, cx| {
+            pane.set_conflict_enable_history_autosolve(enabled, cx)
+        });
         self.schedule_ui_settings_persist(cx);
     }
 
@@ -872,9 +905,10 @@ impl PopoverHost {
         cx: &mut gpui::Context<Self>,
     ) -> impl IntoElement {
         let theme = self.theme;
-        let anchor_source = self.popover_anchor.clone().unwrap_or_else(|| {
-            PopoverAnchor::Point(point(px(64.0), px(64.0)))
-        });
+        let anchor_source = self
+            .popover_anchor
+            .clone()
+            .unwrap_or_else(|| PopoverAnchor::Point(point(px(64.0), px(64.0))));
         let anchor_is_bounds = matches!(&anchor_source, PopoverAnchor::Bounds(_));
         let window_bounds = window.window_bounds().get_bounds();
         let window_w = window_bounds.size.width;
@@ -894,6 +928,9 @@ impl PopoverHost {
                 | PopoverKind::HistoryColumnSettings
                 | PopoverKind::DiffHunkMenu { .. }
                 | PopoverKind::DiffEditorMenu { .. }
+                | PopoverKind::ConflictResolverInputRowMenu { .. }
+                | PopoverKind::ConflictResolverChunkMenu { .. }
+                | PopoverKind::ConflictResolverOutputMenu { .. }
                 | PopoverKind::CommitMenu { .. }
                 | PopoverKind::TagMenu { .. }
                 | PopoverKind::StatusFileMenu { .. }
@@ -932,6 +969,7 @@ impl PopoverHost {
             | PopoverKind::PushSetUpstreamPrompt { .. }
             | PopoverKind::ForcePushConfirm { .. }
             | PopoverKind::MergeAbortConfirm { .. }
+            | PopoverKind::ConflictSaveStageConfirm { .. }
             | PopoverKind::ForceDeleteBranchConfirm { .. }
             | PopoverKind::PullReconcilePrompt { .. }
             | PopoverKind::HistoryBranchFilter { .. }
@@ -1002,8 +1040,6 @@ impl PopoverHost {
                             ConflictDiffMode::Inline => self.conflict_resolver.inline_rows.len(),
                         };
 
-                        let selection_empty = self.conflict_resolver_selection_is_empty();
-
                         let toggle_mode_split = |this: &mut GitGpuiView,
                                                  _e: &ClickEvent,
                                                  _w: &mut Window,
@@ -1015,20 +1051,6 @@ impl PopoverHost {
                                                   _w: &mut Window,
                                                   cx: &mut gpui::Context<Self>| {
                             this.conflict_resolver_set_mode(ConflictDiffMode::Inline, cx);
-                        };
-
-                        let clear_selection = |this: &mut GitGpuiView,
-                                               _e: &ClickEvent,
-                                               _w: &mut Window,
-                                               cx: &mut gpui::Context<Self>| {
-                            this.conflict_resolver_clear_selection(cx);
-                        };
-
-                        let append_selection = |this: &mut GitGpuiView,
-                                               _e: &ClickEvent,
-                                               _w: &mut Window,
-                                               cx: &mut gpui::Context<Self>| {
-                            this.conflict_resolver_append_selection_to_output(cx);
                         };
 
                         let ours_for_btn = ours.clone();
@@ -1108,23 +1130,6 @@ impl PopoverHost {
                                     .on_click(theme, cx, toggle_mode_inline),
                             );
 
-                        let selection_controls = div()
-                            .flex()
-                            .items_center()
-                            .gap_1()
-                            .child(
-                                zed::Button::new("conflict_append_selected", "Append selection")
-                                    .style(zed::ButtonStyle::Outlined)
-                                    .disabled(selection_empty)
-                                    .on_click(theme, cx, append_selection),
-                            )
-                            .child(
-                                zed::Button::new("conflict_clear_selected", "Clear selection")
-                                    .style(zed::ButtonStyle::Transparent)
-                                    .disabled(selection_empty)
-                                    .on_click(theme, cx, clear_selection),
-                            );
-
                         let start_controls = div()
                             .flex()
                             .items_center()
@@ -1158,7 +1163,7 @@ impl PopoverHost {
                                     .text_color(theme.colors.text_muted)
                                     .child("Diff (ours ↔ theirs)"),
                             )
-                            .child(div().flex().items_center().gap_2().child(mode_controls).child(selection_controls));
+                            .child(div().flex().items_center().gap_2().child(mode_controls));
 
                         let diff_title_row = div()
                             .h(px(22.0))
@@ -1387,6 +1392,19 @@ impl PopoverHost {
             PopoverKind::MergeAbortConfirm { repo_id } => {
                 merge_abort_confirm::panel(self, repo_id, cx)
             }
+            PopoverKind::ConflictSaveStageConfirm {
+                repo_id,
+                path,
+                has_conflict_markers,
+                unresolved_blocks,
+            } => conflict_save_stage_confirm::panel(
+                self,
+                repo_id,
+                &path,
+                has_conflict_markers,
+                unresolved_blocks,
+                cx,
+            ),
             PopoverKind::ForceDeleteBranchConfirm { repo_id, name } => {
                 force_delete_branch_confirm::panel(self, repo_id, name, cx)
             }
@@ -1453,6 +1471,63 @@ impl PopoverHost {
                 )
                 .min_w(px(160.0))
                 .max_w(px(260.0)),
+            PopoverKind::ConflictResolverInputRowMenu {
+                line_label,
+                line_target,
+                chunk_label,
+                chunk_target,
+            } => self
+                .context_menu_view(
+                    PopoverKind::ConflictResolverInputRowMenu {
+                        line_label,
+                        line_target,
+                        chunk_label,
+                        chunk_target,
+                    },
+                    cx,
+                )
+                .min_w(px(180.0))
+                .max_w(px(280.0)),
+            PopoverKind::ConflictResolverChunkMenu {
+                conflict_ix,
+                has_base,
+                is_three_way,
+                selected_choices,
+                output_line_ix,
+            } => self
+                .context_menu_view(
+                    PopoverKind::ConflictResolverChunkMenu {
+                        conflict_ix,
+                        has_base,
+                        is_three_way,
+                        selected_choices,
+                        output_line_ix,
+                    },
+                    cx,
+                )
+                .min_w(px(190.0))
+                .max_w(px(280.0)),
+            PopoverKind::ConflictResolverOutputMenu {
+                cursor_line,
+                selected_text,
+                has_source_a,
+                has_source_b,
+                has_source_c,
+                is_three_way,
+            } => self
+                .context_menu_view(
+                    PopoverKind::ConflictResolverOutputMenu {
+                        cursor_line,
+                        selected_text,
+                        has_source_a,
+                        has_source_b,
+                        has_source_c,
+                        is_three_way,
+                    },
+                    cx,
+                )
+                .min_w(px(200.0))
+                .max_w(px(300.0)),
             PopoverKind::StatusFileMenu {
                 repo_id,
                 area,

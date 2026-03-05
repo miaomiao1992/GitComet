@@ -1,14 +1,13 @@
 use super::*;
 
 impl MainPaneView {
-    pub(in crate::view) fn conflict_requires_resolver(
+    pub(in crate::view) fn conflict_resolver_strategy(
         conflict: Option<gitgpui_core::domain::FileConflictKind>,
-    ) -> bool {
-        matches!(
-            conflict,
-            Some(gitgpui_core::domain::FileConflictKind::BothModified)
-                | Some(gitgpui_core::domain::FileConflictKind::BothAdded)
-        )
+        is_binary: bool,
+    ) -> Option<gitgpui_core::conflict_session::ConflictResolverStrategy> {
+        conflict.map(|kind| {
+            gitgpui_core::conflict_session::ConflictResolverStrategy::for_conflict(kind, is_binary)
+        })
     }
 
     pub(super) fn render_selected_file_diff(

@@ -59,6 +59,9 @@ impl GitGpuiView {
                 .skip(old_cmd_len.min(next_repo.command_log.len()))
                 .collect::<Vec<_>>();
             for entry in &new_command_entries {
+                if entry.command.starts_with("telemetry.") {
+                    continue;
+                }
                 self.push_toast(
                     if entry.ok {
                         zed::ToastKind::Success
@@ -97,6 +100,7 @@ impl GitGpuiView {
         });
 
         self.state = next;
+        self.drive_focused_mergetool_bootstrap();
 
         prev_error != next_error
     }

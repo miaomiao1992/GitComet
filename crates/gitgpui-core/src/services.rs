@@ -1,3 +1,4 @@
+use crate::conflict_session::ConflictSession;
 use crate::domain::*;
 use crate::error::{Error, ErrorKind};
 use std::path::Path;
@@ -44,9 +45,56 @@ pub enum ConflictSide {
     Theirs,
 }
 
+/// Result of launching an external mergetool.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MergetoolResult {
+    /// The tool command that was invoked.
+    pub tool_name: String,
+    /// Whether the tool reported success (exit code 0 or trust-exit-code semantics).
+    pub success: bool,
+    /// The merged file contents read back after the tool exited, if available.
+    pub merged_contents: Option<Vec<u8>>,
+    /// Combined stdout/stderr from the tool invocation for diagnostics.
+    pub output: CommandOutput,
+}
+
+/// Try to decode optional bytes as UTF-8. Returns `None` if the bytes are
+/// `None` or not valid UTF-8.
+pub fn decode_utf8_optional(bytes: Option<&[u8]>) -> Option<String> {
+    bytes.and_then(|b| std::str::from_utf8(b).ok().map(str::to_owned))
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct ConflictTextValidation {
+    pub has_conflict_markers: bool,
+    pub marker_lines: usize,
+}
+
+/// Validate merged text before staging by scanning for unresolved
+/// conflict marker lines.
+pub fn validate_conflict_resolution_text(text: &str) -> ConflictTextValidation {
+    let marker_lines = text
+        .lines()
+        .filter(|line| {
+            line.starts_with("<<<<<<<")
+                || line.starts_with(">>>>>>>")
+                || line.starts_with("=======")
+                || line.starts_with("|||||||")
+        })
+        .count();
+
+    ConflictTextValidation {
+        has_conflict_markers: marker_lines > 0,
+        marker_lines,
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ConflictFileStages {
     pub path: PathBuf,
+    pub base_bytes: Option<Vec<u8>>,
+    pub ours_bytes: Option<Vec<u8>>,
+    pub theirs_bytes: Option<Vec<u8>>,
     pub base: Option<String>,
     pub ours: Option<String>,
     pub theirs: Option<String>,
@@ -123,6 +171,16 @@ pub trait GitRepository: Send + Sync {
     fn conflict_file_stages(&self, _path: &Path) -> Result<Option<ConflictFileStages>> {
         Err(Error::new(ErrorKind::Unsupported(
             "conflict stage reading is not implemented for this backend",
+        )))
+    }
+
+    /// Build a backend-native conflict session for a conflicted path.
+    ///
+    /// Backends that support conflict stages and conflict-kind detection should
+    /// return a populated session; unsupported backends return Unsupported.
+    fn conflict_session(&self, _path: &Path) -> Result<Option<ConflictSession>> {
+        Err(Error::new(ErrorKind::Unsupported(
+            "conflict session loading is not implemented for this backend",
         )))
     }
 
@@ -313,6 +371,37 @@ pub trait GitRepository: Send + Sync {
         )))
     }
 
+    /// Accept a conflict by explicitly deleting the path and staging removal.
+    ///
+    /// Used by decision/keep-delete resolvers when the chosen outcome is
+    /// "accept deletion" rather than selecting a side's content.
+    fn accept_conflict_deletion(&self, _path: &Path) -> Result<CommandOutput> {
+        Err(Error::new(ErrorKind::Unsupported(
+            "conflict deletion is not implemented for this backend",
+        )))
+    }
+
+    /// Restore a conflicted file from stage-1 (base) contents and stage it.
+    ///
+    /// Useful for decision-style conflicts where users want to explicitly
+    /// recover the base version as the resolution result.
+    fn checkout_conflict_base(&self, _path: &Path) -> Result<CommandOutput> {
+        Err(Error::new(ErrorKind::Unsupported(
+            "base conflict checkout is not implemented for this backend",
+        )))
+    }
+
+    /// Launch an external mergetool for a conflicted file.
+    ///
+    /// Materializes BASE, LOCAL, REMOTE temp files from the conflict stages,
+    /// invokes the configured (or specified) mergetool, reads back the merged
+    /// output, writes it to the worktree, and stages the result.
+    fn launch_mergetool(&self, _path: &Path) -> Result<MergetoolResult> {
+        Err(Error::new(ErrorKind::Unsupported(
+            "external mergetool is not implemented for this backend",
+        )))
+    }
+
     fn export_patch_with_output(
         &self,
         _commit_id: &CommitId,
@@ -409,4 +498,187 @@ pub enum PullMode {
 
 pub trait GitBackend: Send + Sync {
     fn open(&self, workdir: &Path) -> Result<Arc<dyn GitRepository>>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{CommandOutput, decode_utf8_optional, validate_conflict_resolution_text};
+
+    // ── validate_conflict_resolution_text ────────────────────────────
+
+    #[test]
+    fn validate_conflict_resolution_text_reports_no_markers() {
+        let validation = validate_conflict_resolution_text("line 1\nline 2\n");
+        assert!(!validation.has_conflict_markers);
+        assert_eq!(validation.marker_lines, 0);
+    }
+
+    #[test]
+    fn validate_conflict_resolution_text_counts_marker_lines() {
+        let text = "<<<<<<< ours\nx\n=======\ny\n>>>>>>> theirs\n";
+        let validation = validate_conflict_resolution_text(text);
+        assert!(validation.has_conflict_markers);
+        assert_eq!(validation.marker_lines, 3);
+    }
+
+    #[test]
+    fn validate_empty_text_reports_no_markers() {
+        let validation = validate_conflict_resolution_text("");
+        assert!(!validation.has_conflict_markers);
+        assert_eq!(validation.marker_lines, 0);
+    }
+
+    #[test]
+    fn validate_diff3_markers_detected() {
+        let text = "<<<<<<< ours\na\n||||||| base\nb\n=======\nc\n>>>>>>> theirs\n";
+        let validation = validate_conflict_resolution_text(text);
+        assert!(validation.has_conflict_markers);
+        assert_eq!(validation.marker_lines, 4);
+    }
+
+    #[test]
+    fn validate_markers_with_branch_annotations_detected() {
+        let text = "<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> feature/my-branch\n";
+        let validation = validate_conflict_resolution_text(text);
+        assert!(validation.has_conflict_markers);
+        assert_eq!(validation.marker_lines, 3);
+    }
+
+    #[test]
+    fn validate_partial_marker_set_detected() {
+        // Only start marker — still detects it
+        let text = "some code\n<<<<<<< HEAD\nmore code\n";
+        let validation = validate_conflict_resolution_text(text);
+        assert!(validation.has_conflict_markers);
+        assert_eq!(validation.marker_lines, 1);
+    }
+
+    #[test]
+    fn validate_markers_not_at_start_of_line_ignored() {
+        // Markers must be at line start to count
+        let text = "  <<<<<<< not a marker\n  ======= not a marker\n";
+        let validation = validate_conflict_resolution_text(text);
+        assert!(!validation.has_conflict_markers);
+        assert_eq!(validation.marker_lines, 0);
+    }
+
+    #[test]
+    fn validate_multiple_conflicts_counts_all_markers() {
+        let text = "\
+<<<<<<< HEAD\na\n=======\nb\n>>>>>>> branch1\n\
+<<<<<<< HEAD\nc\n=======\nd\n>>>>>>> branch2\n";
+        let validation = validate_conflict_resolution_text(text);
+        assert!(validation.has_conflict_markers);
+        assert_eq!(validation.marker_lines, 6);
+    }
+
+    // ── decode_utf8_optional ─────────────────────────────────────────
+
+    #[test]
+    fn decode_utf8_none_returns_none() {
+        assert_eq!(decode_utf8_optional(None), None);
+    }
+
+    #[test]
+    fn decode_utf8_valid_returns_string() {
+        let bytes = b"hello world";
+        assert_eq!(
+            decode_utf8_optional(Some(bytes.as_slice())),
+            Some("hello world".to_string())
+        );
+    }
+
+    #[test]
+    fn decode_utf8_invalid_returns_none() {
+        let bytes = &[0xff, 0xfe, 0x00, 0x01];
+        assert_eq!(decode_utf8_optional(Some(bytes.as_slice())), None);
+    }
+
+    #[test]
+    fn decode_utf8_empty_bytes_returns_empty_string() {
+        let bytes: &[u8] = b"";
+        assert_eq!(decode_utf8_optional(Some(bytes)), Some(String::new()));
+    }
+
+    #[test]
+    fn decode_utf8_multibyte_chars_preserved() {
+        let text = "héllo wörld 日本語";
+        assert_eq!(
+            decode_utf8_optional(Some(text.as_bytes())),
+            Some(text.to_string())
+        );
+    }
+
+    // ── CommandOutput ────────────────────────────────────────────────
+
+    #[test]
+    fn command_output_empty_success_has_zero_exit_code() {
+        let out = CommandOutput::empty_success("git status");
+        assert_eq!(out.command, "git status");
+        assert_eq!(out.stdout, "");
+        assert_eq!(out.stderr, "");
+        assert_eq!(out.exit_code, Some(0));
+    }
+
+    #[test]
+    fn command_output_combined_stdout_only() {
+        let out = CommandOutput {
+            command: "test".into(),
+            stdout: "output line\n".into(),
+            stderr: String::new(),
+            exit_code: Some(0),
+        };
+        assert_eq!(out.combined(), "output line");
+    }
+
+    #[test]
+    fn command_output_combined_stderr_only() {
+        let out = CommandOutput {
+            command: "test".into(),
+            stdout: String::new(),
+            stderr: "error message\n".into(),
+            exit_code: Some(1),
+        };
+        assert_eq!(out.combined(), "error message");
+    }
+
+    #[test]
+    fn command_output_combined_both_streams() {
+        let out = CommandOutput {
+            command: "test".into(),
+            stdout: "output\n".into(),
+            stderr: "warning\n".into(),
+            exit_code: Some(0),
+        };
+        assert_eq!(out.combined(), "output\nwarning");
+    }
+
+    #[test]
+    fn command_output_combined_empty_when_both_blank() {
+        let out = CommandOutput {
+            command: "test".into(),
+            stdout: "   \n".into(),
+            stderr: "  \n".into(),
+            exit_code: Some(0),
+        };
+        assert_eq!(out.combined(), "");
+    }
+
+    #[test]
+    fn command_output_combined_trims_trailing_whitespace() {
+        let out = CommandOutput {
+            command: "test".into(),
+            stdout: "line1\nline2\n\n".into(),
+            stderr: "err\n\n".into(),
+            exit_code: Some(0),
+        };
+        assert_eq!(out.combined(), "line1\nline2\nerr");
+    }
+
+    #[test]
+    fn command_output_default_has_no_exit_code() {
+        let out = CommandOutput::default();
+        assert_eq!(out.command, "");
+        assert_eq!(out.exit_code, None);
+    }
 }

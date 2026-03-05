@@ -423,6 +423,100 @@ impl std::fmt::Debug for Msg {
                 .field("path", path)
                 .field("side", side)
                 .finish(),
+            Msg::AcceptConflictDeletion { repo_id, path } => f
+                .debug_struct("AcceptConflictDeletion")
+                .field("repo_id", repo_id)
+                .field("path", path)
+                .finish(),
+            Msg::CheckoutConflictBase { repo_id, path } => f
+                .debug_struct("CheckoutConflictBase")
+                .field("repo_id", repo_id)
+                .field("path", path)
+                .finish(),
+            Msg::LaunchMergetool { repo_id, path } => f
+                .debug_struct("LaunchMergetool")
+                .field("repo_id", repo_id)
+                .field("path", path)
+                .finish(),
+            Msg::RecordConflictAutosolveTelemetry {
+                repo_id,
+                path,
+                mode,
+                total_conflicts_before,
+                total_conflicts_after,
+                unresolved_before,
+                unresolved_after,
+                stats,
+            } => f
+                .debug_struct("RecordConflictAutosolveTelemetry")
+                .field("repo_id", repo_id)
+                .field("path", path)
+                .field("mode", mode)
+                .field("total_conflicts_before", total_conflicts_before)
+                .field("total_conflicts_after", total_conflicts_after)
+                .field("unresolved_before", unresolved_before)
+                .field("unresolved_after", unresolved_after)
+                .field("stats", stats)
+                .finish(),
+            Msg::ConflictSetHideResolved {
+                repo_id,
+                path,
+                hide_resolved,
+            } => f
+                .debug_struct("ConflictSetHideResolved")
+                .field("repo_id", repo_id)
+                .field("path", path)
+                .field("hide_resolved", hide_resolved)
+                .finish(),
+            Msg::ConflictApplyBulkChoice {
+                repo_id,
+                path,
+                choice,
+            } => f
+                .debug_struct("ConflictApplyBulkChoice")
+                .field("repo_id", repo_id)
+                .field("path", path)
+                .field("choice", choice)
+                .finish(),
+            Msg::ConflictSetRegionChoice {
+                repo_id,
+                path,
+                region_index,
+                choice,
+            } => f
+                .debug_struct("ConflictSetRegionChoice")
+                .field("repo_id", repo_id)
+                .field("path", path)
+                .field("region_index", region_index)
+                .field("choice", choice)
+                .finish(),
+            Msg::ConflictSyncRegionResolutions {
+                repo_id,
+                path,
+                updates,
+            } => f
+                .debug_struct("ConflictSyncRegionResolutions")
+                .field("repo_id", repo_id)
+                .field("path", path)
+                .field("updates", updates)
+                .finish(),
+            Msg::ConflictApplyAutosolve {
+                repo_id,
+                path,
+                mode,
+                whitespace_normalize,
+            } => f
+                .debug_struct("ConflictApplyAutosolve")
+                .field("repo_id", repo_id)
+                .field("path", path)
+                .field("mode", mode)
+                .field("whitespace_normalize", whitespace_normalize)
+                .finish(),
+            Msg::ConflictResetResolutions { repo_id, path } => f
+                .debug_struct("ConflictResetResolutions")
+                .field("repo_id", repo_id)
+                .field("path", path)
+                .finish(),
             Msg::Stash {
                 repo_id,
                 message,
@@ -557,11 +651,13 @@ impl std::fmt::Debug for Msg {
                 repo_id,
                 path,
                 result,
+                conflict_session,
             } => f
                 .debug_struct("ConflictFileLoaded")
                 .field("repo_id", repo_id)
                 .field("path", path)
                 .field("result", result)
+                .field("conflict_session", conflict_session)
                 .finish(),
             Msg::WorktreesLoaded { repo_id, result } => f
                 .debug_struct("WorktreesLoaded")

@@ -131,6 +131,13 @@ enum ContextMenuAction {
     OpenPopover {
         kind: PopoverKind,
     },
+    ConflictResolverPick {
+        target: ResolverPickTarget,
+    },
+    ConflictResolverOutputCut {
+        text: String,
+    },
+    ConflictResolverOutputPaste,
     CopyText {
         text: String,
     },

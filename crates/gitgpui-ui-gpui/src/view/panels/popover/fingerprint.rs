@@ -65,7 +65,10 @@ fn repo_for_popover<'a>(state: &'a AppState, popover: &PopoverKind) -> Option<&'
         | PopoverKind::PushPicker
         | PopoverKind::AppMenu
         | PopoverKind::DiffHunks
-        | PopoverKind::HistoryColumnSettings => state.active_repo,
+        | PopoverKind::HistoryColumnSettings
+        | PopoverKind::ConflictResolverInputRowMenu { .. }
+        | PopoverKind::ConflictResolverChunkMenu { .. }
+        | PopoverKind::ConflictResolverOutputMenu { .. } => state.active_repo,
 
         // Popovers that carry an explicit repo id.
         PopoverKind::ResetPrompt { repo_id, .. }
@@ -96,6 +99,7 @@ fn repo_for_popover<'a>(state: &'a AppState, popover: &PopoverKind) -> Option<&'
         | PopoverKind::PushSetUpstreamPrompt { repo_id, .. }
         | PopoverKind::ForcePushConfirm { repo_id }
         | PopoverKind::MergeAbortConfirm { repo_id }
+        | PopoverKind::ConflictSaveStageConfirm { repo_id, .. }
         | PopoverKind::ForceDeleteBranchConfirm { repo_id, .. }
         | PopoverKind::DeleteRemoteBranchConfirm { repo_id, .. }
         | PopoverKind::DiscardChangesConfirm { repo_id, .. }
@@ -213,6 +217,7 @@ fn hash_repo_for_popover<H: Hasher>(repo: &RepoState, popover: &PopoverKind, has
 
         // Most prompt-style popovers don't require live state updates.
         PopoverKind::MergeAbortConfirm { .. }
+        | PopoverKind::ConflictSaveStageConfirm { .. }
         | PopoverKind::ResetPrompt { .. }
         | PopoverKind::CheckoutRemoteBranchPrompt { .. }
         | PopoverKind::RebasePrompt { .. }
@@ -222,6 +227,9 @@ fn hash_repo_for_popover<H: Hasher>(repo: &RepoState, popover: &PopoverKind, has
         | PopoverKind::StatusFileMenu { .. }
         | PopoverKind::TagMenu { .. }
         | PopoverKind::HistoryColumnSettings
+        | PopoverKind::ConflictResolverInputRowMenu { .. }
+        | PopoverKind::ConflictResolverChunkMenu { .. }
+        | PopoverKind::ConflictResolverOutputMenu { .. }
         | PopoverKind::AppMenu
         | PopoverKind::Settings
         | PopoverKind::RepoPicker
@@ -433,6 +441,48 @@ fn hash_popover_kind<H: Hasher>(kind: &PopoverKind, hasher: &mut H) {
             hunks_count.hash(hasher);
             lines_count.hash(hasher);
         }
+        PopoverKind::ConflictResolverInputRowMenu {
+            line_label,
+            line_target,
+            chunk_label,
+            chunk_target,
+        } => {
+            53u8.hash(hasher);
+            line_label.hash(hasher);
+            line_target.hash(hasher);
+            chunk_label.hash(hasher);
+            chunk_target.hash(hasher);
+        }
+        PopoverKind::ConflictResolverChunkMenu {
+            conflict_ix,
+            has_base,
+            is_three_way,
+            selected_choices,
+            output_line_ix,
+        } => {
+            59u8.hash(hasher);
+            conflict_ix.hash(hasher);
+            has_base.hash(hasher);
+            is_three_way.hash(hasher);
+            selected_choices.hash(hasher);
+            output_line_ix.hash(hasher);
+        }
+        PopoverKind::ConflictResolverOutputMenu {
+            cursor_line,
+            selected_text,
+            has_source_a,
+            has_source_b,
+            has_source_c,
+            is_three_way,
+        } => {
+            54u8.hash(hasher);
+            cursor_line.hash(hasher);
+            selected_text.hash(hasher);
+            has_source_a.hash(hasher);
+            has_source_b.hash(hasher);
+            has_source_c.hash(hasher);
+            is_three_way.hash(hasher);
+        }
         PopoverKind::CommitMenu { repo_id, commit_id } => {
             42u8.hash(hasher);
             repo_id.hash(hasher);
@@ -486,6 +536,18 @@ fn hash_popover_kind<H: Hasher>(kind: &PopoverKind, hasher: &mut H) {
         PopoverKind::MergeAbortConfirm { repo_id } => {
             51u8.hash(hasher);
             repo_id.hash(hasher);
+        }
+        PopoverKind::ConflictSaveStageConfirm {
+            repo_id,
+            path,
+            has_conflict_markers,
+            unresolved_blocks,
+        } => {
+            52u8.hash(hasher);
+            repo_id.hash(hasher);
+            path.hash(hasher);
+            has_conflict_markers.hash(hasher);
+            unresolved_blocks.hash(hasher);
         }
     }
 }

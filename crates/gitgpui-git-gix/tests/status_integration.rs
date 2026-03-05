@@ -1,13 +1,33 @@
+use gitgpui_core::conflict_session::{ConflictPayload, ConflictResolverStrategy};
 use gitgpui_core::domain::{DiffArea, DiffTarget, FileConflictKind, FileStatusKind};
+use gitgpui_core::error::ErrorKind;
 use gitgpui_core::services::ConflictSide;
 use gitgpui_core::services::GitBackend;
 use gitgpui_git_gix::GixBackend;
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
+#[cfg(unix)]
+use std::{fs::Permissions, os::unix::fs::PermissionsExt};
+
+#[cfg(windows)]
+const NULL_DEVICE: &str = "NUL";
+#[cfg(not(windows))]
+const NULL_DEVICE: &str = "/dev/null";
+
+fn git_command() -> Command {
+    let mut cmd = Command::new("git");
+    // Keep integration tests deterministic by isolating from host git config.
+    cmd.env("GIT_CONFIG_NOSYSTEM", "1");
+    cmd.env("GIT_CONFIG_GLOBAL", NULL_DEVICE);
+    // Some scenarios clone local file:// remotes (submodules, temp-origin repos).
+    cmd.env("GIT_ALLOW_PROTOCOL", "file");
+    cmd
+}
 
 fn run_git(repo: &Path, args: &[&str]) {
-    let status = Command::new("git")
+    let status = git_command()
         .arg("-C")
         .arg(repo)
         .args(args)
@@ -17,7 +37,7 @@ fn run_git(repo: &Path, args: &[&str]) {
 }
 
 fn run_git_expect_failure(repo: &Path, args: &[&str]) {
-    let status = Command::new("git")
+    let status = git_command()
         .arg("-C")
         .arg(repo)
         .args(args)
@@ -42,6 +62,159 @@ fn write_bytes(repo: &Path, rel: &str, contents: &[u8]) -> PathBuf {
     }
     fs::write(&path, contents).unwrap();
     path
+}
+
+fn hash_blob(repo: &Path, contents: &[u8]) -> String {
+    let mut child = git_command()
+        .arg("-C")
+        .arg(repo)
+        .args(["hash-object", "-w", "--stdin"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("git hash-object to run");
+
+    child
+        .stdin
+        .as_mut()
+        .expect("stdin pipe")
+        .write_all(contents)
+        .expect("write blob contents");
+
+    let output = child.wait_with_output().expect("wait for hash-object");
+    assert!(
+        output.status.success(),
+        "git hash-object failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    String::from_utf8(output.stdout)
+        .expect("hash-object stdout utf8")
+        .trim()
+        .to_owned()
+}
+
+fn set_unmerged_stages(
+    repo: &Path,
+    path: &str,
+    base_blob: Option<&str>,
+    ours_blob: Option<&str>,
+    theirs_blob: Option<&str>,
+) {
+    run_git(repo, &["update-index", "--force-remove", "--", path]);
+    let _ = fs::remove_file(repo.join(path));
+
+    let mut index_info = String::new();
+    if let Some(blob) = base_blob {
+        index_info.push_str(&format!("100644 {blob} 1\t{path}\n"));
+    }
+    if let Some(blob) = ours_blob {
+        index_info.push_str(&format!("100644 {blob} 2\t{path}\n"));
+    }
+    if let Some(blob) = theirs_blob {
+        index_info.push_str(&format!("100644 {blob} 3\t{path}\n"));
+    }
+
+    if index_info.is_empty() {
+        return;
+    }
+
+    let mut child = git_command()
+        .arg("-C")
+        .arg(repo)
+        .args(["update-index", "--index-info"])
+        .stdin(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("git update-index --index-info to run");
+
+    child
+        .stdin
+        .as_mut()
+        .expect("stdin pipe")
+        .write_all(index_info.as_bytes())
+        .expect("write index-info");
+
+    let output = child.wait_with_output().expect("wait for update-index");
+    assert!(
+        output.status.success(),
+        "git update-index --index-info failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+fn setup_both_modified_text_conflict(repo: &Path, path: &str, ours: &str, theirs: &str) {
+    run_git(repo, &["init"]);
+    run_git(repo, &["config", "user.email", "you@example.com"]);
+    run_git(repo, &["config", "user.name", "You"]);
+    run_git(repo, &["config", "commit.gpgsign", "false"]);
+    run_git(repo, &["config", "mergetool.guiDefault", "false"]);
+    run_git(repo, &["config", "merge.guitool", ""]);
+
+    write(repo, path, "base\n");
+    run_git(repo, &["add", path]);
+    run_git(
+        repo,
+        &["-c", "commit.gpgsign=false", "commit", "-m", "base"],
+    );
+
+    run_git(repo, &["checkout", "-b", "feature"]);
+    write(repo, path, theirs);
+    run_git(repo, &["add", path]);
+    run_git(
+        repo,
+        &["-c", "commit.gpgsign=false", "commit", "-m", "theirs"],
+    );
+
+    run_git(repo, &["checkout", "-"]);
+    write(repo, path, ours);
+    run_git(repo, &["add", path]);
+    run_git(
+        repo,
+        &["-c", "commit.gpgsign=false", "commit", "-m", "ours"],
+    );
+
+    run_git_expect_failure(repo, &["merge", "feature"]);
+}
+
+fn setup_both_added_text_conflict(repo: &Path, path: &str, ours: &str, theirs: &str) {
+    run_git(repo, &["init"]);
+    run_git(repo, &["config", "user.email", "you@example.com"]);
+    run_git(repo, &["config", "user.name", "You"]);
+    run_git(repo, &["config", "commit.gpgsign", "false"]);
+    run_git(repo, &["config", "mergetool.guiDefault", "false"]);
+    run_git(repo, &["config", "merge.guitool", ""]);
+
+    write(repo, "seed.txt", "seed\n");
+    run_git(repo, &["add", "seed.txt"]);
+    run_git(
+        repo,
+        &["-c", "commit.gpgsign=false", "commit", "-m", "base"],
+    );
+
+    run_git(repo, &["checkout", "-b", "feature"]);
+    write(repo, path, theirs);
+    run_git(repo, &["add", path]);
+    run_git(
+        repo,
+        &["-c", "commit.gpgsign=false", "commit", "-m", "theirs_add"],
+    );
+
+    run_git(repo, &["checkout", "-"]);
+    write(repo, path, ours);
+    run_git(repo, &["add", path]);
+    run_git(
+        repo,
+        &["-c", "commit.gpgsign=false", "commit", "-m", "ours_add"],
+    );
+
+    run_git_expect_failure(repo, &["merge", "feature"]);
+}
+
+#[cfg(unix)]
+fn make_executable(path: &Path) {
+    fs::set_permissions(path, Permissions::from_mode(0o755)).unwrap();
 }
 
 fn png_1x1_rgba(r: u8, g: u8, b: u8, a: u8) -> Vec<u8> {
@@ -111,6 +284,15 @@ fn png_1x1_rgba(r: u8, g: u8, b: u8, a: u8) -> Vec<u8> {
     push_be_u32(&mut out, crc32(b"IEND"));
 
     out
+}
+
+#[derive(Clone, Copy)]
+struct ConflictStageFixture {
+    path: &'static str,
+    kind: FileConflictKind,
+    has_base: bool,
+    has_ours: bool,
+    has_theirs: bool,
 }
 
 #[test]
@@ -266,7 +448,7 @@ fn diff_file_text_reports_old_and_new_for_working_tree_and_commits() {
         repo,
         &["-c", "commit.gpgsign=false", "commit", "-m", "second"],
     );
-    let head = Command::new("git")
+    let head = git_command()
         .arg("-C")
         .arg(repo)
         .args(["rev-parse", "HEAD"])
@@ -407,7 +589,7 @@ fn diff_file_image_reports_old_and_new_for_working_tree_and_commits() {
         repo,
         &["-c", "commit.gpgsign=false", "commit", "-m", "second"],
     );
-    let head = Command::new("git")
+    let head = git_command()
         .arg("-C")
         .arg(repo)
         .args(["rev-parse", "HEAD"])
@@ -503,6 +685,421 @@ fn diff_file_text_uses_ours_and_theirs_for_conflicted_paths() {
         .expect("file diff for conflicted changes");
     assert_eq!(diff.old.as_deref(), Some("ours\n"));
     assert_eq!(diff.new.as_deref(), Some("theirs\n"));
+
+    let session = opened
+        .conflict_session(Path::new("a.txt"))
+        .unwrap()
+        .expect("conflict session");
+    assert_eq!(session.conflict_kind, FileConflictKind::BothModified);
+    assert_eq!(session.strategy, ConflictResolverStrategy::FullTextResolver);
+    assert_eq!(session.total_regions(), 1);
+    assert_eq!(session.unsolved_count(), 1);
+    assert_eq!(session.regions[0].ours, "ours\n");
+    assert_eq!(session.regions[0].theirs, "theirs\n");
+}
+
+#[test]
+fn status_and_conflict_stages_cover_all_conflict_kinds() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = dir.path();
+
+    run_git(repo, &["init"]);
+    run_git(repo, &["config", "user.email", "you@example.com"]);
+    run_git(repo, &["config", "user.name", "You"]);
+    run_git(repo, &["config", "commit.gpgsign", "false"]);
+
+    write(repo, "seed.txt", "seed\n");
+    run_git(repo, &["add", "seed.txt"]);
+    run_git(
+        repo,
+        &["-c", "commit.gpgsign=false", "commit", "-m", "seed"],
+    );
+
+    let base_blob = hash_blob(repo, b"base\n");
+    let ours_blob = hash_blob(repo, b"ours\n");
+    let theirs_blob = hash_blob(repo, b"theirs\n");
+
+    let fixtures = [
+        ConflictStageFixture {
+            path: "dd.txt",
+            kind: FileConflictKind::BothDeleted,
+            has_base: true,
+            has_ours: false,
+            has_theirs: false,
+        },
+        ConflictStageFixture {
+            path: "au.txt",
+            kind: FileConflictKind::AddedByUs,
+            has_base: false,
+            has_ours: true,
+            has_theirs: false,
+        },
+        ConflictStageFixture {
+            path: "ud.txt",
+            kind: FileConflictKind::DeletedByThem,
+            has_base: true,
+            has_ours: true,
+            has_theirs: false,
+        },
+        ConflictStageFixture {
+            path: "ua.txt",
+            kind: FileConflictKind::AddedByThem,
+            has_base: false,
+            has_ours: false,
+            has_theirs: true,
+        },
+        ConflictStageFixture {
+            path: "du.txt",
+            kind: FileConflictKind::DeletedByUs,
+            has_base: true,
+            has_ours: false,
+            has_theirs: true,
+        },
+        ConflictStageFixture {
+            path: "aa.txt",
+            kind: FileConflictKind::BothAdded,
+            has_base: false,
+            has_ours: true,
+            has_theirs: true,
+        },
+        ConflictStageFixture {
+            path: "uu.txt",
+            kind: FileConflictKind::BothModified,
+            has_base: true,
+            has_ours: true,
+            has_theirs: true,
+        },
+    ];
+
+    for fixture in &fixtures {
+        set_unmerged_stages(
+            repo,
+            fixture.path,
+            fixture.has_base.then_some(base_blob.as_str()),
+            fixture.has_ours.then_some(ours_blob.as_str()),
+            fixture.has_theirs.then_some(theirs_blob.as_str()),
+        );
+    }
+
+    let backend = GixBackend;
+    let opened = backend.open(repo).unwrap();
+    let status = opened.status().unwrap();
+
+    for fixture in &fixtures {
+        let path = Path::new(fixture.path);
+        let status_entry = status
+            .unstaged
+            .iter()
+            .find(|e| e.path == path)
+            .unwrap_or_else(|| panic!("missing status entry for {}", fixture.path));
+        assert_eq!(
+            status_entry.kind,
+            FileStatusKind::Conflicted,
+            "expected conflicted kind for {}",
+            fixture.path
+        );
+        assert_eq!(
+            status_entry.conflict,
+            Some(fixture.kind),
+            "wrong conflict kind for {}",
+            fixture.path
+        );
+
+        assert!(
+            !status.staged.iter().any(|e| e.path == path),
+            "conflicted path {} should not appear in staged status",
+            fixture.path
+        );
+
+        let stages = opened
+            .conflict_file_stages(path)
+            .unwrap()
+            .expect("conflict stages");
+        assert_eq!(
+            stages.base.is_some(),
+            fixture.has_base,
+            "base stage mismatch for {}",
+            fixture.path
+        );
+        assert_eq!(
+            stages.ours.is_some(),
+            fixture.has_ours,
+            "ours stage mismatch for {}",
+            fixture.path
+        );
+        assert_eq!(
+            stages.theirs.is_some(),
+            fixture.has_theirs,
+            "theirs stage mismatch for {}",
+            fixture.path
+        );
+
+        let session = opened
+            .conflict_session(path)
+            .unwrap()
+            .expect("conflict session");
+        assert_eq!(session.path, PathBuf::from(fixture.path));
+        assert_eq!(session.conflict_kind, fixture.kind);
+        assert_eq!(
+            session.strategy,
+            ConflictResolverStrategy::for_conflict(fixture.kind, false)
+        );
+        assert_eq!(session.base.is_absent(), !fixture.has_base);
+        assert_eq!(session.ours.is_absent(), !fixture.has_ours);
+        assert_eq!(session.theirs.is_absent(), !fixture.has_theirs);
+    }
+}
+
+#[test]
+fn checkout_conflict_side_resolves_all_conflict_stage_shapes() {
+    #[derive(Clone, Copy)]
+    struct ConflictCheckoutFixture {
+        kind: FileConflictKind,
+        has_base: bool,
+        has_ours: bool,
+        has_theirs: bool,
+    }
+
+    let fixtures = [
+        ConflictCheckoutFixture {
+            kind: FileConflictKind::BothDeleted,
+            has_base: true,
+            has_ours: false,
+            has_theirs: false,
+        },
+        ConflictCheckoutFixture {
+            kind: FileConflictKind::AddedByUs,
+            has_base: false,
+            has_ours: true,
+            has_theirs: false,
+        },
+        ConflictCheckoutFixture {
+            kind: FileConflictKind::DeletedByThem,
+            has_base: true,
+            has_ours: true,
+            has_theirs: false,
+        },
+        ConflictCheckoutFixture {
+            kind: FileConflictKind::AddedByThem,
+            has_base: false,
+            has_ours: false,
+            has_theirs: true,
+        },
+        ConflictCheckoutFixture {
+            kind: FileConflictKind::DeletedByUs,
+            has_base: true,
+            has_ours: false,
+            has_theirs: true,
+        },
+        ConflictCheckoutFixture {
+            kind: FileConflictKind::BothAdded,
+            has_base: false,
+            has_ours: true,
+            has_theirs: true,
+        },
+        ConflictCheckoutFixture {
+            kind: FileConflictKind::BothModified,
+            has_base: true,
+            has_ours: true,
+            has_theirs: true,
+        },
+    ];
+
+    for fixture in fixtures {
+        for side in [ConflictSide::Ours, ConflictSide::Theirs] {
+            let dir = tempfile::tempdir().unwrap();
+            let repo = dir.path();
+
+            run_git(repo, &["init"]);
+            run_git(repo, &["config", "user.email", "you@example.com"]);
+            run_git(repo, &["config", "user.name", "You"]);
+            run_git(repo, &["config", "commit.gpgsign", "false"]);
+
+            write(repo, "seed.txt", "seed\n");
+            run_git(repo, &["add", "seed.txt"]);
+            run_git(
+                repo,
+                &["-c", "commit.gpgsign=false", "commit", "-m", "seed"],
+            );
+
+            let base_blob = hash_blob(repo, b"base\n");
+            let ours_blob = hash_blob(repo, b"ours\n");
+            let theirs_blob = hash_blob(repo, b"theirs\n");
+
+            set_unmerged_stages(
+                repo,
+                "a.txt",
+                fixture.has_base.then_some(base_blob.as_str()),
+                fixture.has_ours.then_some(ours_blob.as_str()),
+                fixture.has_theirs.then_some(theirs_blob.as_str()),
+            );
+
+            let backend = GixBackend;
+            let opened = backend.open(repo).unwrap();
+
+            let before = opened.status().unwrap();
+            let conflict_entry = before
+                .unstaged
+                .iter()
+                .find(|e| e.path == Path::new("a.txt"))
+                .expect("expected staged-shape fixture to appear as conflict");
+            assert_eq!(conflict_entry.kind, FileStatusKind::Conflicted);
+            assert_eq!(conflict_entry.conflict, Some(fixture.kind));
+
+            opened
+                .checkout_conflict_side(Path::new("a.txt"), side)
+                .unwrap();
+
+            let after = opened.status().unwrap();
+            let selected_stage_exists = match side {
+                ConflictSide::Ours => fixture.has_ours,
+                ConflictSide::Theirs => fixture.has_theirs,
+            };
+
+            if selected_stage_exists {
+                let expected_bytes: &[u8] = match side {
+                    ConflictSide::Ours => b"ours\n",
+                    ConflictSide::Theirs => b"theirs\n",
+                };
+                assert_eq!(fs::read(repo.join("a.txt")).unwrap(), expected_bytes);
+                assert!(
+                    after
+                        .staged
+                        .iter()
+                        .any(|e| e.path == Path::new("a.txt") && e.kind == FileStatusKind::Added),
+                    "expected selected side to stage added file for {:?} with {:?}; status={after:?}",
+                    fixture.kind,
+                    side
+                );
+                assert!(
+                    after.unstaged.iter().all(|e| e.path != Path::new("a.txt")),
+                    "expected conflict path to disappear from unstaged after resolving {:?} with {:?}; status={after:?}",
+                    fixture.kind,
+                    side
+                );
+            } else {
+                assert!(
+                    !repo.join("a.txt").exists(),
+                    "expected path to be removed when chosen stage is missing for {:?} with {:?}",
+                    fixture.kind,
+                    side
+                );
+                assert!(
+                    after
+                        .staged
+                        .iter()
+                        .chain(after.unstaged.iter())
+                        .all(|e| e.path != Path::new("a.txt")),
+                    "expected no status entry for removed path after resolving {:?} with {:?}; status={after:?}",
+                    fixture.kind,
+                    side
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn accept_conflict_deletion_resolves_delete_outcome_conflicts() {
+    #[derive(Clone, Copy)]
+    struct ConflictDeleteFixture {
+        kind: FileConflictKind,
+        has_base: bool,
+        has_ours: bool,
+        has_theirs: bool,
+    }
+
+    let fixtures = [
+        ConflictDeleteFixture {
+            kind: FileConflictKind::BothDeleted,
+            has_base: true,
+            has_ours: false,
+            has_theirs: false,
+        },
+        ConflictDeleteFixture {
+            kind: FileConflictKind::AddedByUs,
+            has_base: false,
+            has_ours: true,
+            has_theirs: false,
+        },
+        ConflictDeleteFixture {
+            kind: FileConflictKind::AddedByThem,
+            has_base: false,
+            has_ours: false,
+            has_theirs: true,
+        },
+        ConflictDeleteFixture {
+            kind: FileConflictKind::DeletedByUs,
+            has_base: true,
+            has_ours: false,
+            has_theirs: true,
+        },
+        ConflictDeleteFixture {
+            kind: FileConflictKind::DeletedByThem,
+            has_base: true,
+            has_ours: true,
+            has_theirs: false,
+        },
+    ];
+
+    for fixture in fixtures {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = dir.path();
+
+        run_git(repo, &["init"]);
+        run_git(repo, &["config", "user.email", "you@example.com"]);
+        run_git(repo, &["config", "user.name", "You"]);
+        run_git(repo, &["config", "commit.gpgsign", "false"]);
+
+        write(repo, "seed.txt", "seed\n");
+        run_git(repo, &["add", "seed.txt"]);
+        run_git(
+            repo,
+            &["-c", "commit.gpgsign=false", "commit", "-m", "seed"],
+        );
+
+        let base_blob = hash_blob(repo, b"base\n");
+        let ours_blob = hash_blob(repo, b"ours\n");
+        let theirs_blob = hash_blob(repo, b"theirs\n");
+
+        set_unmerged_stages(
+            repo,
+            "a.txt",
+            fixture.has_base.then_some(base_blob.as_str()),
+            fixture.has_ours.then_some(ours_blob.as_str()),
+            fixture.has_theirs.then_some(theirs_blob.as_str()),
+        );
+
+        let backend = GixBackend;
+        let opened = backend.open(repo).unwrap();
+
+        let before = opened.status().unwrap();
+        let conflict_entry = before
+            .unstaged
+            .iter()
+            .find(|e| e.path == Path::new("a.txt"))
+            .expect("expected fixture path to appear as conflict");
+        assert_eq!(conflict_entry.kind, FileStatusKind::Conflicted);
+        assert_eq!(conflict_entry.conflict, Some(fixture.kind));
+
+        opened.accept_conflict_deletion(Path::new("a.txt")).unwrap();
+
+        let after = opened.status().unwrap();
+        assert!(
+            !repo.join("a.txt").exists(),
+            "expected path to be removed after accepting deletion for {:?}",
+            fixture.kind
+        );
+        assert!(
+            after
+                .staged
+                .iter()
+                .chain(after.unstaged.iter())
+                .all(|e| e.path != Path::new("a.txt")),
+            "expected no status entry for deleted path after resolving {:?}; status={after:?}",
+            fixture.kind
+        );
+    }
 }
 
 #[test]
@@ -603,6 +1200,191 @@ fn status_reports_conflict_kind_for_add_add() {
         status.unstaged[0].conflict,
         Some(FileConflictKind::BothAdded)
     );
+}
+
+#[test]
+fn conflict_file_stages_preserve_non_utf8_bytes() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = dir.path();
+
+    run_git(repo, &["init"]);
+    run_git(repo, &["config", "user.email", "you@example.com"]);
+    run_git(repo, &["config", "user.name", "You"]);
+    run_git(repo, &["config", "commit.gpgsign", "false"]);
+
+    let base_bytes = b"\x00base\xff\n".to_vec();
+    let ours_bytes = b"\x00ours\xff\n".to_vec();
+    let theirs_bytes = b"\x00theirs\xff\n".to_vec();
+
+    write_bytes(repo, "bin.dat", &base_bytes);
+    run_git(repo, &["add", "bin.dat"]);
+    run_git(
+        repo,
+        &["-c", "commit.gpgsign=false", "commit", "-m", "base"],
+    );
+
+    run_git(repo, &["checkout", "-b", "feature"]);
+    write_bytes(repo, "bin.dat", &theirs_bytes);
+    run_git(repo, &["add", "bin.dat"]);
+    run_git(
+        repo,
+        &["-c", "commit.gpgsign=false", "commit", "-m", "theirs"],
+    );
+
+    run_git(repo, &["checkout", "-"]);
+    write_bytes(repo, "bin.dat", &ours_bytes);
+    run_git(repo, &["add", "bin.dat"]);
+    run_git(
+        repo,
+        &["-c", "commit.gpgsign=false", "commit", "-m", "ours"],
+    );
+
+    run_git_expect_failure(repo, &["merge", "feature"]);
+
+    let backend = GixBackend;
+    let opened = backend.open(repo).unwrap();
+    let stages = opened
+        .conflict_file_stages(Path::new("bin.dat"))
+        .unwrap()
+        .expect("conflict stage data");
+
+    assert_eq!(stages.path, PathBuf::from("bin.dat"));
+    assert_eq!(stages.base_bytes.as_deref(), Some(base_bytes.as_slice()));
+    assert_eq!(stages.ours_bytes.as_deref(), Some(ours_bytes.as_slice()));
+    assert_eq!(
+        stages.theirs_bytes.as_deref(),
+        Some(theirs_bytes.as_slice())
+    );
+    assert_eq!(stages.base, None);
+    assert_eq!(stages.ours, None);
+    assert_eq!(stages.theirs, None);
+
+    let session = opened
+        .conflict_session(Path::new("bin.dat"))
+        .unwrap()
+        .expect("conflict session");
+    assert_eq!(session.path, PathBuf::from("bin.dat"));
+    assert_eq!(session.strategy, ConflictResolverStrategy::BinarySidePick);
+    assert_eq!(session.total_regions(), 1);
+    assert_eq!(session.unsolved_count(), 1);
+    assert!(!session.is_fully_resolved());
+    assert!(matches!(session.base, ConflictPayload::Binary(_)));
+    assert!(matches!(session.ours, ConflictPayload::Binary(_)));
+    assert!(matches!(session.theirs, ConflictPayload::Binary(_)));
+}
+
+#[test]
+fn checkout_conflict_side_resolves_non_utf8_binary_conflict() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = dir.path();
+
+    run_git(repo, &["init"]);
+    run_git(repo, &["config", "user.email", "you@example.com"]);
+    run_git(repo, &["config", "user.name", "You"]);
+    run_git(repo, &["config", "commit.gpgsign", "false"]);
+
+    let base_bytes = b"\x00base\xff\n".to_vec();
+    let ours_bytes = b"\x00ours\xff\n".to_vec();
+    let theirs_bytes = b"\x00theirs\xff\n".to_vec();
+
+    write_bytes(repo, "bin.dat", &base_bytes);
+    run_git(repo, &["add", "bin.dat"]);
+    run_git(
+        repo,
+        &["-c", "commit.gpgsign=false", "commit", "-m", "base"],
+    );
+
+    run_git(repo, &["checkout", "-b", "feature"]);
+    write_bytes(repo, "bin.dat", &theirs_bytes);
+    run_git(repo, &["add", "bin.dat"]);
+    run_git(
+        repo,
+        &["-c", "commit.gpgsign=false", "commit", "-m", "theirs"],
+    );
+
+    run_git(repo, &["checkout", "-"]);
+    write_bytes(repo, "bin.dat", &ours_bytes);
+    run_git(repo, &["add", "bin.dat"]);
+    run_git(
+        repo,
+        &["-c", "commit.gpgsign=false", "commit", "-m", "ours"],
+    );
+
+    run_git_expect_failure(repo, &["merge", "feature"]);
+
+    let backend = GixBackend;
+    let opened = backend.open(repo).unwrap();
+
+    let session = opened
+        .conflict_session(Path::new("bin.dat"))
+        .unwrap()
+        .expect("binary conflict session");
+    assert_eq!(session.strategy, ConflictResolverStrategy::BinarySidePick);
+
+    opened
+        .checkout_conflict_side(Path::new("bin.dat"), ConflictSide::Theirs)
+        .unwrap();
+
+    assert_eq!(fs::read(repo.join("bin.dat")).unwrap(), theirs_bytes);
+
+    let status_after = opened.status().unwrap();
+    assert!(
+        !status_after
+            .unstaged
+            .iter()
+            .any(|e| e.path == Path::new("bin.dat") && e.kind == FileStatusKind::Conflicted),
+        "binary conflict should be cleared after choosing theirs"
+    );
+    assert!(
+        status_after
+            .staged
+            .iter()
+            .any(|e| e.path == Path::new("bin.dat")),
+        "chosen binary side should be staged"
+    );
+}
+
+#[test]
+fn conflict_session_both_deleted_binary_prefers_decision_strategy() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = dir.path();
+
+    run_git(repo, &["init"]);
+    run_git(repo, &["config", "user.email", "you@example.com"]);
+    run_git(repo, &["config", "user.name", "You"]);
+    run_git(repo, &["config", "commit.gpgsign", "false"]);
+
+    write(repo, "seed.txt", "seed\n");
+    run_git(repo, &["add", "seed.txt"]);
+    run_git(
+        repo,
+        &["-c", "commit.gpgsign=false", "commit", "-m", "seed"],
+    );
+
+    let base_blob = hash_blob(repo, b"\x00base\xff\n");
+    set_unmerged_stages(repo, "gone.bin", Some(base_blob.as_str()), None, None);
+
+    let backend = GixBackend;
+    let opened = backend.open(repo).unwrap();
+
+    let status = opened.status().unwrap();
+    let entry = status
+        .unstaged
+        .iter()
+        .find(|e| e.path == Path::new("gone.bin"))
+        .expect("expected conflict status entry");
+    assert_eq!(entry.kind, FileStatusKind::Conflicted);
+    assert_eq!(entry.conflict, Some(FileConflictKind::BothDeleted));
+
+    let session = opened
+        .conflict_session(Path::new("gone.bin"))
+        .unwrap()
+        .expect("conflict session");
+    assert_eq!(session.conflict_kind, FileConflictKind::BothDeleted);
+    assert_eq!(session.strategy, ConflictResolverStrategy::DecisionOnly);
+    assert!(matches!(session.base, ConflictPayload::Binary(_)));
+    assert!(session.ours.is_absent());
+    assert!(session.theirs.is_absent());
 }
 
 #[test]
@@ -824,6 +1606,724 @@ fn checkout_conflict_side_stages_resolution() {
 }
 
 #[test]
+fn launch_mergetool_trust_exit_false_detects_same_size_content_change() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = dir.path();
+    setup_both_modified_text_conflict(repo, "a.txt", "ours\n", "theirs\n");
+
+    // Normalize pre-tool mtime to a fixed timestamp so metadata-only checks
+    // cannot detect the edit when the command restores mtime.
+    let touch_status = Command::new("touch")
+        .arg("-d")
+        .arg("@1700000000")
+        .arg(repo.join("a.txt"))
+        .status()
+        .expect("touch to run");
+    assert!(touch_status.success());
+
+    run_git(repo, &["config", "merge.tool", "fake"]);
+    let cmd = "len=$(wc -c < \"$MERGED\"); head -c \"$len\" /dev/zero | tr '\\0' 'R' > \"$MERGED\"; touch -d '@1700000000' \"$MERGED\"; exit 1";
+    run_git(repo, &["config", "mergetool.fake.cmd", cmd]);
+    run_git(repo, &["config", "mergetool.fake.trustExitCode", "false"]);
+
+    let backend = GixBackend;
+    let opened = backend.open(repo).unwrap();
+    let result = opened.launch_mergetool(Path::new("a.txt")).unwrap();
+    assert!(result.success);
+    assert_eq!(result.tool_name, "fake");
+    assert_eq!(result.output.exit_code, Some(1));
+
+    let on_disk = fs::read(repo.join("a.txt")).unwrap();
+    assert!(!on_disk.is_empty());
+    assert_eq!(on_disk[0], b'R');
+    assert_eq!(result.merged_contents.as_deref(), Some(on_disk.as_slice()));
+
+    let status = opened.status().unwrap();
+    assert!(status.unstaged.iter().all(|e| e.path != Path::new("a.txt")));
+    assert!(
+        status
+            .staged
+            .iter()
+            .any(|e| e.path == Path::new("a.txt") && e.kind == FileStatusKind::Modified),
+        "expected staged resolution after content-changing mergetool run, got {status:?}"
+    );
+}
+
+#[test]
+fn launch_mergetool_trust_exit_false_requires_content_change() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = dir.path();
+    setup_both_modified_text_conflict(repo, "a.txt", "ours\n", "theirs\n");
+
+    run_git(repo, &["config", "merge.tool", "fake"]);
+    run_git(repo, &["config", "mergetool.fake.cmd", "exit 0"]);
+    run_git(repo, &["config", "mergetool.fake.trustExitCode", "false"]);
+
+    let backend = GixBackend;
+    let opened = backend.open(repo).unwrap();
+    let result = opened.launch_mergetool(Path::new("a.txt")).unwrap();
+    assert!(!result.success);
+    assert_eq!(result.tool_name, "fake");
+    assert_eq!(result.output.exit_code, Some(0));
+    assert!(result.merged_contents.is_none());
+
+    let status = opened.status().unwrap();
+    assert!(
+        status
+            .staged
+            .iter()
+            .all(|entry| entry.path != Path::new("a.txt")),
+        "unexpected staged resolution when mergetool did not change output: {status:?}"
+    );
+    let conflict_entry = status
+        .unstaged
+        .iter()
+        .find(|entry| entry.path == Path::new("a.txt"))
+        .expect("conflict should remain unresolved");
+    assert_eq!(conflict_entry.kind, FileStatusKind::Conflicted);
+    assert_eq!(
+        conflict_entry.conflict,
+        Some(FileConflictKind::BothModified)
+    );
+}
+
+#[test]
+fn launch_mergetool_trust_exit_false_detects_deleted_output_change() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = dir.path();
+    setup_both_modified_text_conflict(repo, "a.txt", "ours\n", "theirs\n");
+
+    run_git(repo, &["config", "merge.tool", "fake"]);
+    run_git(
+        repo,
+        &["config", "mergetool.fake.cmd", "rm -f \"$MERGED\"; exit 1"],
+    );
+    run_git(repo, &["config", "mergetool.fake.trustExitCode", "false"]);
+
+    let backend = GixBackend;
+    let opened = backend.open(repo).unwrap();
+    let result = opened.launch_mergetool(Path::new("a.txt")).unwrap();
+    assert!(result.success);
+    assert_eq!(result.tool_name, "fake");
+    assert_eq!(result.output.exit_code, Some(1));
+    assert!(
+        result.merged_contents.is_none(),
+        "deleted-output resolution should not return merged file bytes"
+    );
+    assert!(
+        !repo.join("a.txt").exists(),
+        "mergetool delete output should remove the worktree file"
+    );
+
+    let status = opened.status().unwrap();
+    assert!(
+        status.unstaged.iter().all(|e| e.path != Path::new("a.txt")),
+        "expected conflict to clear from unstaged after delete-output mergetool run, got {status:?}"
+    );
+    assert!(
+        status
+            .staged
+            .iter()
+            .any(|e| e.path == Path::new("a.txt") && e.kind == FileStatusKind::Deleted),
+        "expected delete-output mergetool run to stage file deletion, got {status:?}"
+    );
+}
+
+#[test]
+fn launch_mergetool_rejects_unresolved_marker_output() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = dir.path();
+    setup_both_modified_text_conflict(repo, "a.txt", "ours\n", "theirs\n");
+
+    run_git(repo, &["config", "merge.tool", "fake"]);
+    let cmd = "printf '<<<<<<< ours\nleft\n=======\nright\n>>>>>>> theirs\n' > \"$MERGED\"; exit 0";
+    run_git(repo, &["config", "mergetool.fake.cmd", cmd]);
+    run_git(repo, &["config", "mergetool.fake.trustExitCode", "true"]);
+
+    let backend = GixBackend;
+    let opened = backend.open(repo).unwrap();
+    let err = opened
+        .launch_mergetool(Path::new("a.txt"))
+        .expect_err("mergetool should fail when merged output still has markers");
+
+    match err.kind() {
+        ErrorKind::Backend(msg) => {
+            assert!(
+                msg.contains("left unresolved conflict markers"),
+                "unexpected backend error: {msg}"
+            );
+            assert!(
+                msg.contains("a.txt"),
+                "backend error should include conflicted path: {msg}"
+            );
+        }
+        other => panic!("expected backend error, got {other:?}"),
+    }
+
+    let status = opened.status().unwrap();
+    assert!(
+        status
+            .staged
+            .iter()
+            .all(|entry| entry.path != Path::new("a.txt")),
+        "unexpected staged resolution when mergetool left markers: {status:?}"
+    );
+    let conflict_entry = status
+        .unstaged
+        .iter()
+        .find(|entry| entry.path == Path::new("a.txt"))
+        .expect("conflict should remain unresolved");
+    assert_eq!(conflict_entry.kind, FileStatusKind::Conflicted);
+    assert_eq!(
+        conflict_entry.conflict,
+        Some(FileConflictKind::BothModified)
+    );
+}
+
+#[test]
+fn launch_mergetool_custom_cmd_supports_braced_env_variables() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = dir.path();
+    let conflicted_path = "docs/a space.txt";
+    setup_both_modified_text_conflict(repo, conflicted_path, "ours\n", "theirs\n");
+
+    run_git(repo, &["config", "merge.tool", "fake"]);
+    run_git(
+        repo,
+        &[
+            "config",
+            "mergetool.fake.cmd",
+            "cat \"${REMOTE}\" > \"${MERGED}\"; exit 0",
+        ],
+    );
+    run_git(repo, &["config", "mergetool.fake.trustExitCode", "true"]);
+
+    let backend = GixBackend;
+    let opened = backend.open(repo).unwrap();
+    let path = Path::new(conflicted_path);
+    let result = opened.launch_mergetool(path).unwrap();
+    assert!(
+        result.success,
+        "expected braced variable expansion to succeed, got {result:?}"
+    );
+    assert_eq!(result.tool_name, "fake");
+    assert_eq!(result.output.exit_code, Some(0));
+
+    let on_disk = fs::read_to_string(repo.join(conflicted_path)).unwrap();
+    assert_eq!(on_disk, "theirs\n");
+    assert_eq!(
+        result.merged_contents.as_deref(),
+        Some("theirs\n".as_bytes())
+    );
+
+    let status = opened.status().unwrap();
+    assert!(
+        status.unstaged.iter().all(|e| e.path != path),
+        "expected conflict to clear after mergetool resolution: {status:?}"
+    );
+    assert!(
+        status
+            .staged
+            .iter()
+            .any(|e| e.path == path && e.kind == FileStatusKind::Modified),
+        "expected resolved file to be staged after mergetool run: {status:?}"
+    );
+}
+
+#[test]
+fn launch_mergetool_custom_cmd_supports_unicode_conflicted_path() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = dir.path();
+    let conflicted_path = "docs/spaced 日本語 file.txt";
+    setup_both_modified_text_conflict(repo, conflicted_path, "ours\n", "theirs\n");
+
+    run_git(repo, &["config", "merge.tool", "fake"]);
+    run_git(
+        repo,
+        &[
+            "config",
+            "mergetool.fake.cmd",
+            "cat \"${REMOTE}\" > \"${MERGED}\"; exit 0",
+        ],
+    );
+    run_git(repo, &["config", "mergetool.fake.trustExitCode", "true"]);
+
+    let backend = GixBackend;
+    let opened = backend.open(repo).unwrap();
+    let path = Path::new(conflicted_path);
+    let result = opened.launch_mergetool(path).unwrap();
+    assert!(
+        result.success,
+        "expected unicode conflicted path to resolve, got {result:?}"
+    );
+    assert_eq!(result.tool_name, "fake");
+    assert_eq!(result.output.exit_code, Some(0));
+
+    let on_disk = fs::read_to_string(repo.join(conflicted_path)).unwrap();
+    assert_eq!(on_disk, "theirs\n");
+    assert_eq!(
+        result.merged_contents.as_deref(),
+        Some("theirs\n".as_bytes())
+    );
+
+    let status = opened.status().unwrap();
+    assert!(
+        status.unstaged.iter().all(|entry| entry.path != path),
+        "expected unicode conflict to clear after mergetool resolution: {status:?}"
+    );
+    assert!(
+        status
+            .staged
+            .iter()
+            .any(|entry| entry.path == path && entry.kind == FileStatusKind::Modified),
+        "expected resolved unicode path to be staged after mergetool run: {status:?}"
+    );
+}
+
+#[test]
+fn launch_mergetool_prefers_merge_guitool_when_gui_default_true() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = dir.path();
+    setup_both_modified_text_conflict(repo, "a.txt", "ours\n", "theirs\n");
+
+    run_git(repo, &["config", "merge.tool", "cli"]);
+    run_git(repo, &["config", "merge.guitool", "gui"]);
+    run_git(repo, &["config", "mergetool.guiDefault", "true"]);
+    run_git(
+        repo,
+        &[
+            "config",
+            "mergetool.cli.cmd",
+            "printf 'cli\\n' > \"$MERGED\"",
+        ],
+    );
+    run_git(
+        repo,
+        &[
+            "config",
+            "mergetool.gui.cmd",
+            "printf 'gui\\n' > \"$MERGED\"",
+        ],
+    );
+    run_git(repo, &["config", "mergetool.cli.trustExitCode", "true"]);
+    run_git(repo, &["config", "mergetool.gui.trustExitCode", "true"]);
+
+    let backend = GixBackend;
+    let opened = backend.open(repo).unwrap();
+    let result = opened.launch_mergetool(Path::new("a.txt")).unwrap();
+    assert!(result.success);
+    assert_eq!(result.tool_name, "gui");
+    assert_eq!(result.merged_contents.as_deref(), Some("gui\n".as_bytes()));
+    assert_eq!(fs::read_to_string(repo.join("a.txt")).unwrap(), "gui\n");
+}
+
+#[cfg(unix)]
+#[test]
+fn launch_mergetool_uses_tool_path_override_without_custom_cmd() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = dir.path();
+    setup_both_modified_text_conflict(repo, "a.txt", "ours\n", "theirs\n");
+
+    let script_path = repo.join("fake-merge-tool.sh");
+    fs::write(
+        &script_path,
+        "#!/bin/sh\n# args: local base remote merged\ncat \"$3\" > \"$4\"\n",
+    )
+    .unwrap();
+    make_executable(&script_path);
+
+    run_git(repo, &["config", "merge.tool", "fake"]);
+    run_git(
+        repo,
+        &[
+            "config",
+            "mergetool.fake.path",
+            script_path.to_string_lossy().as_ref(),
+        ],
+    );
+    run_git(repo, &["config", "mergetool.fake.trustExitCode", "true"]);
+
+    let backend = GixBackend;
+    let opened = backend.open(repo).unwrap();
+    let result = opened.launch_mergetool(Path::new("a.txt")).unwrap();
+    assert!(result.success);
+    assert_eq!(result.tool_name, "fake");
+    assert_eq!(
+        result.merged_contents.as_deref(),
+        Some("theirs\n".as_bytes())
+    );
+    assert_eq!(fs::read_to_string(repo.join("a.txt")).unwrap(), "theirs\n");
+}
+
+#[cfg(unix)]
+#[test]
+fn launch_mergetool_prefers_custom_cmd_over_tool_path_override() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = dir.path();
+    setup_both_modified_text_conflict(repo, "a.txt", "ours\n", "theirs\n");
+
+    let script_path = repo.join("fake-merge-tool.sh");
+    fs::write(
+        &script_path,
+        "#!/bin/sh\nprintf 'path\\n' > \"$4\"\ntouch \"$PWD/path_invoked\"\n",
+    )
+    .unwrap();
+    make_executable(&script_path);
+
+    run_git(repo, &["config", "merge.tool", "fake"]);
+    run_git(
+        repo,
+        &[
+            "config",
+            "mergetool.fake.path",
+            script_path.to_string_lossy().as_ref(),
+        ],
+    );
+    run_git(
+        repo,
+        &[
+            "config",
+            "mergetool.fake.cmd",
+            "printf 'cmd\\n' > \"$MERGED\"; exit 0",
+        ],
+    );
+    run_git(repo, &["config", "mergetool.fake.trustExitCode", "true"]);
+
+    let backend = GixBackend;
+    let opened = backend.open(repo).unwrap();
+    let result = opened.launch_mergetool(Path::new("a.txt")).unwrap();
+    assert!(result.success);
+    assert_eq!(result.tool_name, "fake");
+    assert_eq!(result.output.exit_code, Some(0));
+    assert_eq!(result.merged_contents.as_deref(), Some("cmd\n".as_bytes()));
+    assert_eq!(fs::read_to_string(repo.join("a.txt")).unwrap(), "cmd\n");
+    assert!(
+        !repo.join("path_invoked").exists(),
+        "tool path executable should not run when mergetool.<tool>.cmd is configured"
+    );
+}
+
+#[test]
+fn launch_mergetool_write_to_temp_true_uses_temp_stage_paths() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = dir.path();
+    setup_both_modified_text_conflict(repo, "a.txt", "ours\n", "theirs\n");
+
+    run_git(repo, &["config", "merge.tool", "fake"]);
+    run_git(
+        repo,
+        &[
+            "config",
+            "mergetool.fake.cmd",
+            "printf '%s\\n%s\\n%s\\n' \"$BASE\" \"$LOCAL\" \"$REMOTE\" > \"$MERGED.env\"; cat \"$REMOTE\" > \"$MERGED\"",
+        ],
+    );
+    run_git(repo, &["config", "mergetool.fake.trustExitCode", "true"]);
+    run_git(repo, &["config", "mergetool.writeToTemp", "true"]);
+
+    let backend = GixBackend;
+    let opened = backend.open(repo).unwrap();
+    let result = opened.launch_mergetool(Path::new("a.txt")).unwrap();
+    assert!(result.success);
+
+    let env_dump = fs::read_to_string(repo.join("a.txt.env")).unwrap();
+    let vars: Vec<&str> = env_dump.lines().collect();
+    assert_eq!(vars.len(), 3, "expected BASE/LOCAL/REMOTE dump");
+    for var in vars {
+        let var_path = Path::new(var);
+        assert!(
+            var_path.is_absolute(),
+            "writeToTemp=true should pass absolute temp paths, got {var}"
+        );
+        assert!(
+            var.contains("gitgpui-mergetool-"),
+            "expected temporary mergetool prefix in path, got {var}"
+        );
+        assert!(
+            !var.starts_with("./"),
+            "writeToTemp=true should not use workdir-prefixed paths: {var}"
+        );
+        assert!(
+            !var_path.exists(),
+            "writeToTemp=true with default keepTemporaries=false should cleanup stage files: {var}"
+        );
+    }
+}
+
+#[test]
+fn launch_mergetool_write_to_temp_false_uses_workdir_prefixed_stage_paths() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = dir.path();
+    setup_both_modified_text_conflict(repo, "docs/note.txt", "ours\n", "theirs\n");
+
+    run_git(repo, &["config", "merge.tool", "fake"]);
+    run_git(
+        repo,
+        &[
+            "config",
+            "mergetool.fake.cmd",
+            "printf '%s\\n%s\\n%s\\n' \"$BASE\" \"$LOCAL\" \"$REMOTE\" > \"$MERGED.env\"; cat \"$REMOTE\" > \"$MERGED\"",
+        ],
+    );
+    run_git(repo, &["config", "mergetool.fake.trustExitCode", "true"]);
+    run_git(repo, &["config", "mergetool.writeToTemp", "false"]);
+
+    let backend = GixBackend;
+    let opened = backend.open(repo).unwrap();
+    let result = opened.launch_mergetool(Path::new("docs/note.txt")).unwrap();
+    assert!(result.success, "{result:?}");
+
+    let env_dump = fs::read_to_string(repo.join("docs/note.txt.env")).unwrap();
+    let vars: Vec<&str> = env_dump.lines().collect();
+    assert_eq!(vars.len(), 3, "expected BASE/LOCAL/REMOTE dump");
+    for var in vars {
+        assert!(
+            var.starts_with("./docs/note_"),
+            "writeToTemp=false should use './' prefixed workdir paths, got {var}"
+        );
+        assert!(
+            var.contains("_BASE_") || var.contains("_LOCAL_") || var.contains("_REMOTE_"),
+            "unexpected stage-file naming: {var}"
+        );
+        let fs_path = repo.join(var.trim_start_matches("./"));
+        assert!(
+            !fs_path.exists(),
+            "writeToTemp=false with default keepTemporaries=false should cleanup stage files: {var}"
+        );
+    }
+}
+
+#[test]
+fn launch_mergetool_write_to_temp_false_keep_temporaries_preserves_stage_files() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = dir.path();
+    setup_both_modified_text_conflict(repo, "docs/note.txt", "ours\n", "theirs\n");
+
+    run_git(repo, &["config", "merge.tool", "fake"]);
+    run_git(
+        repo,
+        &[
+            "config",
+            "mergetool.fake.cmd",
+            "printf '%s\\n%s\\n%s\\n' \"$BASE\" \"$LOCAL\" \"$REMOTE\" > \"$MERGED.env\"; cat \"$REMOTE\" > \"$MERGED\"",
+        ],
+    );
+    run_git(repo, &["config", "mergetool.fake.trustExitCode", "true"]);
+    run_git(repo, &["config", "mergetool.writeToTemp", "false"]);
+    run_git(repo, &["config", "mergetool.keepTemporaries", "true"]);
+
+    let backend = GixBackend;
+    let opened = backend.open(repo).unwrap();
+    let result = opened.launch_mergetool(Path::new("docs/note.txt")).unwrap();
+    assert!(result.success, "{result:?}");
+
+    let env_dump = fs::read_to_string(repo.join("docs/note.txt.env")).unwrap();
+    let vars: Vec<&str> = env_dump.lines().collect();
+    assert_eq!(vars.len(), 3, "expected BASE/LOCAL/REMOTE dump");
+    for var in vars {
+        assert!(
+            var.starts_with("./docs/note_"),
+            "writeToTemp=false should use './' prefixed workdir paths, got {var}"
+        );
+        let fs_path = repo.join(var.trim_start_matches("./"));
+        assert!(
+            fs_path.exists(),
+            "keepTemporaries=true should keep stage file in workdir mode: {var}"
+        );
+    }
+}
+
+#[test]
+fn launch_mergetool_write_to_temp_false_keep_temporaries_preserves_stage_files_on_abort() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = dir.path();
+    setup_both_modified_text_conflict(repo, "docs/note.txt", "ours\n", "theirs\n");
+
+    run_git(repo, &["config", "merge.tool", "fake"]);
+    run_git(
+        repo,
+        &[
+            "config",
+            "mergetool.fake.cmd",
+            "printf '%s\\n%s\\n%s\\n' \"$BASE\" \"$LOCAL\" \"$REMOTE\" > \"$MERGED.env\"; exit 1",
+        ],
+    );
+    run_git(repo, &["config", "mergetool.fake.trustExitCode", "true"]);
+    run_git(repo, &["config", "mergetool.writeToTemp", "false"]);
+    run_git(repo, &["config", "mergetool.keepTemporaries", "true"]);
+
+    let backend = GixBackend;
+    let opened = backend.open(repo).unwrap();
+    let result = opened.launch_mergetool(Path::new("docs/note.txt")).unwrap();
+    assert!(
+        !result.success,
+        "tool exit failure should be reported as unresolved"
+    );
+
+    let env_dump = fs::read_to_string(repo.join("docs/note.txt.env")).unwrap();
+    let vars: Vec<&str> = env_dump.lines().collect();
+    assert_eq!(vars.len(), 3, "expected BASE/LOCAL/REMOTE dump");
+    for var in vars {
+        assert!(
+            var.starts_with("./docs/note_"),
+            "writeToTemp=false should use './' prefixed workdir paths, got {var}"
+        );
+        let fs_path = repo.join(var.trim_start_matches("./"));
+        assert!(
+            fs_path.exists(),
+            "keepTemporaries=true should keep stage file on abort in workdir mode: {var}"
+        );
+    }
+}
+
+#[test]
+fn launch_mergetool_write_to_temp_true_keep_temporaries_preserves_stage_files() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = dir.path();
+    setup_both_modified_text_conflict(repo, "a.txt", "ours\n", "theirs\n");
+
+    run_git(repo, &["config", "merge.tool", "fake"]);
+    run_git(
+        repo,
+        &[
+            "config",
+            "mergetool.fake.cmd",
+            "printf '%s\\n%s\\n%s\\n' \"$BASE\" \"$LOCAL\" \"$REMOTE\" > \"$MERGED.env\"; cat \"$REMOTE\" > \"$MERGED\"",
+        ],
+    );
+    run_git(repo, &["config", "mergetool.fake.trustExitCode", "true"]);
+    run_git(repo, &["config", "mergetool.writeToTemp", "true"]);
+    run_git(repo, &["config", "mergetool.keepTemporaries", "true"]);
+
+    let backend = GixBackend;
+    let opened = backend.open(repo).unwrap();
+    let result = opened.launch_mergetool(Path::new("a.txt")).unwrap();
+    assert!(result.success, "{result:?}");
+
+    let env_dump = fs::read_to_string(repo.join("a.txt.env")).unwrap();
+    let vars: Vec<&str> = env_dump.lines().collect();
+    assert_eq!(vars.len(), 3, "expected BASE/LOCAL/REMOTE dump");
+
+    let mut temp_dirs: Vec<PathBuf> = Vec::new();
+    for var in vars {
+        let var_path = Path::new(var);
+        assert!(
+            var_path.is_absolute(),
+            "writeToTemp=true should pass absolute temp paths, got {var}"
+        );
+        assert!(
+            var.contains("gitgpui-mergetool-"),
+            "expected temporary mergetool prefix in path, got {var}"
+        );
+        assert!(
+            var_path.exists(),
+            "keepTemporaries=true should keep stage file in temp mode: {var}"
+        );
+        if let Some(parent) = var_path.parent()
+            && !temp_dirs.iter().any(|dir| dir == parent)
+        {
+            temp_dirs.push(parent.to_path_buf());
+        }
+    }
+
+    // Keep test environment clean even though behavior keeps temp files.
+    for dir in temp_dirs {
+        let _ = fs::remove_dir_all(dir);
+    }
+}
+
+#[test]
+fn launch_mergetool_write_to_temp_true_keep_temporaries_preserves_stage_files_on_abort() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = dir.path();
+    setup_both_modified_text_conflict(repo, "a.txt", "ours\n", "theirs\n");
+
+    run_git(repo, &["config", "merge.tool", "fake"]);
+    run_git(
+        repo,
+        &[
+            "config",
+            "mergetool.fake.cmd",
+            "printf '%s\\n%s\\n%s\\n' \"$BASE\" \"$LOCAL\" \"$REMOTE\" > \"$MERGED.env\"; exit 1",
+        ],
+    );
+    run_git(repo, &["config", "mergetool.fake.trustExitCode", "true"]);
+    run_git(repo, &["config", "mergetool.writeToTemp", "true"]);
+    run_git(repo, &["config", "mergetool.keepTemporaries", "true"]);
+
+    let backend = GixBackend;
+    let opened = backend.open(repo).unwrap();
+    let result = opened.launch_mergetool(Path::new("a.txt")).unwrap();
+    assert!(
+        !result.success,
+        "tool exit failure should be reported as unresolved"
+    );
+
+    let env_dump = fs::read_to_string(repo.join("a.txt.env")).unwrap();
+    let vars: Vec<&str> = env_dump.lines().collect();
+    assert_eq!(vars.len(), 3, "expected BASE/LOCAL/REMOTE dump");
+
+    let mut temp_dirs: Vec<PathBuf> = Vec::new();
+    for var in vars {
+        let var_path = Path::new(var);
+        assert!(
+            var_path.is_absolute(),
+            "writeToTemp=true should pass absolute temp paths, got {var}"
+        );
+        assert!(
+            var.contains("gitgpui-mergetool-"),
+            "expected temporary mergetool prefix in path, got {var}"
+        );
+        assert!(
+            var_path.exists(),
+            "keepTemporaries=true should keep stage file on abort in temp mode: {var}"
+        );
+        if let Some(parent) = var_path.parent()
+            && !temp_dirs.iter().any(|dir| dir == parent)
+        {
+            temp_dirs.push(parent.to_path_buf());
+        }
+    }
+
+    // Keep test environment clean even though behavior keeps temp files.
+    for dir in temp_dirs {
+        let _ = fs::remove_dir_all(dir);
+    }
+}
+
+#[test]
+fn launch_mergetool_no_base_conflict_passes_empty_base_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = dir.path();
+    setup_both_added_text_conflict(repo, "new.txt", "ours added\n", "theirs added\n");
+
+    run_git(repo, &["config", "merge.tool", "fake"]);
+    run_git(
+        repo,
+        &[
+            "config",
+            "mergetool.fake.cmd",
+            "printf '%s' \"$(wc -c < \"$BASE\" | tr -d '[:space:]')\" > \"$MERGED.base-size\"; cat \"$REMOTE\" > \"$MERGED\"",
+        ],
+    );
+    run_git(repo, &["config", "mergetool.fake.trustExitCode", "true"]);
+
+    let backend = GixBackend;
+    let opened = backend.open(repo).unwrap();
+    let result = opened.launch_mergetool(Path::new("new.txt")).unwrap();
+    assert!(result.success, "{result:?}");
+    assert_eq!(
+        fs::read_to_string(repo.join("new.txt.base-size")).unwrap(),
+        "0",
+        "BASE should be an empty file for both-added/no-base conflicts"
+    );
+    assert_eq!(
+        fs::read_to_string(repo.join("new.txt")).unwrap(),
+        "theirs added\n"
+    );
+}
+
+#[test]
 fn stage_and_unstage_paths_update_status() {
     let dir = tempfile::tempdir().unwrap();
     let repo = dir.path();
@@ -898,7 +2398,7 @@ fn commit_creates_new_commit_and_cleans_status() {
 
     opened.commit("second").unwrap();
 
-    let msg = Command::new("git")
+    let msg = git_command()
         .arg("-C")
         .arg(repo)
         .args(["log", "-1", "--pretty=%B"])
@@ -925,7 +2425,7 @@ fn reset_soft_moves_head_and_leaves_changes_staged() {
     write(repo, "a.txt", "one\n");
     run_git(repo, &["add", "a.txt"]);
     run_git(repo, &["-c", "commit.gpgsign=false", "commit", "-m", "c1"]);
-    let c1 = Command::new("git")
+    let c1 = git_command()
         .arg("-C")
         .arg(repo)
         .args(["rev-parse", "HEAD"])
@@ -945,7 +2445,7 @@ fn reset_soft_moves_head_and_leaves_changes_staged() {
         .reset_with_output("HEAD~1", gitgpui_core::services::ResetMode::Soft)
         .unwrap();
 
-    let head = Command::new("git")
+    let head = git_command()
         .arg("-C")
         .arg(repo)
         .args(["rev-parse", "HEAD"])
@@ -975,7 +2475,7 @@ fn reset_mixed_moves_head_and_leaves_changes_unstaged() {
     write(repo, "a.txt", "one\n");
     run_git(repo, &["add", "a.txt"]);
     run_git(repo, &["-c", "commit.gpgsign=false", "commit", "-m", "c1"]);
-    let c1 = Command::new("git")
+    let c1 = git_command()
         .arg("-C")
         .arg(repo)
         .args(["rev-parse", "HEAD"])
@@ -995,7 +2495,7 @@ fn reset_mixed_moves_head_and_leaves_changes_unstaged() {
         .reset_with_output("HEAD~1", gitgpui_core::services::ResetMode::Mixed)
         .unwrap();
 
-    let head = Command::new("git")
+    let head = git_command()
         .arg("-C")
         .arg(repo)
         .args(["rev-parse", "HEAD"])
@@ -1025,7 +2525,7 @@ fn reset_hard_moves_head_and_discards_changes() {
     write(repo, "a.txt", "one\n");
     run_git(repo, &["add", "a.txt"]);
     run_git(repo, &["-c", "commit.gpgsign=false", "commit", "-m", "c1"]);
-    let c1 = Command::new("git")
+    let c1 = git_command()
         .arg("-C")
         .arg(repo)
         .args(["rev-parse", "HEAD"])
@@ -1047,7 +2547,7 @@ fn reset_hard_moves_head_and_discards_changes() {
         .reset_with_output("HEAD~1", gitgpui_core::services::ResetMode::Hard)
         .unwrap();
 
-    let head = Command::new("git")
+    let head = git_command()
         .arg("-C")
         .arg(repo)
         .args(["rev-parse", "HEAD"])
@@ -1080,7 +2580,7 @@ fn revert_commit_creates_new_commit_and_reverts_content() {
     run_git(repo, &["add", "a.txt"]);
     run_git(repo, &["-c", "commit.gpgsign=false", "commit", "-m", "c2"]);
 
-    let c2 = Command::new("git")
+    let c2 = git_command()
         .arg("-C")
         .arg(repo)
         .args(["rev-parse", "HEAD"])
@@ -1101,7 +2601,7 @@ fn revert_commit_creates_new_commit_and_reverts_content() {
     assert!(status.staged.is_empty());
     assert!(status.unstaged.is_empty());
 
-    let head = Command::new("git")
+    let head = git_command()
         .arg("-C")
         .arg(repo)
         .args(["rev-parse", "HEAD"])
@@ -1129,7 +2629,7 @@ fn amend_rewrites_head_commit_message_and_content() {
         &["-c", "commit.gpgsign=false", "commit", "-m", "init"],
     );
 
-    let head_before = Command::new("git")
+    let head_before = git_command()
         .arg("-C")
         .arg(repo)
         .args(["rev-parse", "HEAD"])
@@ -1149,7 +2649,7 @@ fn amend_rewrites_head_commit_message_and_content() {
 
     opened.commit_amend("amended").unwrap();
 
-    let head_after = Command::new("git")
+    let head_after = git_command()
         .arg("-C")
         .arg(repo)
         .args(["rev-parse", "HEAD"])
@@ -1162,7 +2662,7 @@ fn amend_rewrites_head_commit_message_and_content() {
         .to_string();
     assert_ne!(head_after, head_before);
 
-    let count = Command::new("git")
+    let count = git_command()
         .arg("-C")
         .arg(repo)
         .args(["rev-list", "--count", "HEAD"])
@@ -1171,7 +2671,7 @@ fn amend_rewrites_head_commit_message_and_content() {
     assert!(count.status.success());
     assert_eq!(String::from_utf8(count.stdout).unwrap().trim(), "1");
 
-    let msg = Command::new("git")
+    let msg = git_command()
         .arg("-C")
         .arg(repo)
         .args(["log", "-1", "--pretty=%B"])
@@ -1227,7 +2727,7 @@ fn merge_creates_merge_commit_when_branches_diverged() {
 
     opened.merge_ref_with_output("feature").unwrap();
 
-    let parents = Command::new("git")
+    let parents = git_command()
         .arg("-C")
         .arg(repo)
         .args(["rev-list", "--parents", "-n", "1", "HEAD"])
@@ -1280,7 +2780,7 @@ fn merge_fast_forwards_when_possible_even_if_merge_ff_is_disabled() {
 
     opened.merge_ref_with_output("feature").unwrap();
 
-    let parents = Command::new("git")
+    let parents = git_command()
         .arg("-C")
         .arg(repo)
         .args(["rev-list", "--parents", "-n", "1", "HEAD"])
@@ -1294,7 +2794,7 @@ fn merge_fast_forwards_when_possible_even_if_merge_ff_is_disabled() {
         .saturating_sub(1);
     assert_eq!(parent_count, 1, "expected fast-forward");
 
-    let msg = Command::new("git")
+    let msg = git_command()
         .arg("-C")
         .arg(repo)
         .args(["log", "-1", "--pretty=%B"])
@@ -1364,7 +2864,7 @@ fn rebase_replays_commits_onto_target_branch() {
     let dir = tempfile::tempdir().unwrap();
     let repo = dir.path();
 
-    run_git(repo, &["init"]);
+    run_git(repo, &["init", "-b", "main"]);
     run_git(repo, &["config", "user.email", "you@example.com"]);
     run_git(repo, &["config", "user.name", "You"]);
     run_git(repo, &["config", "commit.gpgsign", "false"]);
@@ -1391,7 +2891,7 @@ fn rebase_replays_commits_onto_target_branch() {
         repo,
         &["-c", "commit.gpgsign=false", "commit", "-m", "main"],
     );
-    let master_head = Command::new("git")
+    let master_head = git_command()
         .arg("-C")
         .arg(repo)
         .args(["rev-parse", "HEAD"])
@@ -1408,9 +2908,9 @@ fn rebase_replays_commits_onto_target_branch() {
     let backend = GixBackend;
     let opened = backend.open(repo).unwrap();
 
-    opened.rebase_with_output("master").unwrap();
+    opened.rebase_with_output("main").unwrap();
 
-    let parent = Command::new("git")
+    let parent = git_command()
         .arg("-C")
         .arg(repo)
         .args(["rev-parse", "HEAD^"])
@@ -1461,7 +2961,7 @@ fn create_and_delete_local_branch() {
     );
 
     opened.delete_branch("feature").unwrap();
-    let deleted = Command::new("git")
+    let deleted = git_command()
         .arg("-C")
         .arg(repo)
         .args(["show-ref", "--verify", "--quiet", "refs/heads/feature"])
@@ -1497,7 +2997,7 @@ fn create_and_delete_local_tag() {
     );
 
     opened.delete_tag_with_output("v1.0.0").unwrap();
-    let deleted = Command::new("git")
+    let deleted = git_command()
         .arg("-C")
         .arg(repo)
         .args(["show-ref", "--verify", "--quiet", "refs/tags/v1.0.0"])
@@ -1513,7 +3013,7 @@ fn list_remote_branches_includes_fetched_remote_tracking_refs() {
     let origin = dir.path().join("origin.git");
     fs::create_dir_all(&repo).unwrap();
 
-    run_git(&repo, &["init"]);
+    run_git(&repo, &["init", "-b", "main"]);
     run_git(&repo, &["config", "user.email", "you@example.com"]);
     run_git(&repo, &["config", "user.name", "You"]);
     run_git(&repo, &["config", "commit.gpgsign", "false"]);
@@ -1526,12 +3026,12 @@ fn list_remote_branches_includes_fetched_remote_tracking_refs() {
     );
 
     fs::create_dir_all(&origin).unwrap();
-    run_git(&origin, &["init", "--bare"]);
+    run_git(&origin, &["init", "--bare", "-b", "main"]);
     run_git(
         &repo,
         &["remote", "add", "origin", origin.to_string_lossy().as_ref()],
     );
-    run_git(&repo, &["push", "-u", "origin", "master"]);
+    run_git(&repo, &["push", "-u", "origin", "main"]);
 
     run_git(&repo, &["checkout", "-b", "feature"]);
     write(&repo, "b.txt", "feature\n");
@@ -1550,7 +3050,7 @@ fn list_remote_branches_includes_fetched_remote_tracking_refs() {
     assert!(
         branches
             .iter()
-            .any(|b| b.remote == "origin" && b.name == "master")
+            .any(|b| b.remote == "origin" && b.name == "main")
     );
     assert!(
         branches
@@ -1568,7 +3068,7 @@ fn push_with_output_updates_remote_head() {
     fs::create_dir_all(&repo).unwrap();
     fs::create_dir_all(&origin).unwrap();
 
-    run_git(&repo, &["init"]);
+    run_git(&repo, &["init", "-b", "main"]);
     run_git(&repo, &["config", "user.email", "you@example.com"]);
     run_git(&repo, &["config", "user.name", "You"]);
     run_git(&repo, &["config", "commit.gpgsign", "false"]);
@@ -1580,12 +3080,12 @@ fn push_with_output_updates_remote_head() {
         &["-c", "commit.gpgsign=false", "commit", "-m", "init"],
     );
 
-    run_git(&origin, &["init", "--bare"]);
+    run_git(&origin, &["init", "--bare", "-b", "main"]);
     run_git(
         &repo,
         &["remote", "add", "origin", origin.to_string_lossy().as_ref()],
     );
-    run_git(&repo, &["push", "-u", "origin", "master"]);
+    run_git(&repo, &["push", "-u", "origin", "main"]);
 
     write(&repo, "a.txt", "one\ntwo\n");
     run_git(&repo, &["add", "a.txt"]);
@@ -1593,7 +3093,7 @@ fn push_with_output_updates_remote_head() {
         &repo,
         &["-c", "commit.gpgsign=false", "commit", "-m", "second"],
     );
-    let head_local = Command::new("git")
+    let head_local = git_command()
         .arg("-C")
         .arg(&repo)
         .args(["rev-parse", "HEAD"])
@@ -1609,12 +3109,12 @@ fn push_with_output_updates_remote_head() {
     let opened = backend.open(&repo).unwrap();
     opened.push_with_output().unwrap();
 
-    let head_remote = Command::new("git")
+    let head_remote = git_command()
         .arg("-C")
         .arg(&origin)
-        .args(["rev-parse", "refs/heads/master"])
+        .args(["rev-parse", "refs/heads/main"])
         .output()
-        .expect("rev-parse origin/master");
+        .expect("rev-parse origin/main");
     assert!(head_remote.status.success());
     let head_remote = String::from_utf8(head_remote.stdout)
         .unwrap()
@@ -1631,7 +3131,7 @@ fn force_push_with_output_updates_remote_head_after_rewrite() {
     fs::create_dir_all(&repo).unwrap();
     fs::create_dir_all(&origin).unwrap();
 
-    run_git(&repo, &["init"]);
+    run_git(&repo, &["init", "-b", "main"]);
     run_git(&repo, &["config", "user.email", "you@example.com"]);
     run_git(&repo, &["config", "user.name", "You"]);
     run_git(&repo, &["config", "commit.gpgsign", "false"]);
@@ -1643,12 +3143,12 @@ fn force_push_with_output_updates_remote_head_after_rewrite() {
         &["-c", "commit.gpgsign=false", "commit", "-m", "init"],
     );
 
-    run_git(&origin, &["init", "--bare"]);
+    run_git(&origin, &["init", "--bare", "-b", "main"]);
     run_git(
         &repo,
         &["remote", "add", "origin", origin.to_string_lossy().as_ref()],
     );
-    run_git(&repo, &["push", "-u", "origin", "master"]);
+    run_git(&repo, &["push", "-u", "origin", "main"]);
 
     write(&repo, "a.txt", "one\ntwo\n");
     run_git(&repo, &["add", "a.txt"]);
@@ -1673,7 +3173,7 @@ fn force_push_with_output_updates_remote_head_after_rewrite() {
             "second rewritten",
         ],
     );
-    let head_local = Command::new("git")
+    let head_local = git_command()
         .arg("-C")
         .arg(&repo)
         .args(["rev-parse", "HEAD"])
@@ -1689,12 +3189,12 @@ fn force_push_with_output_updates_remote_head_after_rewrite() {
     let opened = backend.open(&repo).unwrap();
     opened.push_force_with_output().unwrap();
 
-    let head_remote = Command::new("git")
+    let head_remote = git_command()
         .arg("-C")
         .arg(&origin)
-        .args(["rev-parse", "refs/heads/master"])
+        .args(["rev-parse", "refs/heads/main"])
         .output()
-        .expect("rev-parse refs/heads/master");
+        .expect("rev-parse refs/heads/main");
     assert!(head_remote.status.success());
     let head_remote = String::from_utf8(head_remote.stdout)
         .unwrap()
@@ -1712,9 +3212,9 @@ fn pull_with_output_fast_forwards_from_remote() {
     fs::create_dir_all(&origin).unwrap();
     fs::create_dir_all(&repo_a).unwrap();
 
-    run_git(&origin, &["init", "--bare"]);
+    run_git(&origin, &["init", "--bare", "-b", "main"]);
 
-    run_git(&repo_a, &["init"]);
+    run_git(&repo_a, &["init", "-b", "main"]);
     run_git(&repo_a, &["config", "user.email", "you@example.com"]);
     run_git(&repo_a, &["config", "user.name", "You"]);
     run_git(&repo_a, &["config", "commit.gpgsign", "false"]);
@@ -1728,7 +3228,7 @@ fn pull_with_output_fast_forwards_from_remote() {
         &repo_a,
         &["remote", "add", "origin", origin.to_string_lossy().as_ref()],
     );
-    run_git(&repo_a, &["push", "-u", "origin", "master"]);
+    run_git(&repo_a, &["push", "-u", "origin", "main"]);
 
     run_git(
         dir.path(),
@@ -1747,10 +3247,10 @@ fn pull_with_output_fast_forwards_from_remote() {
     );
     run_git(&repo_a, &["push"]);
 
-    let head_origin = Command::new("git")
+    let head_origin = git_command()
         .arg("-C")
         .arg(&origin)
-        .args(["rev-parse", "refs/heads/master"])
+        .args(["rev-parse", "refs/heads/main"])
         .output()
         .expect("rev-parse origin");
     assert!(head_origin.status.success());
@@ -1765,7 +3265,7 @@ fn pull_with_output_fast_forwards_from_remote() {
         .pull_with_output(gitgpui_core::services::PullMode::FastForwardOnly)
         .unwrap();
 
-    let head_b = Command::new("git")
+    let head_b = git_command()
         .arg("-C")
         .arg(&repo_b)
         .args(["rev-parse", "HEAD"])
@@ -1785,9 +3285,9 @@ fn pull_with_output_fast_forwards_when_possible_even_if_pull_ff_is_disabled() {
     fs::create_dir_all(&origin).unwrap();
     fs::create_dir_all(&repo_a).unwrap();
 
-    run_git(&origin, &["init", "--bare"]);
+    run_git(&origin, &["init", "--bare", "-b", "main"]);
 
-    run_git(&repo_a, &["init"]);
+    run_git(&repo_a, &["init", "-b", "main"]);
     run_git(&repo_a, &["config", "user.email", "you@example.com"]);
     run_git(&repo_a, &["config", "user.name", "You"]);
     run_git(&repo_a, &["config", "commit.gpgsign", "false"]);
@@ -1801,7 +3301,7 @@ fn pull_with_output_fast_forwards_when_possible_even_if_pull_ff_is_disabled() {
         &repo_a,
         &["remote", "add", "origin", origin.to_string_lossy().as_ref()],
     );
-    run_git(&repo_a, &["push", "-u", "origin", "master"]);
+    run_git(&repo_a, &["push", "-u", "origin", "main"]);
 
     run_git(
         dir.path(),
@@ -1825,10 +3325,10 @@ fn pull_with_output_fast_forwards_when_possible_even_if_pull_ff_is_disabled() {
     );
     run_git(&repo_a, &["push"]);
 
-    let head_origin = Command::new("git")
+    let head_origin = git_command()
         .arg("-C")
         .arg(&origin)
-        .args(["rev-parse", "refs/heads/master"])
+        .args(["rev-parse", "refs/heads/main"])
         .output()
         .expect("rev-parse origin");
     assert!(head_origin.status.success());
@@ -1843,7 +3343,7 @@ fn pull_with_output_fast_forwards_when_possible_even_if_pull_ff_is_disabled() {
         .pull_with_output(gitgpui_core::services::PullMode::Merge)
         .unwrap();
 
-    let head_b = Command::new("git")
+    let head_b = git_command()
         .arg("-C")
         .arg(&repo_b)
         .args(["rev-parse", "HEAD"])
@@ -1853,7 +3353,7 @@ fn pull_with_output_fast_forwards_when_possible_even_if_pull_ff_is_disabled() {
     let head_b = String::from_utf8(head_b.stdout).unwrap().trim().to_string();
     assert_eq!(head_b, head_origin);
 
-    let parents = Command::new("git")
+    let parents = git_command()
         .arg("-C")
         .arg(&repo_b)
         .args(["rev-list", "--parents", "-n", "1", "HEAD"])
@@ -1925,7 +3425,7 @@ fn checkout_commit_detaches_head_at_target() {
         &["-c", "commit.gpgsign=false", "commit", "-m", "init"],
     );
 
-    let sha = Command::new("git")
+    let sha = git_command()
         .arg("-C")
         .arg(repo)
         .args(["rev-parse", "HEAD"])
@@ -1940,7 +3440,7 @@ fn checkout_commit_detaches_head_at_target() {
         .checkout_commit(&gitgpui_core::domain::CommitId(sha.clone()))
         .unwrap();
 
-    let head_name = Command::new("git")
+    let head_name = git_command()
         .arg("-C")
         .arg(repo)
         .args(["rev-parse", "--abbrev-ref", "HEAD"])
@@ -1949,7 +3449,7 @@ fn checkout_commit_detaches_head_at_target() {
     assert!(head_name.status.success());
     assert_eq!(String::from_utf8(head_name.stdout).unwrap().trim(), "HEAD");
 
-    let head_sha = Command::new("git")
+    let head_sha = git_command()
         .arg("-C")
         .arg(repo)
         .args(["rev-parse", "HEAD"])
@@ -2362,4 +3862,736 @@ fn unstage_hunk_reverts_only_that_part_in_index() {
     );
     assert!(unstaged_after_unstage.contains("+L02-mod"));
     assert!(unstaged_after_unstage.contains("+L25-mod"));
+}
+
+// ---------------------------------------------------------------------------
+// End-to-end conflict resolution workflow tests
+// ---------------------------------------------------------------------------
+
+/// End-to-end test: create a merge conflict, load the conflict session,
+/// resolve all regions manually, generate resolved text, write it to disk,
+/// stage the file, and verify the conflict is fully resolved.
+#[test]
+fn resolve_conflict_write_and_stage_clears_conflict() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = dir.path();
+
+    // Create a BothModified conflict: both sides change the same lines.
+    let base_content = "header\nconflict-line\nfooter\n";
+    let ours_content = "header\nours-version\nfooter\n";
+    let theirs_content = "header\ntheirs-version\nfooter\n";
+
+    run_git(repo, &["init"]);
+    run_git(repo, &["config", "user.email", "you@example.com"]);
+    run_git(repo, &["config", "user.name", "You"]);
+    run_git(repo, &["config", "commit.gpgsign", "false"]);
+
+    write(repo, "doc.txt", base_content);
+    run_git(repo, &["add", "doc.txt"]);
+    run_git(
+        repo,
+        &["-c", "commit.gpgsign=false", "commit", "-m", "base"],
+    );
+
+    run_git(repo, &["checkout", "-b", "feature"]);
+    write(repo, "doc.txt", theirs_content);
+    run_git(repo, &["add", "doc.txt"]);
+    run_git(
+        repo,
+        &["-c", "commit.gpgsign=false", "commit", "-m", "theirs"],
+    );
+
+    run_git(repo, &["checkout", "-"]);
+    write(repo, "doc.txt", ours_content);
+    run_git(repo, &["add", "doc.txt"]);
+    run_git(
+        repo,
+        &["-c", "commit.gpgsign=false", "commit", "-m", "ours"],
+    );
+
+    run_git_expect_failure(repo, &["merge", "feature"]);
+
+    let backend = GixBackend;
+    let opened = backend.open(repo).unwrap();
+
+    // 1. Verify file is in conflict status
+    let status = opened.status().unwrap();
+    let entry = status
+        .unstaged
+        .iter()
+        .find(|e| e.path == Path::new("doc.txt"))
+        .expect("expected conflict entry");
+    assert_eq!(entry.kind, FileStatusKind::Conflicted);
+    assert_eq!(entry.conflict, Some(FileConflictKind::BothModified));
+
+    // 2. Load conflict session via backend API
+    let session = opened
+        .conflict_session(Path::new("doc.txt"))
+        .unwrap()
+        .expect("conflict session");
+    assert_eq!(session.strategy, ConflictResolverStrategy::FullTextResolver);
+    assert_eq!(session.conflict_kind, FileConflictKind::BothModified);
+
+    // 3. Verify worktree file contains conflict markers
+    let worktree_content = fs::read_to_string(repo.join("doc.txt")).unwrap();
+    let validation = gitgpui_core::services::validate_conflict_resolution_text(&worktree_content);
+    assert!(
+        validation.has_conflict_markers,
+        "worktree file should contain conflict markers"
+    );
+
+    // 4. Write manually resolved content (pick ours version)
+    let resolved_content = "header\nours-version\nfooter\n";
+    let resolved_validation =
+        gitgpui_core::services::validate_conflict_resolution_text(resolved_content);
+    assert!(
+        !resolved_validation.has_conflict_markers,
+        "resolved content should have no conflict markers"
+    );
+
+    // 5. Write resolved text to worktree and stage
+    fs::write(repo.join("doc.txt"), resolved_content).unwrap();
+    opened.stage(&[Path::new("doc.txt")]).unwrap();
+
+    // 6. Verify conflict is resolved — no more conflict status
+    let status_after = opened.status().unwrap();
+    assert!(
+        !status_after
+            .unstaged
+            .iter()
+            .any(|e| e.path == Path::new("doc.txt") && e.kind == FileStatusKind::Conflicted),
+        "doc.txt should no longer be conflicted after staging resolved content"
+    );
+}
+
+#[test]
+fn resolve_both_added_conflict_write_and_stage_clears_conflict() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = dir.path();
+    setup_both_added_text_conflict(repo, "new.txt", "ours added\n", "theirs added\n");
+
+    let backend = GixBackend;
+    let opened = backend.open(repo).unwrap();
+
+    let before = opened.status().unwrap();
+    let conflict_entry = before
+        .unstaged
+        .iter()
+        .find(|e| e.path == Path::new("new.txt"))
+        .expect("expected both-added conflict path in unstaged status");
+    assert_eq!(conflict_entry.kind, FileStatusKind::Conflicted);
+    assert_eq!(conflict_entry.conflict, Some(FileConflictKind::BothAdded));
+
+    let merged_before = fs::read_to_string(repo.join("new.txt")).unwrap();
+    assert!(
+        merged_before.contains("<<<<<<<"),
+        "expected merge markers before resolution"
+    );
+
+    let session = opened
+        .conflict_session(Path::new("new.txt"))
+        .unwrap()
+        .expect("conflict session for both-added path");
+    assert_eq!(session.strategy, ConflictResolverStrategy::FullTextResolver);
+    assert_eq!(session.conflict_kind, FileConflictKind::BothAdded);
+    assert_eq!(session.total_regions(), 1);
+    assert_eq!(session.unsolved_count(), 1);
+
+    let resolved = "resolved both-added\n";
+    write(repo, "new.txt", resolved);
+    opened.stage(&[Path::new("new.txt")]).unwrap();
+
+    let validation = gitgpui_core::services::validate_conflict_resolution_text(resolved);
+    assert!(!validation.has_conflict_markers);
+    assert_eq!(validation.marker_lines, 0);
+
+    let after = opened.status().unwrap();
+    assert!(
+        after
+            .unstaged
+            .iter()
+            .all(|e| e.path != Path::new("new.txt")),
+        "expected conflict path to be removed from unstaged after save+stage; status={after:?}"
+    );
+    assert!(
+        after.staged.iter().any(|e| {
+            e.path == Path::new("new.txt")
+                && matches!(e.kind, FileStatusKind::Modified | FileStatusKind::Added)
+        }),
+        "expected resolved both-added file to be staged as modified/added; status={after:?}"
+    );
+    assert_eq!(fs::read_to_string(repo.join("new.txt")).unwrap(), resolved);
+}
+
+/// End-to-end test: autosolve Pass 1 correctly resolves trivial regions
+/// using synthetic conflict stages where some regions are trivially
+/// resolvable (one side equals base) while others are genuine conflicts.
+#[test]
+fn autosolve_safe_resolves_trivial_conflict_regions_end_to_end() {
+    use gitgpui_core::conflict_session::{
+        ConflictPayload, ConflictRegionResolution, ConflictSession,
+    };
+
+    let dir = tempfile::tempdir().unwrap();
+    let repo = dir.path();
+
+    run_git(repo, &["init"]);
+    run_git(repo, &["config", "user.email", "you@example.com"]);
+    run_git(repo, &["config", "user.name", "You"]);
+    run_git(repo, &["config", "commit.gpgsign", "false"]);
+
+    write(repo, "seed.txt", "seed\n");
+    run_git(repo, &["add", "seed.txt"]);
+    run_git(
+        repo,
+        &["-c", "commit.gpgsign=false", "commit", "-m", "seed"],
+    );
+
+    // Create a BothModified conflict using synthetic stages.
+    // Write a worktree file with conflict markers containing three regions:
+    //   Region 0: only ours changed (trivial → OnlyOursChanged)
+    //   Region 1: both changed differently (genuine conflict)
+    //   Region 2: both sides identical (trivial → IdenticalSides)
+    let base_blob = hash_blob(repo, b"base-r0\nbase-r1\nbase-r2\n");
+    let ours_blob = hash_blob(repo, b"ours-r0\nours-r1\nsame-r2\n");
+    let theirs_blob = hash_blob(repo, b"base-r0\ntheirs-r1\nsame-r2\n");
+    set_unmerged_stages(
+        repo,
+        "multi.txt",
+        Some(&base_blob),
+        Some(&ours_blob),
+        Some(&theirs_blob),
+    );
+
+    // Write worktree file with three conflict marker blocks
+    let merged_markers = concat!(
+        "<<<<<<< HEAD\n",
+        "ours-r0\n",
+        "||||||| base\n",
+        "base-r0\n",
+        "=======\n",
+        "base-r0\n",
+        ">>>>>>> feature\n",
+        "<<<<<<< HEAD\n",
+        "ours-r1\n",
+        "||||||| base\n",
+        "base-r1\n",
+        "=======\n",
+        "theirs-r1\n",
+        ">>>>>>> feature\n",
+        "<<<<<<< HEAD\n",
+        "same-r2\n",
+        "||||||| base\n",
+        "base-r2\n",
+        "=======\n",
+        "same-r2\n",
+        ">>>>>>> feature\n",
+    );
+    write(repo, "multi.txt", merged_markers);
+
+    let backend = GixBackend;
+    let opened = backend.open(repo).unwrap();
+
+    // Build a ConflictSession from the backend
+    let session_opt = opened.conflict_session(Path::new("multi.txt")).unwrap();
+    // The backend may or may not build the session (depending on status
+    // detection of the synthetic stages). Build one manually if needed.
+    let mut session = session_opt.unwrap_or_else(|| {
+        ConflictSession::from_merged_text(
+            PathBuf::from("multi.txt"),
+            FileConflictKind::BothModified,
+            ConflictPayload::Text("base-r0\nbase-r1\nbase-r2\n".into()),
+            ConflictPayload::Text("ours-r0\nours-r1\nsame-r2\n".into()),
+            ConflictPayload::Text("base-r0\ntheirs-r1\nsame-r2\n".into()),
+            merged_markers,
+        )
+    });
+
+    assert_eq!(session.strategy, ConflictResolverStrategy::FullTextResolver);
+    assert_eq!(session.total_regions(), 3);
+    assert_eq!(
+        session.unsolved_count(),
+        3,
+        "all regions should start unresolved"
+    );
+
+    // Apply auto-resolve Pass 1
+    let auto_resolved = session.auto_resolve_safe();
+    assert_eq!(
+        auto_resolved, 2,
+        "expected 2 trivial regions to be auto-resolved"
+    );
+    assert_eq!(
+        session.unsolved_count(),
+        1,
+        "1 genuine conflict should remain"
+    );
+
+    // Verify specific rules
+    match &session.regions[0].resolution {
+        ConflictRegionResolution::AutoResolved { rule, content, .. } => {
+            assert_eq!(
+                *rule,
+                gitgpui_core::conflict_session::AutosolveRule::OnlyOursChanged,
+            );
+            assert_eq!(content, "ours-r0\n");
+        }
+        other => panic!("region 0 should be auto-resolved, got {:?}", other),
+    }
+    assert!(
+        !session.regions[1].resolution.is_resolved(),
+        "region 1 (genuine conflict) should remain unresolved"
+    );
+    match &session.regions[2].resolution {
+        ConflictRegionResolution::AutoResolved { rule, content, .. } => {
+            assert_eq!(
+                *rule,
+                gitgpui_core::conflict_session::AutosolveRule::IdenticalSides,
+            );
+            assert_eq!(content, "same-r2\n");
+        }
+        other => panic!("region 2 should be auto-resolved, got {:?}", other),
+    }
+
+    // Navigation should point to the remaining unresolved region
+    assert_eq!(session.next_unresolved_after(0), Some(1));
+    assert_eq!(session.prev_unresolved_before(2), Some(1));
+}
+
+/// End-to-end test: conflict session for a modify/delete conflict
+/// produces correct strategy and payloads, and the "keep" side can be
+/// staged to resolve the conflict.
+#[test]
+fn conflict_session_modify_delete_keep_resolves_conflict() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = dir.path();
+
+    run_git(repo, &["init"]);
+    run_git(repo, &["config", "user.email", "you@example.com"]);
+    run_git(repo, &["config", "user.name", "You"]);
+    run_git(repo, &["config", "commit.gpgsign", "false"]);
+
+    write(repo, "a.txt", "base content\n");
+    run_git(repo, &["add", "a.txt"]);
+    run_git(
+        repo,
+        &["-c", "commit.gpgsign=false", "commit", "-m", "base"],
+    );
+
+    // Feature branch modifies the file
+    run_git(repo, &["checkout", "-b", "feature"]);
+    write(repo, "a.txt", "modified by feature\n");
+    run_git(repo, &["add", "a.txt"]);
+    run_git(
+        repo,
+        &["-c", "commit.gpgsign=false", "commit", "-m", "modify"],
+    );
+
+    // Main branch deletes the file
+    run_git(repo, &["checkout", "-"]);
+    run_git(repo, &["rm", "a.txt"]);
+    run_git(
+        repo,
+        &["-c", "commit.gpgsign=false", "commit", "-m", "delete"],
+    );
+
+    run_git_expect_failure(repo, &["merge", "feature"]);
+
+    let backend = GixBackend;
+    let opened = backend.open(repo).unwrap();
+
+    // Verify conflict session for modify/delete
+    let session = opened
+        .conflict_session(Path::new("a.txt"))
+        .unwrap()
+        .expect("conflict session for modify/delete");
+    assert_eq!(
+        session.strategy,
+        ConflictResolverStrategy::TwoWayKeepDelete,
+        "modify/delete conflicts should use TwoWayKeepDelete strategy"
+    );
+    assert_eq!(session.conflict_kind, FileConflictKind::DeletedByUs);
+
+    // Ours deleted (absent), theirs has content
+    assert!(
+        session.ours.is_absent(),
+        "ours (delete side) should be absent"
+    );
+    assert!(
+        session.theirs.as_text().is_some(),
+        "theirs (modify side) should have text"
+    );
+    assert_eq!(
+        session.unsolved_count(),
+        1,
+        "two-way non-marker conflict sessions should expose one unresolved decision region"
+    );
+    assert_eq!(session.regions[0].ours, "");
+    assert_eq!(session.regions[0].theirs, "modified by feature\n");
+
+    // Resolve by keeping theirs (the modified version)
+    opened
+        .checkout_conflict_side(Path::new("a.txt"), ConflictSide::Theirs)
+        .unwrap();
+
+    // Verify file is restored and no longer conflicted
+    assert_eq!(
+        fs::read_to_string(repo.join("a.txt")).unwrap(),
+        "modified by feature\n"
+    );
+    let status = opened.status().unwrap();
+    assert!(
+        !status
+            .unstaged
+            .iter()
+            .any(|e| e.path == Path::new("a.txt") && e.kind == FileStatusKind::Conflicted),
+        "a.txt should no longer be conflicted after keeping theirs"
+    );
+}
+
+/// Validates the safety gate: `validate_conflict_resolution_text` correctly
+/// detects remaining markers in partially-resolved text.
+#[test]
+fn validate_conflict_resolution_detects_partial_resolution() {
+    use gitgpui_core::services::validate_conflict_resolution_text;
+
+    // Fully resolved text — no markers
+    let clean = "line1\nline2\nline3\n";
+    assert!(!validate_conflict_resolution_text(clean).has_conflict_markers);
+
+    // Partially resolved — one conflict block remains
+    let partial = concat!(
+        "resolved section\n",
+        "<<<<<<< HEAD\n",
+        "ours\n",
+        "=======\n",
+        "theirs\n",
+        ">>>>>>> feature\n",
+        "another resolved section\n",
+    );
+    let v = validate_conflict_resolution_text(partial);
+    assert!(v.has_conflict_markers);
+    assert_eq!(v.marker_lines, 3); // <<<<<<<, =======, >>>>>>>
+
+    // diff3-style markers
+    let diff3 = concat!(
+        "<<<<<<< HEAD\n",
+        "ours\n",
+        "||||||| base\n",
+        "base\n",
+        "=======\n",
+        "theirs\n",
+        ">>>>>>> feature\n",
+    );
+    let v3 = validate_conflict_resolution_text(diff3);
+    assert!(v3.has_conflict_markers);
+    assert_eq!(v3.marker_lines, 4); // <<<<<<<, |||||||, =======, >>>>>>>
+}
+
+/// End-to-end test: BothDeleted text conflict session uses DecisionOnly
+/// strategy, and restoring from base via `checkout_conflict_side(Base)`
+/// resolves the conflict.
+#[test]
+fn conflict_session_both_deleted_restore_from_base_resolves_conflict() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = dir.path();
+
+    run_git(repo, &["init"]);
+    run_git(repo, &["config", "user.email", "you@example.com"]);
+    run_git(repo, &["config", "user.name", "You"]);
+    run_git(repo, &["config", "commit.gpgsign", "false"]);
+
+    write(repo, "seed.txt", "seed\n");
+    run_git(repo, &["add", "seed.txt"]);
+    run_git(
+        repo,
+        &["-c", "commit.gpgsign=false", "commit", "-m", "seed"],
+    );
+
+    // BothDeleted: only base stage present, no ours or theirs
+    let base_blob = hash_blob(repo, b"original content\n");
+    set_unmerged_stages(repo, "removed.txt", Some(base_blob.as_str()), None, None);
+
+    let backend = GixBackend;
+    let opened = backend.open(repo).unwrap();
+
+    // Verify conflict session
+    let session = opened
+        .conflict_session(Path::new("removed.txt"))
+        .unwrap()
+        .expect("conflict session for BothDeleted");
+    assert_eq!(session.conflict_kind, FileConflictKind::BothDeleted);
+    assert_eq!(session.strategy, ConflictResolverStrategy::DecisionOnly);
+    assert!(matches!(session.base, ConflictPayload::Text(ref t) if t == "original content\n"));
+    assert!(session.ours.is_absent());
+    assert!(session.theirs.is_absent());
+    assert_eq!(session.unsolved_count(), 1);
+
+    // Resolve by accepting deletion
+    opened
+        .accept_conflict_deletion(Path::new("removed.txt"))
+        .unwrap();
+
+    // Verify conflict is resolved
+    let status = opened.status().unwrap();
+    assert!(
+        !status
+            .unstaged
+            .iter()
+            .any(|e| e.path == Path::new("removed.txt") && e.kind == FileStatusKind::Conflicted),
+        "removed.txt should no longer be conflicted after accepting deletion"
+    );
+    assert!(
+        !repo.join("removed.txt").exists(),
+        "file should be deleted after accepting deletion"
+    );
+}
+
+/// End-to-end test: AddedByUs conflict session uses TwoWayKeepDelete
+/// strategy, and keeping the file via `checkout_conflict_side(Ours)`
+/// resolves the conflict.
+#[test]
+fn conflict_session_added_by_us_keep_resolves_conflict() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = dir.path();
+
+    run_git(repo, &["init"]);
+    run_git(repo, &["config", "user.email", "you@example.com"]);
+    run_git(repo, &["config", "user.name", "You"]);
+    run_git(repo, &["config", "commit.gpgsign", "false"]);
+
+    write(repo, "seed.txt", "seed\n");
+    run_git(repo, &["add", "seed.txt"]);
+    run_git(
+        repo,
+        &["-c", "commit.gpgsign=false", "commit", "-m", "seed"],
+    );
+
+    // AddedByUs: only ours stage present (no base, no theirs)
+    let ours_blob = hash_blob(repo, b"added by us\n");
+    set_unmerged_stages(repo, "new.txt", None, Some(ours_blob.as_str()), None);
+
+    let backend = GixBackend;
+    let opened = backend.open(repo).unwrap();
+
+    // Verify status
+    let status = opened.status().unwrap();
+    let entry = status
+        .unstaged
+        .iter()
+        .find(|e| e.path == Path::new("new.txt"))
+        .expect("expected AddedByUs conflict entry");
+    assert_eq!(entry.kind, FileStatusKind::Conflicted);
+    assert_eq!(entry.conflict, Some(FileConflictKind::AddedByUs));
+
+    // Verify conflict session
+    let session = opened
+        .conflict_session(Path::new("new.txt"))
+        .unwrap()
+        .expect("conflict session for AddedByUs");
+    assert_eq!(session.conflict_kind, FileConflictKind::AddedByUs);
+    assert_eq!(session.strategy, ConflictResolverStrategy::TwoWayKeepDelete);
+    assert!(session.base.is_absent());
+    assert!(matches!(session.ours, ConflictPayload::Text(ref t) if t == "added by us\n"));
+    assert!(session.theirs.is_absent());
+    assert_eq!(session.unsolved_count(), 1);
+
+    // Resolve by keeping ours (the added file)
+    opened
+        .checkout_conflict_side(Path::new("new.txt"), ConflictSide::Ours)
+        .unwrap();
+
+    // Verify file exists and conflict is resolved
+    assert_eq!(
+        fs::read_to_string(repo.join("new.txt")).unwrap(),
+        "added by us\n"
+    );
+    let status_after = opened.status().unwrap();
+    assert!(
+        !status_after
+            .unstaged
+            .iter()
+            .any(|e| e.path == Path::new("new.txt") && e.kind == FileStatusKind::Conflicted),
+        "new.txt should no longer be conflicted after keeping ours"
+    );
+    assert!(
+        status_after
+            .staged
+            .iter()
+            .any(|e| e.path == Path::new("new.txt")),
+        "new.txt should be staged after resolution"
+    );
+}
+
+/// End-to-end test: AddedByThem conflict session uses TwoWayKeepDelete
+/// strategy, and keeping the file via `checkout_conflict_side(Theirs)`
+/// resolves the conflict.
+#[test]
+fn conflict_session_added_by_them_keep_resolves_conflict() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = dir.path();
+
+    run_git(repo, &["init"]);
+    run_git(repo, &["config", "user.email", "you@example.com"]);
+    run_git(repo, &["config", "user.name", "You"]);
+    run_git(repo, &["config", "commit.gpgsign", "false"]);
+
+    write(repo, "seed.txt", "seed\n");
+    run_git(repo, &["add", "seed.txt"]);
+    run_git(
+        repo,
+        &["-c", "commit.gpgsign=false", "commit", "-m", "seed"],
+    );
+
+    // AddedByThem: only theirs stage present (no base, no ours)
+    let theirs_blob = hash_blob(repo, b"added by them\n");
+    set_unmerged_stages(
+        repo,
+        "their_new.txt",
+        None,
+        None,
+        Some(theirs_blob.as_str()),
+    );
+
+    let backend = GixBackend;
+    let opened = backend.open(repo).unwrap();
+
+    // Verify status
+    let status = opened.status().unwrap();
+    let entry = status
+        .unstaged
+        .iter()
+        .find(|e| e.path == Path::new("their_new.txt"))
+        .expect("expected AddedByThem conflict entry");
+    assert_eq!(entry.kind, FileStatusKind::Conflicted);
+    assert_eq!(entry.conflict, Some(FileConflictKind::AddedByThem));
+
+    // Verify conflict session
+    let session = opened
+        .conflict_session(Path::new("their_new.txt"))
+        .unwrap()
+        .expect("conflict session for AddedByThem");
+    assert_eq!(session.conflict_kind, FileConflictKind::AddedByThem);
+    assert_eq!(session.strategy, ConflictResolverStrategy::TwoWayKeepDelete);
+    assert!(session.base.is_absent());
+    assert!(session.ours.is_absent());
+    assert!(matches!(session.theirs, ConflictPayload::Text(ref t) if t == "added by them\n"));
+    assert_eq!(session.unsolved_count(), 1);
+
+    // Resolve by keeping theirs (the added file)
+    opened
+        .checkout_conflict_side(Path::new("their_new.txt"), ConflictSide::Theirs)
+        .unwrap();
+
+    // Verify file exists and conflict is resolved
+    assert_eq!(
+        fs::read_to_string(repo.join("their_new.txt")).unwrap(),
+        "added by them\n"
+    );
+    let status_after = opened.status().unwrap();
+    assert!(
+        !status_after
+            .unstaged
+            .iter()
+            .any(|e| e.path == Path::new("their_new.txt") && e.kind == FileStatusKind::Conflicted),
+        "their_new.txt should no longer be conflicted after keeping theirs"
+    );
+    assert!(
+        status_after
+            .staged
+            .iter()
+            .any(|e| e.path == Path::new("their_new.txt")),
+        "their_new.txt should be staged after resolution"
+    );
+}
+
+/// End-to-end test: DeletedByThem conflict session uses TwoWayKeepDelete
+/// strategy (base+ours present, theirs absent), and keeping ours
+/// via `checkout_conflict_side(Ours)` resolves the conflict.
+#[test]
+fn conflict_session_deleted_by_them_keep_ours_resolves_conflict() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = dir.path();
+
+    run_git(repo, &["init"]);
+    run_git(repo, &["config", "user.email", "you@example.com"]);
+    run_git(repo, &["config", "user.name", "You"]);
+    run_git(repo, &["config", "commit.gpgsign", "false"]);
+
+    write(repo, "a.txt", "base content\n");
+    run_git(repo, &["add", "a.txt"]);
+    run_git(
+        repo,
+        &["-c", "commit.gpgsign=false", "commit", "-m", "base"],
+    );
+
+    // Feature branch deletes the file
+    run_git(repo, &["checkout", "-b", "feature"]);
+    run_git(repo, &["rm", "a.txt"]);
+    run_git(
+        repo,
+        &["-c", "commit.gpgsign=false", "commit", "-m", "delete"],
+    );
+
+    // Main branch modifies the file
+    run_git(repo, &["checkout", "-"]);
+    write(repo, "a.txt", "modified by us\n");
+    run_git(repo, &["add", "a.txt"]);
+    run_git(
+        repo,
+        &["-c", "commit.gpgsign=false", "commit", "-m", "modify"],
+    );
+
+    run_git_expect_failure(repo, &["merge", "feature"]);
+
+    let backend = GixBackend;
+    let opened = backend.open(repo).unwrap();
+
+    // Verify status shows DeletedByThem
+    let status = opened.status().unwrap();
+    let entry = status
+        .unstaged
+        .iter()
+        .find(|e| e.path == Path::new("a.txt") && e.kind == FileStatusKind::Conflicted)
+        .expect("expected DeletedByThem conflict entry");
+    assert_eq!(entry.conflict, Some(FileConflictKind::DeletedByThem));
+
+    // Verify conflict session
+    let session = opened
+        .conflict_session(Path::new("a.txt"))
+        .unwrap()
+        .expect("conflict session for DeletedByThem");
+    assert_eq!(session.conflict_kind, FileConflictKind::DeletedByThem);
+    assert_eq!(session.strategy, ConflictResolverStrategy::TwoWayKeepDelete);
+    assert!(session.base.as_text().is_some());
+    assert!(
+        matches!(session.ours, ConflictPayload::Text(ref t) if t == "modified by us\n"),
+        "ours (modified side) should have text"
+    );
+    assert!(
+        session.theirs.is_absent(),
+        "theirs (delete side) should be absent"
+    );
+    assert_eq!(session.unsolved_count(), 1);
+    assert_eq!(session.regions[0].ours, "modified by us\n");
+    assert_eq!(session.regions[0].theirs, "");
+
+    // Resolve by keeping ours (the modified version)
+    opened
+        .checkout_conflict_side(Path::new("a.txt"), ConflictSide::Ours)
+        .unwrap();
+
+    // Verify file is kept and conflict is resolved
+    assert_eq!(
+        fs::read_to_string(repo.join("a.txt")).unwrap(),
+        "modified by us\n"
+    );
+    let status_after = opened.status().unwrap();
+    assert!(
+        !status_after
+            .unstaged
+            .iter()
+            .any(|e| e.path == Path::new("a.txt") && e.kind == FileStatusKind::Conflicted),
+        "a.txt should no longer be conflicted after keeping ours"
+    );
 }

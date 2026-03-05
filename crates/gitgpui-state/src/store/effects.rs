@@ -109,7 +109,13 @@ pub(super) fn schedule_effect(
             branch,
             local_branch,
         } => repo_actions::schedule_checkout_remote_branch(
-            executor, repos, msg_tx, repo_id, remote, branch, local_branch,
+            executor,
+            repos,
+            msg_tx,
+            repo_id,
+            remote,
+            branch,
+            local_branch,
         ),
         Effect::CheckoutCommit { repo_id, commit_id } => {
             repo_actions::schedule_checkout_commit(executor, repos, msg_tx, repo_id, commit_id);
@@ -283,6 +289,15 @@ pub(super) fn schedule_effect(
         } => repo_commands::schedule_checkout_conflict_side(
             executor, repos, msg_tx, repo_id, path, side,
         ),
+        Effect::AcceptConflictDeletion { repo_id, path } => {
+            repo_commands::schedule_accept_conflict_deletion(executor, repos, msg_tx, repo_id, path)
+        }
+        Effect::CheckoutConflictBase { repo_id, path } => {
+            repo_commands::schedule_checkout_conflict_base(executor, repos, msg_tx, repo_id, path)
+        }
+        Effect::LaunchMergetool { repo_id, path } => {
+            repo_commands::schedule_launch_mergetool(executor, repos, msg_tx, repo_id, path);
+        }
         Effect::Stash {
             repo_id,
             message,

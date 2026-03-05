@@ -1,11 +1,12 @@
+use gitgpui_core::conflict_session::ConflictSession;
 use gitgpui_core::domain::{
     Branch, CommitDetails, CommitId, DiffTarget, FileDiffImage, FileDiffText, LogCursor, LogPage,
     ReflogEntry, Remote, RemoteBranch, RepoSpec, RepoStatus, StashEntry, Submodule, Tag,
     UpstreamDivergence, Worktree,
 };
 use gitgpui_core::services::{
-    BlameLine, CommandOutput, ConflictFileStages, ConflictSide, GitRepository, PullMode,
-    RemoteUrlKind, ResetMode, Result,
+    BlameLine, CommandOutput, ConflictFileStages, ConflictSide, GitRepository, MergetoolResult,
+    PullMode, RemoteUrlKind, ResetMode, Result,
 };
 use std::path::{Path, PathBuf};
 
@@ -14,6 +15,7 @@ mod diff;
 mod discard;
 mod history;
 mod log;
+mod mergetool;
 mod patch;
 mod porcelain;
 mod refs;
@@ -123,6 +125,10 @@ impl GitRepository for GixRepo {
         self.conflict_file_stages_impl(path)
     }
 
+    fn conflict_session(&self, path: &Path) -> Result<Option<ConflictSession>> {
+        self.conflict_session_impl(path)
+    }
+
     fn create_branch(&self, name: &str, target: &CommitId) -> Result<()> {
         self.create_branch_impl(name, target)
     }
@@ -139,12 +145,7 @@ impl GitRepository for GixRepo {
         self.checkout_branch_impl(name)
     }
 
-    fn checkout_remote_branch(
-        &self,
-        remote: &str,
-        branch: &str,
-        local_branch: &str,
-    ) -> Result<()> {
+    fn checkout_remote_branch(&self, remote: &str, branch: &str, local_branch: &str) -> Result<()> {
         self.checkout_remote_branch_impl(remote, branch, local_branch)
     }
 
@@ -303,6 +304,18 @@ impl GitRepository for GixRepo {
 
     fn checkout_conflict_side(&self, path: &Path, side: ConflictSide) -> Result<CommandOutput> {
         self.checkout_conflict_side_impl(path, side)
+    }
+
+    fn accept_conflict_deletion(&self, path: &Path) -> Result<CommandOutput> {
+        self.accept_conflict_deletion_impl(path)
+    }
+
+    fn checkout_conflict_base(&self, path: &Path) -> Result<CommandOutput> {
+        self.checkout_conflict_base_impl(path)
+    }
+
+    fn launch_mergetool(&self, path: &Path) -> Result<MergetoolResult> {
+        self.launch_mergetool_impl(path)
     }
 
     fn export_patch_with_output(&self, commit_id: &CommitId, dest: &Path) -> Result<CommandOutput> {

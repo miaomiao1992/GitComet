@@ -1,4 +1,5 @@
 mod actions_emit_effects;
+mod conflict_interactions;
 mod diff_selection;
 mod effects;
 mod external_and_history;
@@ -287,6 +288,76 @@ pub(super) fn reduce(
             path,
             side,
         } => actions_emit_effects::checkout_conflict_side(repo_id, path, side),
+        Msg::AcceptConflictDeletion { repo_id, path } => {
+            actions_emit_effects::accept_conflict_deletion(repo_id, path)
+        }
+        Msg::CheckoutConflictBase { repo_id, path } => {
+            actions_emit_effects::checkout_conflict_base(repo_id, path)
+        }
+        Msg::LaunchMergetool { repo_id, path } => {
+            actions_emit_effects::launch_mergetool(repo_id, path)
+        }
+        Msg::RecordConflictAutosolveTelemetry {
+            repo_id,
+            path,
+            mode,
+            total_conflicts_before,
+            total_conflicts_after,
+            unresolved_before,
+            unresolved_after,
+            stats,
+        } => {
+            if let Some(repo_state) = state.repos.iter_mut().find(|r| r.id == repo_id) {
+                util::push_action_log(
+                    repo_state,
+                    true,
+                    util::conflict_autosolve_telemetry_command(mode, path.as_deref()),
+                    util::conflict_autosolve_telemetry_summary(
+                        mode,
+                        path.as_deref(),
+                        total_conflicts_before,
+                        total_conflicts_after,
+                        unresolved_before,
+                        unresolved_after,
+                        stats,
+                    ),
+                    None,
+                );
+            }
+            Vec::new()
+        }
+        Msg::ConflictSetHideResolved {
+            repo_id,
+            path,
+            hide_resolved,
+        } => conflict_interactions::set_hide_resolved(state, repo_id, path, hide_resolved),
+        Msg::ConflictApplyBulkChoice {
+            repo_id,
+            path,
+            choice,
+        } => conflict_interactions::apply_bulk_choice(state, repo_id, path, choice),
+        Msg::ConflictSetRegionChoice {
+            repo_id,
+            path,
+            region_index,
+            choice,
+        } => conflict_interactions::set_region_choice(state, repo_id, path, region_index, choice),
+        Msg::ConflictSyncRegionResolutions {
+            repo_id,
+            path,
+            updates,
+        } => conflict_interactions::sync_region_resolutions(state, repo_id, path, updates),
+        Msg::ConflictApplyAutosolve {
+            repo_id,
+            path,
+            mode,
+            whitespace_normalize,
+        } => {
+            conflict_interactions::apply_autosolve(state, repo_id, path, mode, whitespace_normalize)
+        }
+        Msg::ConflictResetResolutions { repo_id, path } => {
+            conflict_interactions::reset_resolutions(state, repo_id, path)
+        }
         Msg::Stash {
             repo_id,
             message,
@@ -359,7 +430,8 @@ pub(super) fn reduce(
             repo_id,
             path,
             result,
-        } => effects::conflict_file_loaded(state, repo_id, path, result),
+            conflict_session,
+        } => effects::conflict_file_loaded(state, repo_id, path, *result, conflict_session),
         Msg::WorktreesLoaded { repo_id, result } => {
             effects::worktrees_loaded(state, repo_id, result)
         }

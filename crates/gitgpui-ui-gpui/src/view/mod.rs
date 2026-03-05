@@ -15,18 +15,19 @@ use gitgpui_state::session;
 use gitgpui_state::store::AppStore;
 use gpui::prelude::*;
 use gpui::{
-    Animation, AnimationExt, AnyElement, App, Bounds, ClickEvent, Corner, CursorStyle,
-    Decorations, Element, ElementId, Entity, FocusHandle, FontWeight, GlobalElementId,
-    InspectorElementId, IsZero, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, Pixels, Point, Render, ResizeEdge, ScrollHandle, ShapedLine, SharedString, Size,
-    Style, TextRun, Tiling, Timer, UniformListScrollHandle, WeakEntity, Window,
-    WindowControlArea, anchored, div, fill, point, px, relative, size, uniform_list,
+    Animation, AnimationExt, AnyElement, App, Bounds, ClickEvent, Corner, CursorStyle, Decorations,
+    Element, ElementId, Entity, FocusHandle, FontWeight, GlobalElementId, InspectorElementId,
+    IsZero, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point,
+    Render, ResizeEdge, ScrollHandle, ShapedLine, SharedString, Size, Style, TextRun, Tiling,
+    Timer, UniformListScrollHandle, WeakEntity, Window, WindowControlArea, anchored, div, fill,
+    point, px, relative, size, uniform_list,
 };
 use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 use std::collections::BTreeMap;
 use std::hash::{Hash, Hasher};
 use std::ops::Range;
 use std::sync::Arc;
+use std::sync::atomic::AtomicI32;
 use std::time::Duration;
 
 mod app_model;
@@ -34,7 +35,7 @@ mod branch_sidebar;
 mod caches;
 mod chrome;
 mod color;
-mod conflict_resolver;
+pub(crate) mod conflict_resolver;
 mod date_time;
 mod diff_navigation;
 mod diff_preview;
@@ -49,6 +50,7 @@ mod panels;
 mod panes;
 mod patch_split;
 mod path_display;
+mod perf;
 mod poller;
 mod repo_open;
 pub(crate) mod rows;
@@ -69,10 +71,11 @@ use chrome::{
 };
 use conflict_resolver::{
     ConflictDiffMode, ConflictInlineRow, ConflictPickSide, ConflictResolverViewMode,
+    ResolvedLineMeta, SourceLineKey,
 };
-use date_time::{DateTimeFormat, Timezone, format_datetime};
 #[cfg(test)]
 use date_time::format_datetime_utc;
+use date_time::{DateTimeFormat, Timezone, format_datetime};
 use diff_preview::{build_deleted_file_preview_from_diff, build_new_file_preview_from_diff};
 use patch_split::build_patch_split_rows;
 use poller::Poller;
@@ -216,6 +219,31 @@ enum DiffViewMode {
 enum SvgDiffViewMode {
     Image,
     Code,
+}
+
+/// Preview mode for the conflict resolver merge-input pane.
+///
+/// When the conflicted file supports a visual preview (e.g. SVG images),
+/// the user can toggle between the normal text diff view and a rendered
+/// preview of each conflict side.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum ConflictResolverPreviewMode {
+    /// Normal text/diff view with syntax highlighting.
+    #[default]
+    Text,
+    /// Rendered preview (image for SVG files, syntax-highlighted view for markdown).
+    Preview,
+}
+
+fn is_markdown_path(path: &std::path::Path) -> bool {
+    path.extension()
+        .and_then(|s| s.to_str())
+        .is_some_and(|ext| {
+            matches!(
+                ext.to_ascii_lowercase().as_str(),
+                "md" | "markdown" | "mdown" | "mkd" | "mkdn" | "mdwn"
+            )
+        })
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -421,14 +449,28 @@ enum ThreeWayColumn {
     Theirs,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct ResolvedOutputConflictMarker {
+    conflict_ix: usize,
+    range_start: usize,
+    range_end: usize,
+    is_start: bool,
+    is_end: bool,
+    unresolved: bool,
+}
+
 #[derive(Clone, Debug)]
 struct ConflictResolverUiState {
     repo_id: Option<RepoId>,
     path: Option<std::path::PathBuf>,
+    conflict_syntax_language: Option<rows::DiffSyntaxLanguage>,
     source_hash: Option<u64>,
     current: Option<String>,
     marker_segments: Vec<conflict_resolver::ConflictSegment>,
+    /// Mapping from visible block index to `ConflictSession` region index.
+    conflict_region_indices: Vec<usize>,
     active_conflict: usize,
+    hovered_conflict: Option<(usize, ThreeWayColumn)>,
     view_mode: ConflictResolverViewMode,
     diff_rows: Vec<FileDiffRow>,
     inline_rows: Vec<ConflictInlineRow>,
@@ -437,14 +479,46 @@ struct ConflictResolverUiState {
     three_way_theirs_lines: Vec<SharedString>,
     three_way_len: usize,
     three_way_conflict_ranges: Vec<Range<usize>>,
-    three_way_word_highlights_base: Vec<Option<Vec<Range<usize>>>>,
-    three_way_word_highlights_ours: Vec<Option<Vec<Range<usize>>>>,
-    three_way_word_highlights_theirs: Vec<Option<Vec<Range<usize>>>>,
-    diff_word_highlights_split: Vec<Option<(Vec<Range<usize>>, Vec<Range<usize>>)>>,
+    three_way_base_line_conflict_map: Vec<Option<usize>>,
+    three_way_ours_line_conflict_map: Vec<Option<usize>>,
+    three_way_theirs_line_conflict_map: Vec<Option<usize>>,
+    conflict_has_base: Vec<bool>,
+    three_way_word_highlights_base: conflict_resolver::WordHighlights,
+    three_way_word_highlights_ours: conflict_resolver::WordHighlights,
+    three_way_word_highlights_theirs: conflict_resolver::WordHighlights,
+    diff_word_highlights_split: conflict_resolver::TwoWayWordHighlights,
     diff_mode: ConflictDiffMode,
     nav_anchor: Option<usize>,
-    split_selected: std::collections::BTreeSet<(usize, ConflictPickSide)>,
-    inline_selected: std::collections::BTreeSet<usize>,
+    hide_resolved: bool,
+    three_way_visible_map: Vec<conflict_resolver::ThreeWayVisibleItem>,
+    diff_row_conflict_map: Vec<Option<usize>>,
+    inline_row_conflict_map: Vec<Option<usize>>,
+    diff_visible_row_indices: Vec<usize>,
+    inline_visible_row_indices: Vec<usize>,
+    /// True when any conflict side contains non-UTF8 binary data.
+    is_binary_conflict: bool,
+    /// Byte sizes of the three conflict sides (for binary UI display).
+    binary_side_sizes: [Option<usize>; 3],
+    /// The resolver strategy for the current conflict (set during sync).
+    strategy: Option<gitgpui_core::conflict_session::ConflictResolverStrategy>,
+    /// The conflict kind for the current file (set during sync).
+    conflict_kind: Option<gitgpui_core::domain::FileConflictKind>,
+    /// Last autosolve trace summary shown in resolver UI.
+    last_autosolve_summary: Option<SharedString>,
+    /// Tracks the last-seen `conflict_rev` from state so we can detect
+    /// state-side session changes (e.g. hide-resolved, bulk picks, autosolve)
+    /// that don't change the underlying file content.
+    conflict_rev: u64,
+    /// Sequence token for debounced resolved-output outline recompute tasks.
+    resolver_pending_recompute_seq: u64,
+    /// Per-line provenance metadata for the resolved output outline.
+    resolved_line_meta: Vec<ResolvedLineMeta>,
+    /// Per-line conflict marker metadata for resolved output gutter markers.
+    resolved_output_conflict_markers: Vec<Option<ResolvedOutputConflictMarker>>,
+    /// Set of source line keys currently represented in resolved output (for dedupe/plus-icon).
+    resolved_output_line_sources_index: HashSet<SourceLineKey>,
+    /// Preview mode for the merge-input pane (Text vs rendered Preview).
+    resolver_preview_mode: ConflictResolverPreviewMode,
 }
 
 impl Default for ConflictResolverUiState {
@@ -452,10 +526,13 @@ impl Default for ConflictResolverUiState {
         Self {
             repo_id: None,
             path: None,
+            conflict_syntax_language: None,
             source_hash: None,
             current: None,
             marker_segments: Vec::new(),
+            conflict_region_indices: Vec::new(),
             active_conflict: 0,
+            hovered_conflict: None,
             view_mode: ConflictResolverViewMode::TwoWayDiff,
             diff_rows: Vec::new(),
             inline_rows: Vec::new(),
@@ -464,16 +541,60 @@ impl Default for ConflictResolverUiState {
             three_way_theirs_lines: Vec::new(),
             three_way_len: 0,
             three_way_conflict_ranges: Vec::new(),
+            three_way_base_line_conflict_map: Vec::new(),
+            three_way_ours_line_conflict_map: Vec::new(),
+            three_way_theirs_line_conflict_map: Vec::new(),
+            conflict_has_base: Vec::new(),
             three_way_word_highlights_base: Vec::new(),
             three_way_word_highlights_ours: Vec::new(),
             three_way_word_highlights_theirs: Vec::new(),
             diff_word_highlights_split: Vec::new(),
             diff_mode: ConflictDiffMode::Split,
             nav_anchor: None,
-            split_selected: std::collections::BTreeSet::new(),
-            inline_selected: std::collections::BTreeSet::new(),
+            hide_resolved: false,
+            three_way_visible_map: Vec::new(),
+            diff_row_conflict_map: Vec::new(),
+            inline_row_conflict_map: Vec::new(),
+            diff_visible_row_indices: Vec::new(),
+            inline_visible_row_indices: Vec::new(),
+            is_binary_conflict: false,
+            binary_side_sizes: [None; 3],
+            strategy: None,
+            conflict_kind: None,
+            last_autosolve_summary: None,
+            conflict_rev: 0,
+            resolver_pending_recompute_seq: 0,
+            resolved_line_meta: Vec::new(),
+            resolved_output_conflict_markers: Vec::new(),
+            resolved_output_line_sources_index: HashSet::default(),
+            resolver_preview_mode: ConflictResolverPreviewMode::default(),
         }
     }
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[allow(dead_code)]
+enum ResolverPickTarget {
+    /// Append a specific line from the 3-way resolver pane.
+    ThreeWayLine {
+        line_ix: usize,
+        choice: conflict_resolver::ConflictChoice,
+    },
+    /// Append a specific line from the 2-way split resolver pane.
+    TwoWaySplitLine {
+        row_ix: usize,
+        side: conflict_resolver::ConflictPickSide,
+    },
+    /// Append a specific line from the 2-way inline resolver pane.
+    TwoWayInlineLine { row_ix: usize },
+    /// Pick a full conflict chunk for the requested side.
+    Chunk {
+        conflict_ix: usize,
+        choice: conflict_resolver::ConflictChoice,
+        /// Optional resolved-output line that initiated this pick.
+        /// When present, chunk pick scopes to the marker chunk at this line.
+        output_line_ix: Option<usize>,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -589,6 +710,12 @@ enum PopoverKind {
     MergeAbortConfirm {
         repo_id: RepoId,
     },
+    ConflictSaveStageConfirm {
+        repo_id: RepoId,
+        path: std::path::PathBuf,
+        has_conflict_markers: bool,
+        unresolved_blocks: usize,
+    },
     ForceDeleteBranchConfirm {
         repo_id: RepoId,
         name: String,
@@ -624,6 +751,28 @@ enum PopoverKind {
         discard_lines_patch: Option<String>,
         lines_count: usize,
         copy_text: Option<String>,
+    },
+    #[allow(dead_code)]
+    ConflictResolverInputRowMenu {
+        line_label: SharedString,
+        line_target: ResolverPickTarget,
+        chunk_label: SharedString,
+        chunk_target: ResolverPickTarget,
+    },
+    ConflictResolverChunkMenu {
+        conflict_ix: usize,
+        has_base: bool,
+        is_three_way: bool,
+        selected_choices: Vec<conflict_resolver::ConflictChoice>,
+        output_line_ix: Option<usize>,
+    },
+    ConflictResolverOutputMenu {
+        cursor_line: usize,
+        selected_text: Option<String>,
+        has_source_a: bool,
+        has_source_b: bool,
+        has_source_c: bool,
+        is_three_way: bool,
     },
     CommitMenu {
         repo_id: RepoId,
@@ -685,6 +834,159 @@ enum PatchSplitRow {
     },
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum GitGpuiViewMode {
+    #[default]
+    Normal,
+    #[allow(dead_code)]
+    FocusedMergetool,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct GitGpuiViewConfig {
+    pub initial_path: Option<std::path::PathBuf>,
+    pub view_mode: GitGpuiViewMode,
+    pub focused_mergetool: Option<FocusedMergetoolViewConfig>,
+    pub focused_mergetool_exit_code: Option<Arc<AtomicI32>>,
+}
+
+impl GitGpuiViewConfig {
+    pub fn normal(initial_path: Option<std::path::PathBuf>) -> Self {
+        Self {
+            initial_path,
+            view_mode: GitGpuiViewMode::Normal,
+            focused_mergetool: None,
+            focused_mergetool_exit_code: None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FocusedMergetoolLabels {
+    pub local: String,
+    pub remote: String,
+    pub base: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FocusedMergetoolViewConfig {
+    pub repo_path: std::path::PathBuf,
+    pub conflicted_file_path: std::path::PathBuf,
+    pub labels: FocusedMergetoolLabels,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct FocusedMergetoolBootstrap {
+    repo_path: std::path::PathBuf,
+    target_path: std::path::PathBuf,
+}
+
+impl FocusedMergetoolBootstrap {
+    fn from_view_config(config: FocusedMergetoolViewConfig) -> Self {
+        let repo_path = normalize_bootstrap_repo_path(config.repo_path);
+        let target_path = focused_mergetool_target_path(&repo_path, &config.conflicted_file_path);
+        Self {
+            repo_path,
+            target_path,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum FocusedMergetoolBootstrapAction {
+    OpenRepo(std::path::PathBuf),
+    SetActiveRepo(RepoId),
+    SelectDiff {
+        repo_id: RepoId,
+        target: DiffTarget,
+    },
+    LoadConflictFile {
+        repo_id: RepoId,
+        path: std::path::PathBuf,
+    },
+    Complete,
+}
+
+fn normalize_bootstrap_repo_path(path: std::path::PathBuf) -> std::path::PathBuf {
+    let path = if path.is_relative() {
+        std::env::current_dir()
+            .unwrap_or_else(|_| std::path::PathBuf::from("."))
+            .join(path)
+    } else {
+        path
+    };
+    std::fs::canonicalize(&path).unwrap_or(path)
+}
+
+fn focused_mergetool_target_path(
+    repo_path: &std::path::Path,
+    conflicted_file_path: &std::path::Path,
+) -> std::path::PathBuf {
+    if conflicted_file_path.is_relative() {
+        return conflicted_file_path.to_path_buf();
+    }
+
+    if let Ok(relative) = conflicted_file_path.strip_prefix(repo_path) {
+        return relative.to_path_buf();
+    }
+
+    let normalized_conflicted = std::fs::canonicalize(conflicted_file_path)
+        .unwrap_or_else(|_| conflicted_file_path.to_path_buf());
+    if let Ok(relative) = normalized_conflicted.strip_prefix(repo_path) {
+        return relative.to_path_buf();
+    }
+
+    conflicted_file_path.to_path_buf()
+}
+
+fn focused_mergetool_bootstrap_action(
+    state: &AppState,
+    bootstrap: &FocusedMergetoolBootstrap,
+) -> Option<FocusedMergetoolBootstrapAction> {
+    let Some(repo) = state
+        .repos
+        .iter()
+        .find(|r| r.spec.workdir == bootstrap.repo_path)
+    else {
+        return Some(FocusedMergetoolBootstrapAction::OpenRepo(
+            bootstrap.repo_path.clone(),
+        ));
+    };
+
+    if state.active_repo != Some(repo.id) {
+        return Some(FocusedMergetoolBootstrapAction::SetActiveRepo(repo.id));
+    }
+
+    if !matches!(repo.open, Loadable::Ready(())) {
+        return None;
+    }
+
+    let target = DiffTarget::WorkingTree {
+        area: DiffArea::Unstaged,
+        path: bootstrap.target_path.clone(),
+    };
+    if repo.diff_target.as_ref() != Some(&target) {
+        return Some(FocusedMergetoolBootstrapAction::SelectDiff {
+            repo_id: repo.id,
+            target,
+        });
+    }
+
+    let has_conflict_file_target = repo.conflict_file_path.as_ref() == Some(&bootstrap.target_path);
+    if !has_conflict_file_target || matches!(repo.conflict_file, Loadable::NotLoaded) {
+        return Some(FocusedMergetoolBootstrapAction::LoadConflictFile {
+            repo_id: repo.id,
+            path: bootstrap.target_path.clone(),
+        });
+    }
+
+    Some(FocusedMergetoolBootstrapAction::Complete)
+}
+
+fn renders_full_chrome(view_mode: GitGpuiViewMode) -> bool {
+    matches!(view_mode, GitGpuiViewMode::Normal)
+}
+
 pub struct GitGpuiView {
     store: Arc<AppStore>,
     state: Arc<AppState>,
@@ -693,6 +995,7 @@ pub struct GitGpuiView {
     _ui_model_subscription: gpui::Subscription,
     _activation_subscription: gpui::Subscription,
     _appearance_subscription: gpui::Subscription,
+    view_mode: GitGpuiViewMode,
     theme: AppTheme,
     title_bar: Entity<TitleBarView>,
     sidebar_pane: Entity<SidebarPaneView>,
@@ -703,6 +1006,7 @@ pub struct GitGpuiView {
     tooltip_host: Entity<TooltipHost>,
     toast_host: Entity<ToastHost>,
     popover_host: Entity<PopoverHost>,
+    focused_mergetool_bootstrap: Option<FocusedMergetoolBootstrap>,
 
     last_window_size: Size<Pixels>,
     ui_window_size_last_seen: Size<Pixels>,
@@ -774,16 +1078,16 @@ impl GitGpuiView {
         let action_bar = self.action_bar.clone();
 
         cx.defer(move |cx| {
-            let _ = sidebar_pane.update(cx, |pane, cx| {
+            sidebar_pane.update(cx, |pane, cx| {
                 pane.set_active_context_menu_invoker(next.clone(), cx);
             });
-            let _ = main_pane.update(cx, |pane, cx| {
+            main_pane.update(cx, |pane, cx| {
                 pane.set_active_context_menu_invoker(next.clone(), cx);
             });
-            let _ = details_pane.update(cx, |pane, cx| {
+            details_pane.update(cx, |pane, cx| {
                 pane.set_active_context_menu_invoker(next.clone(), cx);
             });
-            let _ = action_bar.update(cx, |bar, cx| {
+            action_bar.update(cx, |bar, cx| {
                 bar.set_active_context_menu_invoker(next.clone(), cx);
             });
         });
@@ -796,11 +1100,46 @@ impl GitGpuiView {
         window: &mut Window,
         cx: &mut gpui::Context<Self>,
     ) -> Self {
+        Self::new_with_config(
+            store,
+            events,
+            GitGpuiViewConfig::normal(initial_path),
+            window,
+            cx,
+        )
+    }
+
+    pub fn new_with_config(
+        store: AppStore,
+        events: smol::channel::Receiver<StoreEvent>,
+        config: GitGpuiViewConfig,
+        window: &mut Window,
+        cx: &mut gpui::Context<Self>,
+    ) -> Self {
+        let GitGpuiViewConfig {
+            mut initial_path,
+            view_mode,
+            focused_mergetool,
+            focused_mergetool_exit_code,
+        } = config;
+        if initial_path.is_none() {
+            initial_path = focused_mergetool.as_ref().map(|cfg| cfg.repo_path.clone());
+        }
+        let focused_mergetool_labels = focused_mergetool.as_ref().map(|cfg| cfg.labels.clone());
+        let focused_mergetool_bootstrap = if view_mode == GitGpuiViewMode::FocusedMergetool {
+            focused_mergetool
+                .clone()
+                .map(FocusedMergetoolBootstrap::from_view_config)
+        } else {
+            None
+        };
         let store = Arc::new(store);
         let initial_theme = AppTheme::default_for_window_appearance(window.appearance());
 
         let mut ui_session = session::load();
-        if let Some(path) = initial_path.as_ref() {
+        if view_mode == GitGpuiViewMode::Normal
+            && let Some(path) = initial_path.as_ref()
+        {
             if !ui_session.open_repos.iter().any(|p| p == path) {
                 ui_session.open_repos.push(path.clone());
             }
@@ -823,12 +1162,22 @@ impl GitGpuiView {
         let history_show_author = ui_session.history_show_author.unwrap_or(true);
         let history_show_date = ui_session.history_show_date.unwrap_or(true);
         let history_show_sha = ui_session.history_show_sha.unwrap_or(false);
+        let conflict_enable_whitespace_autosolve = ui_session
+            .conflict_enable_whitespace_autosolve
+            .unwrap_or(false);
+        let conflict_enable_regex_autosolve =
+            ui_session.conflict_enable_regex_autosolve.unwrap_or(false);
+        let conflict_enable_history_autosolve = ui_session
+            .conflict_enable_history_autosolve
+            .unwrap_or(false);
 
         // Only auto-restore/open on startup if the store hasn't already been preloaded.
         // This avoids re-opening repos (and changing RepoIds) when the UI is attached to an
         // already-initialized store (notably in `gpui::test` setup).
         let store_preloaded = !store.snapshot().repos.is_empty();
-        let should_auto_restore = {
+        let should_auto_restore = if view_mode == GitGpuiViewMode::FocusedMergetool {
+            false
+        } else {
             #[cfg(test)]
             {
                 false
@@ -914,6 +1263,12 @@ impl GitGpuiView {
                 history_show_author,
                 history_show_date,
                 history_show_sha,
+                conflict_enable_whitespace_autosolve,
+                conflict_enable_regex_autosolve,
+                conflict_enable_history_autosolve,
+                view_mode,
+                focused_mergetool_labels,
+                focused_mergetool_exit_code.clone(),
                 weak_view.clone(),
                 tooltip_host.downgrade(),
                 window,
@@ -1014,6 +1369,7 @@ impl GitGpuiView {
             _ui_model_subscription: ui_model_subscription,
             _activation_subscription: activation_subscription,
             _appearance_subscription: appearance_subscription,
+            view_mode,
             theme: initial_theme,
             title_bar,
             sidebar_pane,
@@ -1024,6 +1380,7 @@ impl GitGpuiView {
             tooltip_host,
             toast_host,
             popover_host,
+            focused_mergetool_bootstrap,
             last_window_size: size(px(0.0), px(0.0)),
             ui_window_size_last_seen: size(px(0.0), px(0.0)),
             ui_settings_persist_seq: 0,
@@ -1052,6 +1409,8 @@ impl GitGpuiView {
 
         #[cfg(any(target_os = "linux", target_os = "freebsd"))]
         view.maybe_auto_install_linux_desktop_integration(cx);
+
+        view.drive_focused_mergetool_bootstrap();
 
         view
     }
@@ -1173,6 +1532,33 @@ impl GitGpuiView {
         self.state.active_repo
     }
 
+    fn drive_focused_mergetool_bootstrap(&mut self) {
+        let Some(bootstrap) = self.focused_mergetool_bootstrap.as_ref() else {
+            return;
+        };
+        let Some(action) = focused_mergetool_bootstrap_action(&self.state, bootstrap) else {
+            return;
+        };
+
+        match action {
+            FocusedMergetoolBootstrapAction::OpenRepo(path) => {
+                self.store.dispatch(Msg::OpenRepo(path))
+            }
+            FocusedMergetoolBootstrapAction::SetActiveRepo(repo_id) => {
+                self.store.dispatch(Msg::SetActiveRepo { repo_id });
+            }
+            FocusedMergetoolBootstrapAction::SelectDiff { repo_id, target } => {
+                self.store.dispatch(Msg::SelectDiff { repo_id, target });
+            }
+            FocusedMergetoolBootstrapAction::LoadConflictFile { repo_id, path } => {
+                self.store.dispatch(Msg::LoadConflictFile { repo_id, path });
+            }
+            FocusedMergetoolBootstrapAction::Complete => {
+                self.focused_mergetool_bootstrap = None;
+            }
+        }
+    }
+
     fn active_repo(&self) -> Option<&RepoState> {
         let repo_id = self.active_repo_id()?;
         self.state.repos.iter().find(|r| r.id == repo_id)
@@ -1229,6 +1615,10 @@ impl GitGpuiView {
 impl Render for GitGpuiView {
     fn render(&mut self, window: &mut Window, cx: &mut gpui::Context<Self>) -> impl IntoElement {
         let theme = self.theme;
+        debug_assert!(matches!(
+            self.view_mode,
+            GitGpuiViewMode::Normal | GitGpuiViewMode::FocusedMergetool
+        ));
         self.last_window_size = window.window_bounds().get_bounds().size;
         self.clamp_pane_widths_to_window();
         if self.last_window_size != self.ui_window_size_last_seen {
@@ -1270,70 +1660,87 @@ impl Render for GitGpuiView {
             .map(cursor_style_for_resize_edge)
             .unwrap_or(CursorStyle::Arrow);
 
+        let center_content = if renders_full_chrome(self.view_mode) {
+            div()
+                .flex()
+                .flex_col()
+                .flex_1()
+                .min_h(px(0.0))
+                .child(self.repo_tabs_bar.clone())
+                .child(self.open_repo_panel(cx))
+                .child(self.action_bar.clone())
+                .child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .flex_1()
+                        .min_h(px(0.0))
+                        .child(
+                            div()
+                                .id("sidebar_pane")
+                                .w(self.sidebar_width)
+                                .min_h(px(0.0))
+                                .bg(theme.colors.surface_bg)
+                                .child(self.sidebar_pane.clone()),
+                        )
+                        .child(self.pane_resize_handle(
+                            theme,
+                            "pane_resize_sidebar",
+                            PaneResizeHandle::Sidebar,
+                            cx,
+                        ))
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w(px(0.0))
+                                .min_h(px(0.0))
+                                .child(self.main_pane.clone()),
+                        )
+                        .child(self.pane_resize_handle(
+                            theme,
+                            "pane_resize_details",
+                            PaneResizeHandle::Details,
+                            cx,
+                        ))
+                        .child(
+                            div()
+                                .id("details_pane")
+                                .w(self.details_width)
+                                .min_h(px(0.0))
+                                .flex()
+                                .flex_col()
+                                .child(
+                                    div()
+                                        .flex_1()
+                                        .min_h(px(0.0))
+                                        .child(self.details_pane.clone()),
+                                ),
+                        ),
+                )
+                .into_any_element()
+        } else {
+            div()
+                .flex()
+                .flex_col()
+                .flex_1()
+                .min_h(px(0.0))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w(px(0.0))
+                        .min_h(px(0.0))
+                        .child(self.main_pane.clone()),
+                )
+                .into_any_element()
+        };
+
         let mut body = div()
             .flex()
             .flex_col()
             .size_full()
             .text_color(theme.colors.text)
             .child(self.title_bar.clone())
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .flex_1()
-                    .min_h(px(0.0))
-                    .child(self.repo_tabs_bar.clone())
-                    .child(self.open_repo_panel(cx))
-                    .child(self.action_bar.clone())
-                    .child(
-                        div()
-                            .flex()
-                            .flex_row()
-                            .flex_1()
-                            .min_h(px(0.0))
-                            .child(
-                                div()
-                                    .id("sidebar_pane")
-                                    .w(self.sidebar_width)
-                                    .min_h(px(0.0))
-                                    .bg(theme.colors.surface_bg)
-                                    .child(self.sidebar_pane.clone()),
-                            )
-                            .child(self.pane_resize_handle(
-                                theme,
-                                "pane_resize_sidebar",
-                                PaneResizeHandle::Sidebar,
-                                cx,
-                            ))
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .min_w(px(0.0))
-                                    .min_h(px(0.0))
-                                    .child(self.main_pane.clone()),
-                            )
-                            .child(self.pane_resize_handle(
-                                theme,
-                                "pane_resize_details",
-                                PaneResizeHandle::Details,
-                                cx,
-                            ))
-                            .child(
-                                div()
-                                    .id("details_pane")
-                                    .w(self.details_width)
-                                    .min_h(px(0.0))
-                                    .flex()
-                                    .flex_col()
-                                    .child(
-                                        div()
-                                            .flex_1()
-                                            .min_h(px(0.0))
-                                            .child(self.details_pane.clone()),
-                                    ),
-                            ),
-                    ),
-            );
+            .child(center_content);
 
         if let Some(repo_id) = self.active_repo_id()
             && let Some(repo) = self.active_repo()
@@ -1768,5 +2175,144 @@ mod tests {
             cursor_style_for_resize_edge(ResizeEdge::TopRight),
             CursorStyle::ResizeUpRightDownLeft
         );
+    }
+
+    #[test]
+    fn is_markdown_path_detects_common_extensions() {
+        use std::path::Path;
+        assert!(is_markdown_path(Path::new("README.md")));
+        assert!(is_markdown_path(Path::new("doc.markdown")));
+        assert!(is_markdown_path(Path::new("notes.mdown")));
+        assert!(is_markdown_path(Path::new("CHANGES.mkd")));
+        assert!(is_markdown_path(Path::new("file.mkdn")));
+        assert!(is_markdown_path(Path::new("file.mdwn")));
+        assert!(is_markdown_path(Path::new("UPPER.MD")));
+    }
+
+    #[test]
+    fn is_markdown_path_rejects_non_markdown() {
+        use std::path::Path;
+        assert!(!is_markdown_path(Path::new("file.txt")));
+        assert!(!is_markdown_path(Path::new("file.rs")));
+        assert!(!is_markdown_path(Path::new("file")));
+    }
+
+    #[test]
+    fn conflict_resolver_preview_mode_defaults_to_text() {
+        assert_eq!(
+            ConflictResolverPreviewMode::default(),
+            ConflictResolverPreviewMode::Text
+        );
+    }
+
+    fn focused_bootstrap(repo_path: &str, conflicted_file_path: &str) -> FocusedMergetoolBootstrap {
+        FocusedMergetoolBootstrap::from_view_config(FocusedMergetoolViewConfig {
+            repo_path: PathBuf::from(repo_path),
+            conflicted_file_path: PathBuf::from(conflicted_file_path),
+            labels: FocusedMergetoolLabels {
+                local: "LOCAL".to_string(),
+                remote: "REMOTE".to_string(),
+                base: "BASE".to_string(),
+            },
+        })
+    }
+
+    fn open_repo_state_with_workdir(workdir: &str) -> RepoState {
+        let mut repo = RepoState::new_opening(
+            RepoId(1),
+            RepoSpec {
+                workdir: PathBuf::from(workdir),
+            },
+        );
+        repo.open = Loadable::Ready(());
+        repo
+    }
+
+    #[test]
+    fn focused_mergetool_target_path_prefers_repo_relative_path() {
+        let target = focused_mergetool_target_path(
+            std::path::Path::new("/repo"),
+            std::path::Path::new("/repo/src/conflict.txt"),
+        );
+        assert_eq!(target, PathBuf::from("src/conflict.txt"));
+    }
+
+    #[test]
+    fn focused_mergetool_bootstrap_requests_open_repo_when_missing() {
+        let bootstrap = focused_bootstrap("/repo", "/repo/src/conflict.txt");
+        let state = AppState::default();
+
+        assert_eq!(
+            focused_mergetool_bootstrap_action(&state, &bootstrap),
+            Some(FocusedMergetoolBootstrapAction::OpenRepo(PathBuf::from(
+                "/repo"
+            )))
+        );
+    }
+
+    #[test]
+    fn focused_mergetool_bootstrap_selects_worktree_diff_target() {
+        let bootstrap = focused_bootstrap("/repo", "/repo/src/conflict.txt");
+        let mut state = AppState::default();
+        state.active_repo = Some(RepoId(1));
+        state.repos.push(open_repo_state_with_workdir("/repo"));
+
+        assert_eq!(
+            focused_mergetool_bootstrap_action(&state, &bootstrap),
+            Some(FocusedMergetoolBootstrapAction::SelectDiff {
+                repo_id: RepoId(1),
+                target: DiffTarget::WorkingTree {
+                    area: DiffArea::Unstaged,
+                    path: PathBuf::from("src/conflict.txt"),
+                },
+            })
+        );
+    }
+
+    #[test]
+    fn focused_mergetool_bootstrap_loads_conflict_file_after_diff_target() {
+        let bootstrap = focused_bootstrap("/repo", "/repo/src/conflict.txt");
+        let mut state = AppState::default();
+        state.active_repo = Some(RepoId(1));
+        let mut repo = open_repo_state_with_workdir("/repo");
+        repo.diff_target = Some(DiffTarget::WorkingTree {
+            area: DiffArea::Unstaged,
+            path: PathBuf::from("src/conflict.txt"),
+        });
+        state.repos.push(repo);
+
+        assert_eq!(
+            focused_mergetool_bootstrap_action(&state, &bootstrap),
+            Some(FocusedMergetoolBootstrapAction::LoadConflictFile {
+                repo_id: RepoId(1),
+                path: PathBuf::from("src/conflict.txt"),
+            })
+        );
+    }
+
+    #[test]
+    fn focused_mergetool_bootstrap_completes_after_conflict_file_target_set() {
+        let bootstrap = focused_bootstrap("/repo", "/repo/src/conflict.txt");
+        let mut state = AppState::default();
+        state.active_repo = Some(RepoId(1));
+        let mut repo = open_repo_state_with_workdir("/repo");
+        repo.diff_target = Some(DiffTarget::WorkingTree {
+            area: DiffArea::Unstaged,
+            path: PathBuf::from("src/conflict.txt"),
+        });
+        repo.conflict_file_path = Some(PathBuf::from("src/conflict.txt"));
+        repo.conflict_file = Loadable::Loading;
+        state.repos.push(repo);
+
+        assert_eq!(
+            focused_mergetool_bootstrap_action(&state, &bootstrap),
+            Some(FocusedMergetoolBootstrapAction::Complete)
+        );
+    }
+
+    #[test]
+    fn focused_mergetool_mode_hides_full_chrome() {
+        assert!(renders_full_chrome(GitGpuiViewMode::Normal));
+        assert!(!renders_full_chrome(GitGpuiViewMode::FocusedMergetool));
     }
 }

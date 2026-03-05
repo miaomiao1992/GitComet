@@ -1,8 +1,9 @@
 use super::GixRepo;
 use crate::util::run_git_capture;
-use gitgpui_core::domain::{DiffArea, DiffTarget, FileDiffImage, FileDiffText};
+use gitgpui_core::conflict_session::{ConflictPayload, ConflictSession};
+use gitgpui_core::domain::{DiffArea, DiffTarget, FileDiffImage, FileDiffText, FileStatusKind};
 use gitgpui_core::error::{Error, ErrorKind};
-use gitgpui_core::services::{ConflictFileStages, Result};
+use gitgpui_core::services::{ConflictFileStages, Result, decode_utf8_optional};
 use std::path::Path;
 use std::process::Command;
 use std::str;
@@ -316,31 +317,99 @@ impl GixRepo {
         }
 
         let path_str = path.to_string_lossy();
-        let base = git_show_path_utf8_optional_unmerged_stage(
+        let base_bytes = git_show_path_bytes_optional_unmerged_stage(
             &self.spec.workdir,
             ":1:",
             path_str.as_ref(),
             1,
         )?;
-        let ours = git_show_path_utf8_optional_unmerged_stage(
+        let ours_bytes = git_show_path_bytes_optional_unmerged_stage(
             &self.spec.workdir,
             ":2:",
             path_str.as_ref(),
             2,
         )?;
-        let theirs = git_show_path_utf8_optional_unmerged_stage(
+        let theirs_bytes = git_show_path_bytes_optional_unmerged_stage(
             &self.spec.workdir,
             ":3:",
             path_str.as_ref(),
             3,
         )?;
+        let base = decode_utf8_optional(base_bytes.as_deref());
+        let ours = decode_utf8_optional(ours_bytes.as_deref());
+        let theirs = decode_utf8_optional(theirs_bytes.as_deref());
 
         Ok(Some(ConflictFileStages {
             path: path.to_path_buf(),
+            base_bytes,
+            ours_bytes,
+            theirs_bytes,
             base,
             ours,
             theirs,
         }))
+    }
+
+    pub(super) fn conflict_session_impl(&self, path: &Path) -> Result<Option<ConflictSession>> {
+        let repo_path = to_repo_path(path, &self.spec.workdir)?;
+        let status = self.status_impl()?;
+        let Some(conflict_kind) = status
+            .unstaged
+            .iter()
+            .find(|entry| entry.path == repo_path && entry.kind == FileStatusKind::Conflicted)
+            .and_then(|entry| entry.conflict)
+        else {
+            return Ok(None);
+        };
+
+        let Some(stages) = self.conflict_file_stages_impl(&repo_path)? else {
+            return Ok(None);
+        };
+        let current_bytes = std::fs::read(self.spec.workdir.join(&repo_path)).ok();
+        let current = decode_utf8_optional(current_bytes.as_deref());
+
+        let payload_from = |bytes: Option<Vec<u8>>, text: Option<String>| -> ConflictPayload {
+            if let Some(text) = text {
+                ConflictPayload::Text(text)
+            } else if let Some(bytes) = bytes {
+                ConflictPayload::from_bytes(bytes)
+            } else {
+                ConflictPayload::Absent
+            }
+        };
+
+        let base = payload_from(stages.base_bytes, stages.base);
+        let ours = payload_from(stages.ours_bytes, stages.ours);
+        let theirs = payload_from(stages.theirs_bytes, stages.theirs);
+
+        let session = if let Some(current) = current {
+            ConflictSession::from_merged_text(
+                repo_path,
+                conflict_kind,
+                base,
+                ours,
+                theirs,
+                &current,
+            )
+        } else {
+            ConflictSession::new(repo_path, conflict_kind, base, ours, theirs)
+        };
+        Ok(Some(session))
+    }
+}
+
+fn to_repo_path(path: &Path, workdir: &Path) -> Result<std::path::PathBuf> {
+    if path.is_absolute() {
+        let relative = path.strip_prefix(workdir).map_err(|_| {
+            Error::new(ErrorKind::Backend(format!(
+                "path '{}' is outside repository workdir '{}'",
+                path.display(),
+                workdir.display()
+            )))
+        })?;
+        Ok(relative.to_path_buf())
+    } else {
+        Ok(path.to_path_buf())
     }
 }
 

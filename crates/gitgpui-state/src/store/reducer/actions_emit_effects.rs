@@ -2,9 +2,10 @@ use super::util::{
     diff_target_is_svg, diff_target_wants_image_preview, format_failure_summary, push_action_log,
     push_command_log, refresh_full_effects, refresh_primary_effects,
 };
-use crate::model::{AppState, Loadable, RepoId};
+use crate::model::{AppState, Loadable, RepoId, RepoState};
 use crate::msg::{Effect, RepoCommandKind};
-use gitgpui_core::domain::DiffTarget;
+use gitgpui_core::conflict_session::{ConflictRegionResolution, ConflictResolverStrategy};
+use gitgpui_core::domain::{DiffTarget, FileConflictKind};
 use gitgpui_core::error::Error;
 use gitgpui_core::services::{CommandOutput, GitRepository, PullMode, RemoteUrlKind, ResetMode};
 use rustc_hash::FxHashMap as HashMap;
@@ -354,6 +355,18 @@ pub(super) fn checkout_conflict_side(
     }]
 }
 
+pub(super) fn accept_conflict_deletion(repo_id: RepoId, path: PathBuf) -> Vec<Effect> {
+    vec![Effect::AcceptConflictDeletion { repo_id, path }]
+}
+
+pub(super) fn checkout_conflict_base(repo_id: RepoId, path: PathBuf) -> Vec<Effect> {
+    vec![Effect::CheckoutConflictBase { repo_id, path }]
+}
+
+pub(super) fn launch_mergetool(repo_id: RepoId, path: PathBuf) -> Vec<Effect> {
+    vec![Effect::LaunchMergetool { repo_id, path }]
+}
+
 pub(super) fn stash(repo_id: RepoId, message: String, include_untracked: bool) -> Vec<Effect> {
     vec![Effect::Stash {
         repo_id,
@@ -466,6 +479,7 @@ pub(super) fn repo_command_finished(
             | RepoCommandKind::UpdateSubmodules
             | RepoCommandKind::RemoveSubmodule { .. }
     ) && result.is_ok();
+    let command_succeeded = result.is_ok();
 
     let mut extra_effects = Vec::new();
     if let Some(repo_state) = state.repos.iter_mut().find(|r| r.id == repo_id) {
@@ -521,6 +535,10 @@ pub(super) fn repo_command_finished(
                     .last()
                     .map(|entry| entry.summary.clone());
             }
+        }
+        if command_succeeded && sync_conflict_session_after_resolution_command(repo_state, &command)
+        {
+            repo_state.bump_conflict_rev();
         }
 
         if refresh_worktrees {
@@ -581,4 +599,106 @@ pub(super) fn repo_command_finished(
     };
     effects.extend(extra_effects);
     effects
+}
+
+fn sync_conflict_session_after_resolution_command(
+    repo_state: &mut RepoState,
+    command: &RepoCommandKind,
+) -> bool {
+    let Some(path) = resolution_command_path(command) else {
+        return false;
+    };
+
+    let tracked_path_matches = repo_state
+        .conflict_file_path
+        .as_ref()
+        .is_some_and(|tracked| tracked.as_path() == path.as_path());
+    if !tracked_path_matches {
+        return false;
+    }
+
+    if matches!(command, RepoCommandKind::LaunchMergetool { .. }) {
+        clear_conflict_context(repo_state);
+        return true;
+    }
+
+    let Some(session_view) = repo_state.conflict_session.as_ref() else {
+        return false;
+    };
+    if session_view.path.as_path() != path.as_path() {
+        return false;
+    }
+
+    if session_view.strategy == ConflictResolverStrategy::BinarySidePick
+        && session_view.regions.is_empty()
+    {
+        clear_conflict_context(repo_state);
+        return true;
+    }
+
+    let resolution = match command {
+        RepoCommandKind::CheckoutConflict { side, .. } => match side {
+            gitgpui_core::services::ConflictSide::Ours => ConflictRegionResolution::PickOurs,
+            gitgpui_core::services::ConflictSide::Theirs => ConflictRegionResolution::PickTheirs,
+        },
+        RepoCommandKind::CheckoutConflictBase { .. } => ConflictRegionResolution::PickBase,
+        RepoCommandKind::AcceptConflictDeletion { .. } => {
+            deletion_resolution_for_kind(session_view.conflict_kind)
+        }
+        _ => return false,
+    };
+
+    let Some(session) = repo_state.conflict_session.as_mut() else {
+        return false;
+    };
+
+    apply_resolution_to_all_regions(session, &resolution) > 0
+}
+
+fn resolution_command_path(command: &RepoCommandKind) -> Option<&std::path::PathBuf> {
+    match command {
+        RepoCommandKind::CheckoutConflict { path, .. }
+        | RepoCommandKind::CheckoutConflictBase { path }
+        | RepoCommandKind::AcceptConflictDeletion { path }
+        | RepoCommandKind::LaunchMergetool { path } => Some(path),
+        _ => None,
+    }
+}
+
+fn clear_conflict_context(repo_state: &mut RepoState) {
+    repo_state.conflict_file_path = None;
+    repo_state.conflict_file = Loadable::NotLoaded;
+    repo_state.conflict_session = None;
+    repo_state.conflict_hide_resolved = false;
+}
+
+fn deletion_resolution_for_kind(conflict_kind: FileConflictKind) -> ConflictRegionResolution {
+    match conflict_kind {
+        FileConflictKind::DeletedByUs
+        | FileConflictKind::AddedByThem
+        | FileConflictKind::BothDeleted => ConflictRegionResolution::PickOurs,
+        FileConflictKind::DeletedByThem | FileConflictKind::AddedByUs => {
+            ConflictRegionResolution::PickTheirs
+        }
+        FileConflictKind::BothAdded | FileConflictKind::BothModified => {
+            ConflictRegionResolution::PickOurs
+        }
+    }
+}
+
+fn apply_resolution_to_all_regions(
+    session: &mut gitgpui_core::conflict_session::ConflictSession,
+    resolution: &ConflictRegionResolution,
+) -> usize {
+    let mut changed = 0usize;
+    for region in &mut session.regions {
+        if matches!(resolution, ConflictRegionResolution::PickBase) && region.base.is_none() {
+            continue;
+        }
+        if &region.resolution != resolution {
+            region.resolution = resolution.clone();
+            changed += 1;
+        }
+    }
+    changed
 }

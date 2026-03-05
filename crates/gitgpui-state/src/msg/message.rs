@@ -1,4 +1,5 @@
 use crate::model::RepoId;
+use gitgpui_core::conflict_session::ConflictSession;
 use gitgpui_core::domain::*;
 use gitgpui_core::error::Error;
 use gitgpui_core::services::GitRepository;
@@ -8,6 +9,60 @@ use std::sync::Arc;
 
 use super::repo_command_kind::RepoCommandKind;
 use super::repo_external_change::RepoExternalChange;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ConflictAutosolveMode {
+    Safe,
+    Regex,
+    History,
+}
+
+impl ConflictAutosolveMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Safe => "safe",
+            Self::Regex => "regex",
+            Self::History => "history",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ConflictBulkChoice {
+    Base,
+    Ours,
+    Theirs,
+    Both,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ConflictRegionChoice {
+    Base,
+    Ours,
+    Theirs,
+    Both,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ConflictRegionResolutionUpdate {
+    pub region_index: usize,
+    pub resolution: gitgpui_core::conflict_session::ConflictRegionResolution,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct ConflictAutosolveStats {
+    pub pass1: usize,
+    pub pass2_split: usize,
+    pub pass1_after_split: usize,
+    pub regex: usize,
+    pub history: usize,
+}
+
+impl ConflictAutosolveStats {
+    pub fn total_resolved(self) -> usize {
+        self.pass1 + self.pass2_split + self.pass1_after_split + self.regex + self.history
+    }
+}
 
 pub enum Msg {
     OpenRepo(PathBuf),
@@ -300,6 +355,59 @@ pub enum Msg {
         path: PathBuf,
         side: ConflictSide,
     },
+    AcceptConflictDeletion {
+        repo_id: RepoId,
+        path: PathBuf,
+    },
+    CheckoutConflictBase {
+        repo_id: RepoId,
+        path: PathBuf,
+    },
+    LaunchMergetool {
+        repo_id: RepoId,
+        path: PathBuf,
+    },
+    RecordConflictAutosolveTelemetry {
+        repo_id: RepoId,
+        path: Option<PathBuf>,
+        mode: ConflictAutosolveMode,
+        total_conflicts_before: usize,
+        total_conflicts_after: usize,
+        unresolved_before: usize,
+        unresolved_after: usize,
+        stats: ConflictAutosolveStats,
+    },
+    ConflictSetHideResolved {
+        repo_id: RepoId,
+        path: PathBuf,
+        hide_resolved: bool,
+    },
+    ConflictApplyBulkChoice {
+        repo_id: RepoId,
+        path: PathBuf,
+        choice: ConflictBulkChoice,
+    },
+    ConflictSetRegionChoice {
+        repo_id: RepoId,
+        path: PathBuf,
+        region_index: usize,
+        choice: ConflictRegionChoice,
+    },
+    ConflictSyncRegionResolutions {
+        repo_id: RepoId,
+        path: PathBuf,
+        updates: Vec<ConflictRegionResolutionUpdate>,
+    },
+    ConflictApplyAutosolve {
+        repo_id: RepoId,
+        path: PathBuf,
+        mode: ConflictAutosolveMode,
+        whitespace_normalize: bool,
+    },
+    ConflictResetResolutions {
+        repo_id: RepoId,
+        path: PathBuf,
+    },
     Stash {
         repo_id: RepoId,
         message: String,
@@ -393,7 +501,8 @@ pub enum Msg {
     ConflictFileLoaded {
         repo_id: RepoId,
         path: PathBuf,
-        result: Result<Option<crate::model::ConflictFile>, Error>,
+        result: Box<Result<Option<crate::model::ConflictFile>, Error>>,
+        conflict_session: Option<ConflictSession>,
     },
     WorktreesLoaded {
         repo_id: RepoId,
