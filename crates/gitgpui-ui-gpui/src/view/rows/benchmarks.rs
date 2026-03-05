@@ -7,7 +7,7 @@ use crate::view::conflict_resolver::{
 use crate::view::history_graph;
 use gitgpui_core::domain::{
     Branch, Commit, CommitDetails, CommitFileChange, CommitId, FileStatusKind, Remote,
-    RemoteBranch, RepoSpec, Upstream, UpstreamDivergence,
+    RemoteBranch, RepoSpec, StashEntry, Submodule, Upstream, UpstreamDivergence, Worktree,
 };
 use gitgpui_state::model::{Loadable, RepoId, RepoState};
 use std::collections::hash_map::DefaultHasher;
@@ -31,8 +31,15 @@ impl OpenRepoFixture {
     ) -> Self {
         let theme = AppTheme::zed_ayu_dark();
         let commits_vec = build_synthetic_commits(commits);
-        let repo =
-            build_synthetic_repo_state(local_branches, remote_branches, remotes, &commits_vec);
+        let repo = build_synthetic_repo_state(
+            local_branches,
+            remote_branches,
+            remotes,
+            0,
+            0,
+            0,
+            &commits_vec,
+        );
         Self {
             repo,
             commits: commits_vec,
@@ -58,6 +65,177 @@ impl OpenRepoFixture {
             .collect::<Vec<_>>()
             .hash(&mut h);
         h.finish()
+    }
+}
+
+pub struct BranchSidebarFixture {
+    repo: RepoState,
+}
+
+impl BranchSidebarFixture {
+    pub fn new(
+        local_branches: usize,
+        remote_branches: usize,
+        remotes: usize,
+        worktrees: usize,
+        submodules: usize,
+        stashes: usize,
+    ) -> Self {
+        let commits = build_synthetic_commits(1);
+        let repo = build_synthetic_repo_state(
+            local_branches,
+            remote_branches,
+            remotes,
+            worktrees,
+            submodules,
+            stashes,
+            &commits,
+        );
+        Self { repo }
+    }
+
+    pub fn run(&self) -> u64 {
+        let rows = GitGpuiView::branch_sidebar_rows(&self.repo);
+        let mut h = DefaultHasher::new();
+        rows.len().hash(&mut h);
+        for row in rows.iter().take(256) {
+            std::mem::discriminant(row).hash(&mut h);
+            match row {
+                BranchSidebarRow::SectionHeader {
+                    section,
+                    top_border,
+                } => {
+                    match section {
+                        BranchSection::Local => 0u8,
+                        BranchSection::Remote => 1u8,
+                    }
+                    .hash(&mut h);
+                    top_border.hash(&mut h);
+                }
+                BranchSidebarRow::Placeholder { section, message } => {
+                    match section {
+                        BranchSection::Local => 0u8,
+                        BranchSection::Remote => 1u8,
+                    }
+                    .hash(&mut h);
+                    message.len().hash(&mut h);
+                }
+                BranchSidebarRow::RemoteHeader { name } => name.len().hash(&mut h),
+                BranchSidebarRow::GroupHeader { label, depth } => {
+                    label.len().hash(&mut h);
+                    depth.hash(&mut h);
+                }
+                BranchSidebarRow::Branch {
+                    label,
+                    name,
+                    depth,
+                    muted,
+                    is_head,
+                    is_upstream,
+                    ..
+                } => {
+                    label.len().hash(&mut h);
+                    name.len().hash(&mut h);
+                    depth.hash(&mut h);
+                    muted.hash(&mut h);
+                    is_head.hash(&mut h);
+                    is_upstream.hash(&mut h);
+                }
+                BranchSidebarRow::WorktreeItem {
+                    label,
+                    tooltip,
+                    is_active,
+                    ..
+                } => {
+                    label.len().hash(&mut h);
+                    tooltip.len().hash(&mut h);
+                    is_active.hash(&mut h);
+                }
+                BranchSidebarRow::SubmoduleItem { label, tooltip, .. } => {
+                    label.len().hash(&mut h);
+                    tooltip.len().hash(&mut h);
+                }
+                BranchSidebarRow::StashItem {
+                    index,
+                    message,
+                    tooltip,
+                    ..
+                } => {
+                    index.hash(&mut h);
+                    message.len().hash(&mut h);
+                    tooltip.len().hash(&mut h);
+                }
+                BranchSidebarRow::SectionSpacer
+                | BranchSidebarRow::WorktreesHeader { .. }
+                | BranchSidebarRow::WorktreePlaceholder { .. }
+                | BranchSidebarRow::SubmodulesHeader { .. }
+                | BranchSidebarRow::SubmodulePlaceholder { .. }
+                | BranchSidebarRow::StashHeader { .. }
+                | BranchSidebarRow::StashPlaceholder { .. } => {}
+            }
+        }
+        h.finish()
+    }
+
+    #[cfg(test)]
+    fn row_count(&self) -> usize {
+        GitGpuiView::branch_sidebar_rows(&self.repo).len()
+    }
+}
+
+pub struct HistoryGraphFixture {
+    commits: Vec<Commit>,
+    branch_head_indices: Vec<usize>,
+    theme: AppTheme,
+}
+
+impl HistoryGraphFixture {
+    pub fn new(commits: usize, merge_every: usize, branch_head_every: usize) -> Self {
+        let commits_vec = build_synthetic_commits_with_merge_stride(commits, merge_every, 40);
+        let mut branch_head_indices = Vec::new();
+        if branch_head_every > 0 {
+            for ix in (0..commits_vec.len()).step_by(branch_head_every) {
+                branch_head_indices.push(ix);
+            }
+        }
+        Self {
+            commits: commits_vec,
+            branch_head_indices,
+            theme: AppTheme::zed_ayu_dark(),
+        }
+    }
+
+    pub fn run(&self) -> u64 {
+        let mut branch_heads: HashSet<&str> = HashSet::default();
+        for &ix in &self.branch_head_indices {
+            if let Some(commit) = self.commits.get(ix) {
+                branch_heads.insert(commit.id.as_ref());
+            }
+        }
+
+        let graph = history_graph::compute_graph(&self.commits, self.theme, &branch_heads);
+        let mut h = DefaultHasher::new();
+        graph.len().hash(&mut h);
+        graph
+            .iter()
+            .take(256)
+            .map(|r| {
+                (
+                    r.lanes_now.len(),
+                    r.lanes_next.len(),
+                    r.joins_in.len(),
+                    r.edges_out.len(),
+                    r.is_merge,
+                )
+            })
+            .collect::<Vec<_>>()
+            .hash(&mut h);
+        h.finish()
+    }
+
+    #[cfg(test)]
+    fn commit_count(&self) -> usize {
+        self.commits.len()
     }
 }
 
@@ -119,10 +297,14 @@ pub struct LargeFileDiffScrollFixture {
 
 impl LargeFileDiffScrollFixture {
     pub fn new(lines: usize) -> Self {
+        Self::new_with_line_bytes(lines, 96)
+    }
+
+    pub fn new_with_line_bytes(lines: usize, line_bytes: usize) -> Self {
         let theme = AppTheme::zed_ayu_dark();
         let language = diff_syntax_language_for_path("src/lib.rs");
         Self {
-            lines: build_synthetic_source_lines(lines),
+            lines: build_synthetic_source_lines(lines, line_bytes),
             language,
             theme,
         }
@@ -842,6 +1024,9 @@ fn build_synthetic_repo_state(
     local_branches: usize,
     remote_branches: usize,
     remotes: usize,
+    worktrees: usize,
+    submodules: usize,
+    stashes: usize,
     commits: &[Commit],
 ) -> RepoState {
     let id = RepoId(1);
@@ -909,6 +1094,44 @@ fn build_synthetic_repo_state(
     }
     repo.remote_branches = Loadable::Ready(Arc::new(remote));
 
+    let mut worktrees_vec = Vec::with_capacity(worktrees);
+    for ix in 0..worktrees {
+        let path = if ix == 0 {
+            repo.spec.workdir.clone()
+        } else {
+            std::path::PathBuf::from(format!("/tmp/bench-worktree-{ix}"))
+        };
+        worktrees_vec.push(Worktree {
+            path,
+            head: Some(target.clone()),
+            branch: Some(format!("feature/worktree/{ix}")),
+            detached: ix % 7 == 0,
+        });
+    }
+    repo.worktrees = Loadable::Ready(Arc::new(worktrees_vec));
+
+    let mut submodules_vec = Vec::with_capacity(submodules);
+    for ix in 0..submodules {
+        submodules_vec.push(Submodule {
+            path: std::path::PathBuf::from(format!("deps/submodule_{ix}")),
+            head: CommitId(format!("{:040x}", 200_000usize.saturating_add(ix))),
+            status: if ix % 5 == 0 { 'M' } else { ' ' },
+        });
+    }
+    repo.submodules = Loadable::Ready(Arc::new(submodules_vec));
+
+    let stash_base = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_100_000);
+    let mut stashes_vec = Vec::with_capacity(stashes);
+    for ix in 0..stashes {
+        stashes_vec.push(StashEntry {
+            index: ix,
+            id: CommitId(format!("{:040x}", 300_000usize.saturating_add(ix))),
+            message: format!("WIP synthetic stash #{ix}"),
+            created_at: Some(stash_base + Duration::from_secs(ix as u64)),
+        });
+    }
+    repo.stashes = Loadable::Ready(Arc::new(stashes_vec));
+
     // Minimal "repo is open" status.
     repo.open = Loadable::Ready(());
 
@@ -916,6 +1139,14 @@ fn build_synthetic_repo_state(
 }
 
 fn build_synthetic_commits(count: usize) -> Vec<Commit> {
+    build_synthetic_commits_with_merge_stride(count, 50, 40)
+}
+
+fn build_synthetic_commits_with_merge_stride(
+    count: usize,
+    merge_every: usize,
+    merge_back_distance: usize,
+) -> Vec<Commit> {
     if count == 0 {
         return Vec::new();
     }
@@ -931,8 +1162,10 @@ fn build_synthetic_commits(count: usize) -> Vec<Commit> {
             parent_ids.push(CommitId(format!("{:040x}", ix - 1)));
         }
         // Synthetic merge-like commits at a fixed cadence.
-        if ix >= 40 && ix % 50 == 0 {
-            parent_ids.push(CommitId(format!("{:040x}", ix - 40)));
+        if merge_every > 0 && merge_back_distance > 0 && ix >= merge_back_distance {
+            if ix % merge_every == 0 {
+                parent_ids.push(CommitId(format!("{:040x}", ix - merge_back_distance)));
+            }
         }
 
         commits.push(Commit {
@@ -979,11 +1212,12 @@ fn build_synthetic_commit_details(files: usize, depth: usize) -> CommitDetails {
     }
 }
 
-fn build_synthetic_source_lines(count: usize) -> Vec<String> {
+fn build_synthetic_source_lines(count: usize, target_line_bytes: usize) -> Vec<String> {
+    let target_line_bytes = target_line_bytes.max(32);
     let mut lines = Vec::with_capacity(count);
     for ix in 0..count {
         let indent = " ".repeat((ix % 8) * 2);
-        let line = match ix % 10 {
+        let mut line = match ix % 10 {
             0 => format!("{indent}fn func_{ix}(x: usize) -> usize {{ x + {ix} }}"),
             1 => format!("{indent}let value_{ix} = \"string {ix}\";"),
             2 => format!("{indent}// comment {ix} with some extra words and tokens"),
@@ -1000,6 +1234,14 @@ fn build_synthetic_source_lines(count: usize) -> Vec<String> {
             8 => format!("{indent}const CONST_{ix}: u64 = {v};", v = ix as u64 * 31),
             _ => format!("{indent}println!(\"{ix} {{}}\", value_{ix});"),
         };
+        if line.len() < target_line_bytes {
+            line.push(' ');
+            line.push_str("//");
+            while line.len() < target_line_bytes {
+                line.push_str(" token_");
+                line.push_str(&(ix % 997).to_string());
+            }
+        }
         lines.push(line);
     }
     lines
@@ -1399,5 +1641,33 @@ mod tests {
         let hash_a = fixture.run_scroll_step(17, 40);
         let hash_b = fixture.run_scroll_step(17 + fixture.visible_rows() * 3, 40);
         assert_eq!(hash_a, hash_b);
+    }
+
+    #[test]
+    fn branch_sidebar_fixture_scales_with_more_entries() {
+        let small = BranchSidebarFixture::new(8, 16, 2, 0, 0, 0);
+        let large = BranchSidebarFixture::new(120, 600, 6, 40, 40, 80);
+        assert!(small.row_count() > 0);
+        assert!(large.row_count() > small.row_count());
+    }
+
+    #[test]
+    fn history_graph_fixture_preserves_requested_commit_count() {
+        let fixture = HistoryGraphFixture::new(2_000, 7, 9);
+        assert_eq!(fixture.commit_count(), 2_000);
+        assert_ne!(fixture.run(), 0);
+    }
+
+    #[test]
+    fn synthetic_source_lines_honor_requested_min_line_bytes() {
+        let lines = build_synthetic_source_lines(64, 512);
+        assert_eq!(lines.len(), 64);
+        assert!(lines.iter().all(|line| line.len() >= 512));
+    }
+
+    #[test]
+    fn large_file_fixture_handles_very_long_lines() {
+        let fixture = LargeFileDiffScrollFixture::new_with_line_bytes(512, 4_096);
+        assert_ne!(fixture.run_scroll_step(0, 64), 0);
     }
 }

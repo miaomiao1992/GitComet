@@ -103,6 +103,10 @@ enum ContextMenuAction {
         path: std::path::PathBuf,
         side: gitgpui_core::services::ConflictSide,
     },
+    LaunchMergetool {
+        repo_id: RepoId,
+        path: std::path::PathBuf,
+    },
     FetchAll {
         repo_id: RepoId,
     },

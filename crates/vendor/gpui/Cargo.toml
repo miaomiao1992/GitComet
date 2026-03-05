@@ -514,7 +514,7 @@ version = "5.3.3"
 optional = true
 
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies.wayland-backend]
-version = "0.3.12"
+version = "0.3.13"
 features = [
     "client_system",
     "dlopen",
@@ -522,15 +522,15 @@ features = [
 optional = true
 
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies.wayland-client]
-version = "0.31.12"
+version = "0.31.13"
 optional = true
 
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies.wayland-cursor]
-version = "0.31.12"
+version = "0.31.13"
 optional = true
 
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies.wayland-protocols]
-version = "0.32.10"
+version = "0.32.11"
 features = [
     "client",
     "staging",
@@ -539,7 +539,7 @@ features = [
 optional = true
 
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies.wayland-protocols-plasma]
-version = "0.3.10"
+version = "0.3.11"
 features = ["client"]
 optional = true
 

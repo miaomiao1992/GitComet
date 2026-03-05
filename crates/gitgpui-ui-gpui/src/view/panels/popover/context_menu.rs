@@ -582,6 +582,9 @@ impl PopoverHost {
                     });
                 }
             }
+            ContextMenuAction::LaunchMergetool { repo_id, path } => {
+                self.store.dispatch(Msg::LaunchMergetool { repo_id, path });
+            }
             ContextMenuAction::FetchAll { repo_id } => {
                 self.store.dispatch(Msg::FetchAll { repo_id });
             }

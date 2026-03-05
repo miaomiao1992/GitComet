@@ -23,7 +23,7 @@ pub(super) fn model(
         (use_selection, selected_count)
     };
 
-    let (is_conflicted, has_unstaged_for_path, is_staged_added) = this
+    let (is_conflicted, is_unstaged_conflicted, has_unstaged_for_path, is_staged_added) = this
         .state
         .repos
         .iter()
@@ -49,6 +49,10 @@ pub(super) fn model(
                         staged_kind,
                         Some(gitgpui_core::domain::FileStatusKind::Conflicted)
                     ),
+                    matches!(
+                        unstaged_kind,
+                        Some(gitgpui_core::domain::FileStatusKind::Conflicted)
+                    ),
                     unstaged_kind.is_some(),
                     matches!(
                         staged_kind,
@@ -58,7 +62,7 @@ pub(super) fn model(
             }
             _ => None,
         })
-        .unwrap_or((false, false, false));
+        .unwrap_or((false, false, false, false));
 
     // Keep context menu opening fast. Validate precisely when the action runs instead.
     let can_discard_worktree_changes = if is_conflicted {
@@ -192,6 +196,23 @@ pub(super) fn model(
                 },
             }),
         });
+        if area == DiffArea::Unstaged && is_unstaged_conflicted {
+            let can_launch_external_mergetool = !use_selection;
+            items.push(ContextMenuItem::Entry {
+                label: if can_launch_external_mergetool {
+                    "Open external mergetool".into()
+                } else {
+                    "Open external mergetool (select 1 file)".into()
+                },
+                icon: Some("↗".into()),
+                shortcut: None,
+                disabled: !can_launch_external_mergetool,
+                action: Box::new(ContextMenuAction::LaunchMergetool {
+                    repo_id,
+                    path: path.clone(),
+                }),
+            });
+        }
     } else {
         match area {
             DiffArea::Unstaged => items.push(ContextMenuItem::Entry {

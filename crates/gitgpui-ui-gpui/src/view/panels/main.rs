@@ -31,6 +31,14 @@ fn next_conflict_diff_split_ratio(
 }
 
 impl MainPaneView {
+    fn toggle_show_whitespace(&mut self) {
+        self.show_whitespace = !self.show_whitespace;
+        // Clear styled text caches so they rebuild with new whitespace setting.
+        self.diff_text_segments_cache.clear();
+        self.clear_conflict_diff_style_caches();
+        self.conflict_three_way_segments_cache.clear();
+    }
+
     pub(in super::super) fn diff_view(&mut self, cx: &mut gpui::Context<Self>) -> gpui::Div {
         let theme = self.theme;
         let repo_id = self.active_repo_id();
@@ -363,14 +371,6 @@ impl MainPaneView {
                         .child("markers remain"),
                 );
             }
-            if stage_safety.unresolved_blocks > 0 {
-                controls = controls.child(
-                    div()
-                        .text_xs()
-                        .text_color(theme.colors.danger)
-                        .child(format!("{} unresolved", stage_safety.unresolved_blocks)),
-                );
-            }
 
             if let (Some(repo_id), Some(path)) = (repo_id, conflict_target_path.clone()) {
                 let focused_mergetool_mode = self.view_mode == GitGpuiViewMode::FocusedMergetool;
@@ -379,22 +379,8 @@ impl MainPaneView {
                 } else {
                     "Save"
                 };
-                let mergetool_path = path.clone();
                 let save_path = path.clone();
                 controls = controls
-                    .when(show_external_mergetool_actions(self.view_mode), |d| {
-                        d.child(div().w(px(1.0)).h(px(12.0)).bg(theme.colors.border))
-                            .child(
-                                zed::Button::new("conflict_launch_mergetool", "Mergetool")
-                                    .style(zed::ButtonStyle::Transparent)
-                                    .on_click(theme, cx, move |this, _e, _w, _cx| {
-                                        this.store.dispatch(Msg::LaunchMergetool {
-                                            repo_id,
-                                            path: mergetool_path.clone(),
-                                        });
-                                    }),
-                            )
-                    })
                     .child(
                         zed::Button::new("conflict_save", save_label)
                             .style(zed::ButtonStyle::Outlined)
@@ -662,38 +648,6 @@ impl MainPaneView {
                 .when_some(next_file_btn, |d, btn| d.child(btn));
         }
 
-        // Show-whitespace toggle (Alt+W).
-        {
-            let ws_style = if self.show_whitespace {
-                zed::ButtonStyle::Filled
-            } else {
-                zed::ButtonStyle::Outlined
-            };
-            controls = controls.child(
-                zed::Button::new("show_whitespace", "WS")
-                    .style(ws_style)
-                    .on_click(theme, cx, |this, _e, _w, cx| {
-                        this.show_whitespace = !this.show_whitespace;
-                        this.diff_text_segments_cache.clear();
-                        this.clear_conflict_diff_style_caches();
-                        this.conflict_three_way_segments_cache.clear();
-                        cx.notify();
-                    })
-                    .on_hover(cx.listener(|this, hovering: &bool, _w, cx| {
-                        let text: SharedString = "Show whitespace (Alt+W)".into();
-                        let mut changed = false;
-                        if *hovering {
-                            changed |= this.set_tooltip_text_if_changed(Some(text.clone()), cx);
-                        } else {
-                            changed |= this.clear_tooltip_if_matches(&text, cx);
-                        }
-                        if changed {
-                            cx.notify();
-                        }
-                    })),
-            );
-        }
-
         if let Some(repo_id) = repo_id {
             controls = controls.child(
                 zed::Button::new("diff_close", "✕")
@@ -953,6 +907,63 @@ impl MainPaneView {
                                 if theme.is_dark { 0.38 } else { 0.28 },
                             );
                             let view_toggle_divider = with_alpha(view_toggle_border, 0.90);
+                            let show_whitespace = self.show_whitespace;
+                            let ws_pill_border_hover = if show_whitespace {
+                                theme.colors.accent
+                            } else {
+                                view_toggle_border
+                            };
+                            let ws_pill_text = if theme.is_dark {
+                                theme.colors.text
+                            } else {
+                                gpui::rgba(0xffffffff)
+                            };
+                            let show_whitespace_control = div()
+                                .id("conflict_show_whitespace_pill")
+                                .h(px(zed::CONTROL_HEIGHT_PX))
+                                .px(px(8.0))
+                                .py(px(2.0))
+                                .rounded(px(theme.radii.pill))
+                                .bg(gpui::rgba(0x000000ff))
+                                .border_1()
+                                .border_color(gpui::rgba(0x00000000))
+                                .text_xs()
+                                .text_color(ws_pill_text)
+                                .cursor(CursorStyle::PointingHand)
+                                .hover(move |pill| pill.border_color(ws_pill_border_hover))
+                                .active(move |pill| pill.border_color(ws_pill_border_hover))
+                                .on_any_mouse_down(|_e, _w, cx| cx.stop_propagation())
+                                .on_click(cx.listener(|this, _e: &ClickEvent, _w, cx| {
+                                    this.toggle_show_whitespace();
+                                    cx.notify();
+                                }))
+                                .on_hover(cx.listener(|this, hovering: &bool, _w, cx| {
+                                    let text: SharedString = "Show whitespace (Alt+W)".into();
+                                    let mut changed = false;
+                                    if *hovering {
+                                        changed |=
+                                            this.set_tooltip_text_if_changed(Some(text.clone()), cx);
+                                    } else {
+                                        changed |= this.clear_tooltip_if_matches(&text, cx);
+                                    }
+                                    if changed {
+                                        cx.notify();
+                                    }
+                                }))
+                                .child(
+                                    div()
+                                        .flex()
+                                        .items_center()
+                                        .gap_1()
+                                        .child("Show whitespace")
+                                        .when(show_whitespace, |d| {
+                                            d.child(
+                                                div()
+                                                    .text_color(theme.colors.success)
+                                                    .child("✓"),
+                                            )
+                                        }),
+                                );
 
                             let view_mode_controls = div()
                                 .id("conflict_view_mode_toggle")
@@ -1243,27 +1254,36 @@ impl MainPaneView {
                                 .flex()
                                 .items_center()
                                 .justify_between()
-                                .child(div().text_xs().text_color(theme.colors.text_muted).child(
-                                    match view_mode {
-                                        ConflictResolverViewMode::ThreeWay => {
-                                            "Merge inputs (base / local / remote)"
-                                        }
-                                        ConflictResolverViewMode::TwoWayDiff => {
-                                            "Diff (local ↔ remote)"
-                                        }
-                                    },
-                                ))
                                 .child(
                                     div()
                                         .flex()
                                         .items_center()
                                         .gap_2()
-                                        .when_some(preview_toggle, |d, toggle| d.child(toggle))
-                                        .child(view_mode_controls)
+                                        .child(
+                                            div().text_xs().text_color(theme.colors.text_muted).child(
+                                                match view_mode {
+                                                    ConflictResolverViewMode::ThreeWay => {
+                                                        "Merge inputs (base / local / remote)"
+                                                    }
+                                                    ConflictResolverViewMode::TwoWayDiff => {
+                                                        "Diff (local ↔ remote)"
+                                                    }
+                                                },
+                                            ),
+                                        )
+                                        .when_some(preview_toggle, |d, toggle| d.child(toggle)),
+                                )
+                                .child(
+                                    div()
+                                        .flex()
+                                        .items_center()
+                                        .gap_2()
+                                        .child(show_whitespace_control)
                                         .when(
                                             view_mode == ConflictResolverViewMode::TwoWayDiff,
                                             |d| d.child(mode_controls),
-                                        ),
+                                        )
+                                        .child(view_mode_controls),
                                 );
 
                             // Compute three-way column widths
@@ -2856,11 +2876,7 @@ impl MainPaneView {
                             }
                         }
                         "w" => {
-                            this.show_whitespace = !this.show_whitespace;
-                            // Clear styled text caches so they rebuild with new whitespace setting.
-                            this.diff_text_segments_cache.clear();
-                            this.clear_conflict_diff_style_caches();
-                            this.conflict_three_way_segments_cache.clear();
+                            this.toggle_show_whitespace();
                             handled = true;
                         }
                         "up" => {

@@ -2437,10 +2437,97 @@ mod tests {
                 }
                 _ => false,
             });
+            let has_external_mergetool = model.items.iter().any(|item| match item {
+                ContextMenuItem::Entry { label, action, .. }
+                    if label.as_ref() == "Open external mergetool" =>
+                {
+                    matches!(
+                        action.as_ref(),
+                        ContextMenuAction::LaunchMergetool {
+                            repo_id: rid,
+                            path: p
+                        } if *rid == repo_id && p.as_path() == path.as_path()
+                    )
+                }
+                _ => false,
+            });
 
             assert!(has_ours);
             assert!(has_theirs);
             assert!(has_manual);
+            assert!(has_external_mergetool);
+        });
+    }
+
+    #[gpui::test]
+    fn status_file_menu_hides_external_mergetool_for_staged_conflicts(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let (store, events) = AppStore::new(Arc::new(TestBackend));
+        let (view, cx) =
+            cx.add_window_view(|window, cx| GitGpuiView::new(store, events, None, window, cx));
+
+        let repo_id = RepoId(7);
+        let workdir = std::env::temp_dir().join(format!(
+            "gitgpui_ui_test_{}_status_menu_staged_conflict",
+            std::process::id()
+        ));
+        let path = std::path::PathBuf::from("conflict.txt");
+
+        cx.update(|_window, app| {
+            view.update(app, |this, cx| {
+                let mut repo = RepoState::new_opening(
+                    repo_id,
+                    gitgpui_core::domain::RepoSpec {
+                        workdir: workdir.clone(),
+                    },
+                );
+                repo.status = Loadable::Ready(
+                    gitgpui_core::domain::RepoStatus {
+                        staged: vec![gitgpui_core::domain::FileStatus {
+                            path: path.clone(),
+                            kind: gitgpui_core::domain::FileStatusKind::Conflicted,
+                            conflict: None,
+                        }],
+                        unstaged: vec![],
+                    }
+                    .into(),
+                );
+                let state = Arc::new(AppState {
+                    repos: vec![repo],
+                    active_repo: Some(repo_id),
+                    ..Default::default()
+                });
+                this.state = Arc::clone(&state);
+                this._ui_model
+                    .update(cx, |model, cx| model.set_state(state, cx));
+                cx.notify();
+            });
+        });
+
+        cx.update(|_window, app| {
+            let model = view
+                .update(app, |this, cx| {
+                    this.popover_host.update(cx, |host, cx| {
+                        host.context_menu_model(
+                            &PopoverKind::StatusFileMenu {
+                                repo_id,
+                                area: DiffArea::Staged,
+                                path: path.clone(),
+                            },
+                            cx,
+                        )
+                    })
+                })
+                .expect("expected status file context menu model");
+
+            let has_external_mergetool = model.items.iter().any(|item| match item {
+                ContextMenuItem::Entry { label, .. } => {
+                    label.as_ref().starts_with("Open external mergetool")
+                }
+                _ => false,
+            });
+            assert!(!has_external_mergetool);
         });
     }
 
