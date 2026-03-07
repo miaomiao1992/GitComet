@@ -1,10 +1,11 @@
 //! CLI argument parsing for gitcomet-app.
 //!
-//! Supports five modes:
+//! Supports six modes:
 //! - Default (no subcommand): open the full repository browser
 //! - `difftool`: focused diff view, compatible with `git difftool`
 //! - `mergetool`: focused merge view, compatible with `git mergetool`
 //! - `setup`: configure git difftool/mergetool integration
+//! - `uninstall`: remove gitcomet difftool/mergetool integration
 //! - `extract-merge-fixtures`: generate Phase 3C real-world merge fixtures
 
 use clap::{Parser, Subcommand};
@@ -43,6 +44,8 @@ pub enum Command {
     Mergetool(MergetoolArgs),
     /// Configure git to use gitcomet as the global diff/merge tool.
     Setup(SetupArgs),
+    /// Remove gitcomet diff/merge tool config entries.
+    Uninstall(UninstallArgs),
     /// Extract non-trivial merge cases from git history as fixture files.
     ExtractMergeFixtures(ExtractMergeFixturesArgs),
 }
@@ -172,6 +175,16 @@ pub struct SetupArgs {
 }
 
 #[derive(clap::Args, Debug)]
+pub struct UninstallArgs {
+    /// Only print the git config commands that would be run.
+    #[arg(long)]
+    pub dry_run: bool,
+    /// Remove config from the local repository instead of global.
+    #[arg(long)]
+    pub local: bool,
+}
+
+#[derive(clap::Args, Debug)]
 pub struct ExtractMergeFixturesArgs {
     /// Repository to scan for merge commits (default: current directory).
     #[arg(long, default_value = ".")]
@@ -207,6 +220,8 @@ pub enum AppMode {
     Mergetool(MergetoolConfig),
     /// Write git config for difftool/mergetool integration.
     Setup { dry_run: bool, local: bool },
+    /// Remove gitcomet-specific difftool/mergetool integration.
+    Uninstall { dry_run: bool, local: bool },
     /// Generate merge fixtures from repository history.
     ExtractMergeFixtures(ExtractMergeFixturesConfig),
 }
@@ -1015,6 +1030,10 @@ fn parse_app_mode_from_args_env_and_config(
                 resolve_mergetool_with_config(args, env, git_config).map(AppMode::Mergetool)
             }
             Some(Command::Setup(args)) => Ok(AppMode::Setup {
+                dry_run: args.dry_run,
+                local: args.local,
+            }),
+            Some(Command::Uninstall(args)) => Ok(AppMode::Uninstall {
                 dry_run: args.dry_run,
                 local: args.local,
             }),
@@ -2599,6 +2618,56 @@ mod tests {
                 assert_eq!(args.label_remote.as_deref(), Some("Theirs"));
             }
             _ => panic!("expected Mergetool command"),
+        }
+    }
+
+    #[test]
+    fn clap_parses_setup_subcommand() {
+        let cli = Cli::try_parse_from(["gitcomet-app", "setup", "--dry-run", "--local"]).unwrap();
+
+        match cli.command {
+            Some(Command::Setup(args)) => {
+                assert!(args.dry_run);
+                assert!(args.local);
+            }
+            other => panic!("expected Setup command, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn clap_parses_uninstall_subcommand() {
+        let cli =
+            Cli::try_parse_from(["gitcomet-app", "uninstall", "--dry-run", "--local"]).unwrap();
+
+        match cli.command {
+            Some(Command::Uninstall(args)) => {
+                assert!(args.dry_run);
+                assert!(args.local);
+            }
+            other => panic!("expected Uninstall command, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn uninstall_mode_resolves_into_app_mode() {
+        let env = TestEnv::new();
+        let mode = parse_mode_for_test(
+            vec![
+                OsString::from("gitcomet-app"),
+                OsString::from("uninstall"),
+                OsString::from("--dry-run"),
+                OsString::from("--local"),
+            ],
+            &env,
+        )
+        .expect("parse uninstall mode");
+
+        match mode {
+            AppMode::Uninstall { dry_run, local } => {
+                assert!(dry_run);
+                assert!(local);
+            }
+            other => panic!("expected Uninstall mode, got: {other:?}"),
         }
     }
 

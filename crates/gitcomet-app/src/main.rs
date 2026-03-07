@@ -220,6 +220,19 @@ fn main() {
                 std::process::exit(exit_code::ERROR);
             }
         },
+        AppMode::Uninstall { dry_run, local } => match setup_mode::run_uninstall(dry_run, local) {
+            Ok(result) => {
+                if !result.stdout.is_empty() {
+                    print!("{}", result.stdout);
+                }
+                let _ = io::stdout().flush();
+                std::process::exit(result.exit_code);
+            }
+            Err(msg) => {
+                eprintln!("{msg}");
+                std::process::exit(exit_code::ERROR);
+            }
+        },
         AppMode::ExtractMergeFixtures(config) => {
             match extract_fixtures_mode::run_extract_merge_fixtures(&config) {
                 Ok(result) => {

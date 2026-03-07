@@ -1,14 +1,68 @@
-//! `gitcomet-app setup` — configure git to use gitcomet as difftool/mergetool.
+//! `gitcomet-app setup` / `gitcomet-app uninstall` support.
 //!
-//! Writes the recommended global (or local) git config entries so that
+//! Setup writes the recommended global (or local) git config entries so that
 //! `git difftool` and `git mergetool` invoke gitcomet automatically.
+//! Uninstall removes those entries while preserving unrelated tool settings.
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 /// A single `git config` key-value pair to set.
 struct ConfigEntry {
     key: &'static str,
     value: String,
+}
+
+#[derive(Clone, Copy)]
+struct BackupEntry {
+    key: &'static str,
+    expected_setup_value: &'static str,
+    backup_key: &'static str,
+}
+
+#[derive(Clone, Copy)]
+struct UninstallGuard {
+    key: &'static str,
+    expected_value: &'static str,
+}
+
+#[derive(Clone, Copy)]
+struct UninstallEntry {
+    key: &'static str,
+    // If set, key is only removed when every configured value exactly matches
+    // this expected setup value.
+    expected_value: Option<&'static str>,
+    // Optional additional selector guard to avoid removing shared generic
+    // settings once users have switched to a different tool.
+    guard: Option<UninstallGuard>,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+enum UninstallDecision {
+    Unset,
+    SkipMissing,
+    SkipValueMismatch {
+        expected: &'static str,
+        actual: Vec<String>,
+    },
+    SkipGuardMismatch {
+        guard_key: &'static str,
+        guard_expected: &'static str,
+        guard_actual: Vec<String>,
+    },
+}
+
+#[derive(Debug, Eq, PartialEq)]
+struct UninstallPlanItem {
+    key: &'static str,
+    decision: UninstallDecision,
+}
+
+const BACKUP_ABSENT_SENTINEL: &str = "__gitcomet_absent__";
+
+struct BackupRestoreSummary {
+    restored_count: usize,
+    preserved_user_edits_count: usize,
 }
 
 /// Quote a string as a POSIX-shell single-quoted literal.
@@ -152,6 +206,513 @@ fn build_config_entries(bin_path: &str) -> Vec<ConfigEntry> {
     ]
 }
 
+fn build_backup_entries() -> Vec<BackupEntry> {
+    vec![
+        BackupEntry {
+            key: "merge.tool",
+            expected_setup_value: "gitcomet",
+            backup_key: "gitcomet.backup.merge-tool",
+        },
+        BackupEntry {
+            key: "diff.tool",
+            expected_setup_value: "gitcomet",
+            backup_key: "gitcomet.backup.diff-tool",
+        },
+        BackupEntry {
+            key: "merge.guitool",
+            expected_setup_value: "gitcomet-gui",
+            backup_key: "gitcomet.backup.merge-guitool",
+        },
+        BackupEntry {
+            key: "diff.guitool",
+            expected_setup_value: "gitcomet-gui",
+            backup_key: "gitcomet.backup.diff-guitool",
+        },
+        BackupEntry {
+            key: "mergetool.trustExitCode",
+            expected_setup_value: "true",
+            backup_key: "gitcomet.backup.mergetool-trust-exit-code",
+        },
+        BackupEntry {
+            key: "mergetool.prompt",
+            expected_setup_value: "false",
+            backup_key: "gitcomet.backup.mergetool-prompt",
+        },
+        BackupEntry {
+            key: "difftool.trustExitCode",
+            expected_setup_value: "true",
+            backup_key: "gitcomet.backup.difftool-trust-exit-code",
+        },
+        BackupEntry {
+            key: "difftool.prompt",
+            expected_setup_value: "false",
+            backup_key: "gitcomet.backup.difftool-prompt",
+        },
+        BackupEntry {
+            key: "mergetool.guiDefault",
+            expected_setup_value: "auto",
+            backup_key: "gitcomet.backup.mergetool-guidefault",
+        },
+        BackupEntry {
+            key: "difftool.guiDefault",
+            expected_setup_value: "auto",
+            backup_key: "gitcomet.backup.difftool-guidefault",
+        },
+    ]
+}
+
+fn build_uninstall_entries() -> Vec<UninstallEntry> {
+    vec![
+        // Tool-scoped keys are always safe to remove.
+        UninstallEntry {
+            key: "mergetool.gitcomet.cmd",
+            expected_value: None,
+            guard: None,
+        },
+        UninstallEntry {
+            key: "mergetool.gitcomet.trustExitCode",
+            expected_value: None,
+            guard: None,
+        },
+        UninstallEntry {
+            key: "difftool.gitcomet.cmd",
+            expected_value: None,
+            guard: None,
+        },
+        UninstallEntry {
+            key: "difftool.gitcomet.trustExitCode",
+            expected_value: None,
+            guard: None,
+        },
+        UninstallEntry {
+            key: "mergetool.gitcomet-gui.cmd",
+            expected_value: None,
+            guard: None,
+        },
+        UninstallEntry {
+            key: "mergetool.gitcomet-gui.trustExitCode",
+            expected_value: None,
+            guard: None,
+        },
+        UninstallEntry {
+            key: "difftool.gitcomet-gui.cmd",
+            expected_value: None,
+            guard: None,
+        },
+        UninstallEntry {
+            key: "difftool.gitcomet-gui.trustExitCode",
+            expected_value: None,
+            guard: None,
+        },
+        // Generic selector keys are only removed when they still point at
+        // GitComet defaults, so other tools are not disrupted.
+        UninstallEntry {
+            key: "merge.tool",
+            expected_value: Some("gitcomet"),
+            guard: None,
+        },
+        UninstallEntry {
+            key: "diff.tool",
+            expected_value: Some("gitcomet"),
+            guard: None,
+        },
+        UninstallEntry {
+            key: "merge.guitool",
+            expected_value: Some("gitcomet-gui"),
+            guard: None,
+        },
+        UninstallEntry {
+            key: "diff.guitool",
+            expected_value: Some("gitcomet-gui"),
+            guard: None,
+        },
+        // Shared behavior keys are removed only while their selector still
+        // targets GitComet.
+        UninstallEntry {
+            key: "mergetool.trustExitCode",
+            expected_value: Some("true"),
+            guard: Some(UninstallGuard {
+                key: "merge.tool",
+                expected_value: "gitcomet",
+            }),
+        },
+        UninstallEntry {
+            key: "mergetool.prompt",
+            expected_value: Some("false"),
+            guard: Some(UninstallGuard {
+                key: "merge.tool",
+                expected_value: "gitcomet",
+            }),
+        },
+        UninstallEntry {
+            key: "difftool.trustExitCode",
+            expected_value: Some("true"),
+            guard: Some(UninstallGuard {
+                key: "diff.tool",
+                expected_value: "gitcomet",
+            }),
+        },
+        UninstallEntry {
+            key: "difftool.prompt",
+            expected_value: Some("false"),
+            guard: Some(UninstallGuard {
+                key: "diff.tool",
+                expected_value: "gitcomet",
+            }),
+        },
+        UninstallEntry {
+            key: "mergetool.guiDefault",
+            expected_value: Some("auto"),
+            guard: Some(UninstallGuard {
+                key: "merge.guitool",
+                expected_value: "gitcomet-gui",
+            }),
+        },
+        UninstallEntry {
+            key: "difftool.guiDefault",
+            expected_value: Some("auto"),
+            guard: Some(UninstallGuard {
+                key: "diff.guitool",
+                expected_value: "gitcomet-gui",
+            }),
+        },
+    ]
+}
+
+fn collect_uninstall_snapshot_keys(entries: &[UninstallEntry]) -> Vec<&'static str> {
+    let mut keys = Vec::new();
+    for entry in entries {
+        if !keys.contains(&entry.key) {
+            keys.push(entry.key);
+        }
+        if let Some(guard) = entry.guard
+            && !keys.contains(&guard.key)
+        {
+            keys.push(guard.key);
+        }
+    }
+    keys
+}
+
+fn parse_git_config_values(output: &[u8]) -> Vec<String> {
+    String::from_utf8_lossy(output)
+        .lines()
+        .map(|line| line.trim_end_matches('\r').to_string())
+        .collect()
+}
+
+fn read_git_config_values(scope: &str, key: &str) -> Result<Vec<String>, String> {
+    let output = std::process::Command::new("git")
+        .args(["config", scope, "--get-all", key])
+        .output()
+        .map_err(|e| format!("Failed to run git config --get-all for {key}: {e}"))?;
+
+    if output.status.success() {
+        return Ok(parse_git_config_values(&output.stdout));
+    }
+
+    // Missing key: git exits non-zero; treat as absent config.
+    if output.status.code() == Some(1) {
+        return Ok(Vec::new());
+    }
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    Err(format!(
+        "git config {scope} --get-all {key} failed: {}",
+        stderr.trim()
+    ))
+}
+
+fn unset_all_config_values(scope: &str, key: &str) -> Result<(), String> {
+    if read_git_config_values(scope, key)?.is_empty() {
+        return Ok(());
+    }
+
+    let output = std::process::Command::new("git")
+        .args(["config", scope, "--unset-all", key])
+        .output()
+        .map_err(|e| format!("Failed to run git config --unset-all for {key}: {e}"))?;
+
+    if output.status.success() {
+        return Ok(());
+    }
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    Err(format!(
+        "git config {scope} --unset-all {key} failed: {}",
+        stderr.trim()
+    ))
+}
+
+fn set_single_config_value(scope: &str, key: &str, value: &str) -> Result<(), String> {
+    let output = std::process::Command::new("git")
+        .args(["config", scope, key, value])
+        .output()
+        .map_err(|e| format!("Failed to run git config for {key}: {e}"))?;
+
+    if output.status.success() {
+        return Ok(());
+    }
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    Err(format!(
+        "git config {scope} {key} failed: {}",
+        stderr.trim()
+    ))
+}
+
+fn add_config_value(scope: &str, key: &str, value: &str) -> Result<(), String> {
+    let output = std::process::Command::new("git")
+        .args(["config", scope, "--add", key, value])
+        .output()
+        .map_err(|e| format!("Failed to run git config --add for {key}: {e}"))?;
+
+    if output.status.success() {
+        return Ok(());
+    }
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    Err(format!(
+        "git config {scope} --add {key} failed: {}",
+        stderr.trim()
+    ))
+}
+
+fn write_config_values(scope: &str, key: &str, values: &[String]) -> Result<(), String> {
+    unset_all_config_values(scope, key)?;
+    if values.is_empty() {
+        return Ok(());
+    }
+    set_single_config_value(scope, key, &values[0])?;
+    for value in &values[1..] {
+        add_config_value(scope, key, value)?;
+    }
+    Ok(())
+}
+
+fn maybe_capture_backup_for_entry(scope: &str, entry: &BackupEntry) -> Result<(), String> {
+    let existing_backup = read_git_config_values(scope, entry.backup_key)?;
+    if !existing_backup.is_empty() {
+        return Ok(());
+    }
+
+    let current_values = read_git_config_values(scope, entry.key)?;
+
+    if all_values_match_expected(&current_values, entry.expected_setup_value) {
+        return Ok(());
+    }
+
+    let backup_values = if current_values.is_empty() {
+        vec![BACKUP_ABSENT_SENTINEL.to_string()]
+    } else {
+        current_values
+    };
+    write_config_values(scope, entry.backup_key, &backup_values)
+}
+
+fn capture_backups_before_setup(scope: &str, entries: &[BackupEntry]) -> Result<(), String> {
+    for entry in entries {
+        maybe_capture_backup_for_entry(scope, entry)?;
+    }
+    Ok(())
+}
+
+fn restore_backups_for_uninstall(
+    scope: &str,
+    entries: &[BackupEntry],
+) -> Result<BackupRestoreSummary, String> {
+    let mut restored_count = 0usize;
+    let mut preserved_user_edits_count = 0usize;
+    for entry in entries {
+        let backup_values = read_git_config_values(scope, entry.backup_key)?;
+        if backup_values.is_empty() {
+            continue;
+        }
+
+        let current_values = read_git_config_values(scope, entry.key)?;
+        // Preserve user edits made after setup: only restore when the key still
+        // has the setup-managed value.
+        if !all_values_match_expected(&current_values, entry.expected_setup_value) {
+            unset_all_config_values(scope, entry.backup_key)?;
+            preserved_user_edits_count += 1;
+            continue;
+        }
+
+        if backup_values.len() == 1 && backup_values[0] == BACKUP_ABSENT_SENTINEL {
+            unset_all_config_values(scope, entry.key)?;
+        } else {
+            write_config_values(scope, entry.key, &backup_values)?;
+        }
+
+        unset_all_config_values(scope, entry.backup_key)?;
+        restored_count += 1;
+    }
+    Ok(BackupRestoreSummary {
+        restored_count,
+        preserved_user_edits_count,
+    })
+}
+
+fn read_uninstall_snapshot(
+    scope: &str,
+    entries: &[UninstallEntry],
+) -> Result<HashMap<&'static str, Vec<String>>, String> {
+    let mut snapshot = HashMap::new();
+    for key in collect_uninstall_snapshot_keys(entries) {
+        snapshot.insert(key, read_git_config_values(scope, key)?);
+    }
+    Ok(snapshot)
+}
+
+fn all_values_match_expected(values: &[String], expected: &str) -> bool {
+    !values.is_empty() && values.iter().all(|value| value == expected)
+}
+
+fn plan_uninstall(
+    entries: &[UninstallEntry],
+    snapshot: &HashMap<&'static str, Vec<String>>,
+) -> Vec<UninstallPlanItem> {
+    entries
+        .iter()
+        .map(|entry| {
+            let values = snapshot
+                .get(entry.key)
+                .map(Vec::as_slice)
+                .unwrap_or(&[] as &[String]);
+
+            if values.is_empty() {
+                return UninstallPlanItem {
+                    key: entry.key,
+                    decision: UninstallDecision::SkipMissing,
+                };
+            }
+
+            if let Some(expected) = entry.expected_value
+                && !all_values_match_expected(values, expected)
+            {
+                return UninstallPlanItem {
+                    key: entry.key,
+                    decision: UninstallDecision::SkipValueMismatch {
+                        expected,
+                        actual: values.to_vec(),
+                    },
+                };
+            }
+
+            if let Some(guard) = entry.guard {
+                let guard_values = snapshot
+                    .get(guard.key)
+                    .map(Vec::as_slice)
+                    .unwrap_or(&[] as &[String]);
+                if !all_values_match_expected(guard_values, guard.expected_value) {
+                    return UninstallPlanItem {
+                        key: entry.key,
+                        decision: UninstallDecision::SkipGuardMismatch {
+                            guard_key: guard.key,
+                            guard_expected: guard.expected_value,
+                            guard_actual: guard_values.to_vec(),
+                        },
+                    };
+                }
+            }
+
+            UninstallPlanItem {
+                key: entry.key,
+                decision: UninstallDecision::Unset,
+            }
+        })
+        .collect()
+}
+
+fn format_uninstall_dry_run(entries: &[UninstallEntry], scope: &str) -> String {
+    let mut out = String::new();
+    for entry in entries {
+        out.push_str(&format!("git config {scope} --unset-all {}", entry.key));
+        if let Some(expected) = entry.expected_value {
+            out.push_str(&format!(
+                "  # only if value is {}",
+                shell_single_quote(expected)
+            ));
+            if let Some(guard) = entry.guard {
+                out.push_str(&format!(
+                    " and {} is {}",
+                    guard.key,
+                    shell_single_quote(guard.expected_value)
+                ));
+            }
+        }
+        out.push('\n');
+    }
+    out
+}
+
+fn format_values(values: &[String]) -> String {
+    if values.is_empty() {
+        return "<unset>".to_string();
+    }
+    values
+        .iter()
+        .map(|value| shell_single_quote(value))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn format_uninstall_skip_details(plan: &[UninstallPlanItem]) -> String {
+    let mut out = String::new();
+    for item in plan {
+        match &item.decision {
+            UninstallDecision::SkipMissing => {}
+            UninstallDecision::SkipValueMismatch { expected, actual } => {
+                out.push_str(&format!(
+                    "- Skipped {}: value is {}, expected {}\n",
+                    item.key,
+                    format_values(actual),
+                    shell_single_quote(expected)
+                ));
+            }
+            UninstallDecision::SkipGuardMismatch {
+                guard_key,
+                guard_expected,
+                guard_actual,
+            } => {
+                out.push_str(&format!(
+                    "- Skipped {}: {} is {}, expected {}\n",
+                    item.key,
+                    guard_key,
+                    format_values(guard_actual),
+                    shell_single_quote(guard_expected)
+                ));
+            }
+            UninstallDecision::Unset => {}
+        }
+    }
+    out
+}
+
+fn apply_uninstall_plan(plan: &[UninstallPlanItem], scope: &str) -> Result<usize, String> {
+    let mut removed_count = 0usize;
+    for item in plan {
+        if item.decision != UninstallDecision::Unset {
+            continue;
+        }
+        let output = std::process::Command::new("git")
+            .args(["config", scope, "--unset-all", item.key])
+            .output()
+            .map_err(|e| format!("Failed to run git config --unset-all for {}: {e}", item.key))?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(format!(
+                "git config {scope} --unset-all {} failed: {}",
+                item.key,
+                stderr.trim()
+            ));
+        }
+        removed_count += 1;
+    }
+    Ok(removed_count)
+}
+
 /// Format the `git config` shell commands for display (dry-run mode).
 fn format_commands(entries: &[ConfigEntry], scope: &str) -> String {
     let mut out = String::new();
@@ -192,6 +753,12 @@ pub struct SetupResult {
     pub exit_code: i32,
 }
 
+/// Result returned from `run_uninstall`.
+pub struct UninstallResult {
+    pub stdout: String,
+    pub exit_code: i32,
+}
+
 /// Execute the setup command.
 pub fn run_setup(dry_run: bool, local: bool) -> Result<SetupResult, String> {
     let bin_path = current_exe_path()?;
@@ -203,19 +770,24 @@ pub fn run_setup(dry_run: bool, local: bool) -> Result<SetupResult, String> {
     })?;
 
     let entries = build_config_entries(bin_str);
+    let backup_entries = build_backup_entries();
     let scope = if local { "--local" } else { "--global" };
     let scope_label = if local { "local" } else { "global" };
 
     if dry_run {
         let commands = format_commands(&entries, scope);
-        let stdout =
-            format!("# Dry run: the following git config commands would be executed:\n{commands}");
+        let stdout = format!(
+            "# Dry run: the following git config commands would be executed:\n{commands}\n\
+             # Setup also stores backup values for {} key(s) under gitcomet.backup.* when needed.\n",
+            backup_entries.len()
+        );
         return Ok(SetupResult {
             stdout,
             exit_code: 0,
         });
     }
 
+    capture_backups_before_setup(scope, &backup_entries)?;
     apply_config(&entries, scope)?;
 
     let stdout = format!(
@@ -225,6 +797,51 @@ pub fn run_setup(dry_run: bool, local: bool) -> Result<SetupResult, String> {
     );
 
     Ok(SetupResult {
+        stdout,
+        exit_code: 0,
+    })
+}
+
+/// Execute the uninstall command.
+pub fn run_uninstall(dry_run: bool, local: bool) -> Result<UninstallResult, String> {
+    let scope = if local { "--local" } else { "--global" };
+    let scope_label = if local { "local" } else { "global" };
+    let entries = build_uninstall_entries();
+    let backup_entries = build_backup_entries();
+
+    if dry_run {
+        let commands = format_uninstall_dry_run(&entries, scope);
+        let stdout = format!(
+            "# Dry run: the following git config commands may be executed safely:\n{commands}\n\
+             # Uninstall also restores backup values from gitcomet.backup.* when present.\n"
+        );
+        return Ok(UninstallResult {
+            stdout,
+            exit_code: 0,
+        });
+    }
+
+    let restore_summary = restore_backups_for_uninstall(scope, &backup_entries)?;
+    let snapshot = read_uninstall_snapshot(scope, &entries)?;
+    let plan = plan_uninstall(&entries, &snapshot);
+    let removed_count = apply_uninstall_plan(&plan, scope)?;
+    let skipped_count = plan
+        .iter()
+        .filter(|item| item.decision != UninstallDecision::Unset)
+        .count();
+    let skip_details = format_uninstall_skip_details(&plan);
+
+    let mut stdout = format!(
+        "Unconfigured gitcomet from {scope_label} diff/merge tool.\n\
+         Restored {} key(s) from backups; preserved {} user-edited key(s); removed {removed_count} key(s); skipped {skipped_count}.\n",
+        restore_summary.restored_count, restore_summary.preserved_user_edits_count
+    );
+    if !skip_details.is_empty() {
+        stdout.push_str("Safety skips:\n");
+        stdout.push_str(&skip_details);
+    }
+
+    Ok(UninstallResult {
         stdout,
         exit_code: 0,
     })
@@ -519,5 +1136,87 @@ mod tests {
         assert!(check.status.success());
         let value = String::from_utf8_lossy(&check.stdout);
         assert_eq!(value.trim(), entries[0].value);
+    }
+
+    fn decision_for<'a>(plan: &'a [UninstallPlanItem], key: &str) -> &'a UninstallDecision {
+        &plan
+            .iter()
+            .find(|item| item.key == key)
+            .unwrap_or_else(|| panic!("missing plan item for key {key}"))
+            .decision
+    }
+
+    #[test]
+    fn uninstall_dry_run_lists_unset_commands_and_conditions() {
+        let result = run_uninstall(true, true).unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert!(result.stdout.contains("Dry run"));
+        assert!(
+            result
+                .stdout
+                .contains("git config --local --unset-all mergetool.gitcomet.cmd")
+        );
+        assert!(
+            result.stdout.contains(
+                "git config --local --unset-all merge.tool  # only if value is 'gitcomet'"
+            )
+        );
+        assert!(
+            result.stdout.contains("and merge.tool is 'gitcomet'"),
+            "expected guarded-condition annotation in dry run output:\n{}",
+            result.stdout
+        );
+    }
+
+    #[test]
+    fn uninstall_plan_unsets_matching_setup_values() {
+        let entries = build_uninstall_entries();
+        let mut snapshot: HashMap<&'static str, Vec<String>> = HashMap::new();
+        snapshot.insert("mergetool.gitcomet.cmd", vec!["custom-cmd".to_string()]);
+        snapshot.insert("merge.tool", vec!["gitcomet".to_string()]);
+        snapshot.insert("mergetool.prompt", vec!["false".to_string()]);
+
+        let plan = plan_uninstall(&entries, &snapshot);
+
+        assert_eq!(
+            decision_for(&plan, "mergetool.gitcomet.cmd"),
+            &UninstallDecision::Unset
+        );
+        assert_eq!(decision_for(&plan, "merge.tool"), &UninstallDecision::Unset);
+        assert_eq!(
+            decision_for(&plan, "mergetool.prompt"),
+            &UninstallDecision::Unset
+        );
+    }
+
+    #[test]
+    fn uninstall_plan_preserves_non_gitcomet_generic_settings() {
+        let entries = build_uninstall_entries();
+        let mut snapshot: HashMap<&'static str, Vec<String>> = HashMap::new();
+        snapshot.insert("mergetool.gitcomet.cmd", vec!["custom-cmd".to_string()]);
+        snapshot.insert("merge.tool", vec!["meld".to_string()]);
+        snapshot.insert("mergetool.prompt", vec!["false".to_string()]);
+
+        let plan = plan_uninstall(&entries, &snapshot);
+
+        assert_eq!(
+            decision_for(&plan, "mergetool.gitcomet.cmd"),
+            &UninstallDecision::Unset
+        );
+        assert_eq!(
+            decision_for(&plan, "merge.tool"),
+            &UninstallDecision::SkipValueMismatch {
+                expected: "gitcomet",
+                actual: vec!["meld".to_string()],
+            }
+        );
+        assert_eq!(
+            decision_for(&plan, "mergetool.prompt"),
+            &UninstallDecision::SkipGuardMismatch {
+                guard_key: "merge.tool",
+                guard_expected: "gitcomet",
+                guard_actual: vec!["meld".to_string()],
+            }
+        );
     }
 }

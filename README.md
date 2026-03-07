@@ -17,7 +17,7 @@ Fast, resource-efficient, fully open source Git GUI written in Rust, targeting G
 - `crates/gitcomet-state`: MVU state store, reducers, effects, conflict session management.
 - `crates/gitcomet-ui`: UI model/state (toolkit-independent).
 - `crates/gitcomet-ui-gpui`: gpui views/components (focused diff/merge windows, conflict resolver, word diff).
-- `crates/gitcomet-app`: binary entrypoint, CLI (clap), difftool/mergetool/setup modes.
+- `crates/gitcomet-app`: binary entrypoint, CLI (clap), difftool/mergetool/setup/uninstall modes.
 
 ### Getting started
 
@@ -49,49 +49,65 @@ cargo run -p gitcomet-app --features ui-gpui,gix -- /path/to/repo
 
 GitComet can be used as a standalone diff and merge tool invoked by `git difftool` and `git mergetool`. It supports both headless (algorithm-only) and GUI (interactive GPUI window) modes.
 
-#### Automatic setup
-
-The built-in `setup` command configures Git globally:
+#### Setup / uninstall (recommended)
 
 ```bash
+# Configure Git globally to use GitComet for both difftool + mergetool
 gitcomet-app setup
+
+# Remove GitComet integration safely
+gitcomet-app uninstall
 ```
 
-This registers both headless and GUI tool variants with `guiDefault=auto`, so Git automatically picks the GUI tool when a display is available and falls back to headless otherwise.
+- Use `--local` to target only the current repository instead of global config.
+- Use `--dry-run` to print the commands before applying changes.
 
-#### Manual setup
+This setup registers both headless and GUI variants with `guiDefault=auto`, so Git chooses GUI when display is available and falls back to headless otherwise.
+`setup`/`uninstall` are designed to be idempotent.
+
+<details>
+<summary>Show detailed setup/uninstall behavior and manual commands</summary>
+
+Built-in `setup` writes these Git config entries:
 
 ```bash
-GITGPUI_BIN="/absolute/path/to/gitcomet-app"
+GITCOMET_BIN="/absolute/path/to/gitcomet-app"
 
 # Headless tool — algorithm-only merge/diff for CI, scripts, and no-display environments
 git config --global merge.tool gitcomet
 git config --global mergetool.gitcomet.cmd \
-  "'$GITGPUI_BIN' mergetool --base \"\$BASE\" --local \"\$LOCAL\" --remote \"\$REMOTE\" --merged \"\$MERGED\""
+  "'$GITCOMET_BIN' mergetool --base \"\$BASE\" --local \"\$LOCAL\" --remote \"\$REMOTE\" --merged \"\$MERGED\""
+git config --global mergetool.trustExitCode true
 git config --global mergetool.gitcomet.trustExitCode true
 git config --global mergetool.prompt false
 
 git config --global diff.tool gitcomet
 git config --global difftool.gitcomet.cmd \
-  "'$GITGPUI_BIN' difftool --local \"\$LOCAL\" --remote \"\$REMOTE\" --path \"\$MERGED\""
+  "'$GITCOMET_BIN' difftool --local \"\$LOCAL\" --remote \"\$REMOTE\" --path \"\$MERGED\""
+git config --global difftool.trustExitCode true
 git config --global difftool.gitcomet.trustExitCode true
 git config --global difftool.prompt false
 
 # GUI tool — opens focused GPUI windows for interactive diff/merge
 git config --global merge.guitool gitcomet-gui
 git config --global mergetool.gitcomet-gui.cmd \
-  "'$GITGPUI_BIN' mergetool --gui --base \"\$BASE\" --local \"\$LOCAL\" --remote \"\$REMOTE\" --merged \"\$MERGED\""
+  "'$GITCOMET_BIN' mergetool --gui --base \"\$BASE\" --local \"\$LOCAL\" --remote \"\$REMOTE\" --merged \"\$MERGED\""
 git config --global mergetool.gitcomet-gui.trustExitCode true
 
 git config --global diff.guitool gitcomet-gui
 git config --global difftool.gitcomet-gui.cmd \
-  "'$GITGPUI_BIN' difftool --gui --local \"\$LOCAL\" --remote \"\$REMOTE\" --path \"\$MERGED\""
+  "'$GITCOMET_BIN' difftool --gui --local \"\$LOCAL\" --remote \"\$REMOTE\" --path \"\$MERGED\""
 git config --global difftool.gitcomet-gui.trustExitCode true
 
 # Auto-select GUI tool when DISPLAY is available, headless otherwise
 git config --global mergetool.guiDefault auto
 git config --global difftool.guiDefault auto
 ```
+
+Built-in `setup` stores previous user values for shared generic keys under `gitcomet.backup.*` (when needed).  
+Built-in `uninstall` restores those backups only when the key still has the setup-managed value. If the user changed a setting after setup, uninstall preserves that user-edited value and then removes GitComet-specific keys.
+
+</details>
 
 #### CLI modes
 

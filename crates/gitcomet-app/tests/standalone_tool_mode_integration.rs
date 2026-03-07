@@ -64,6 +64,34 @@ fn git_config_get(repo_dir: &Path, key: &str) -> Option<String> {
     }
 }
 
+fn git_config_get_local(repo_dir: &Path, key: &str) -> Option<String> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(repo_dir)
+        .args(["config", "--local", "--get", key])
+        .output()
+        .ok()?;
+    if output.status.success() {
+        Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    } else {
+        None
+    }
+}
+
+fn git_config_set_local(repo_dir: &Path, key: &str, value: &str) {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(repo_dir)
+        .args(["config", "--local", key, value])
+        .output()
+        .expect("git config --local to run");
+    assert!(
+        output.status.success(),
+        "failed to set local git config {key}\n{}",
+        output_text(&output)
+    );
+}
+
 fn write_file(path: &Path, contents: &str) {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).expect("create parent directories");
@@ -1755,6 +1783,320 @@ fn setup_local_difftool_tool_help_lists_headless_and_gui_entries() {
     );
 }
 
+#[test]
+fn uninstall_dry_run_local_after_setup_lists_unset_commands() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = dir.path();
+
+    setup_e2e_init(repo);
+    let setup = run_gitcomet_in_dir(repo, ["setup", "--local"]);
+    let setup_text = output_text(&setup);
+    assert_eq!(setup.status.code(), Some(0), "setup failed\n{setup_text}");
+
+    let uninstall = run_gitcomet_in_dir(repo, ["uninstall", "--dry-run", "--local"]);
+    let text = output_text(&uninstall);
+    assert_eq!(uninstall.status.code(), Some(0), "expected exit 0\n{text}");
+
+    let stdout = String::from_utf8_lossy(&uninstall.stdout);
+    assert!(
+        stdout.contains("git config --local --unset-all mergetool.gitcomet.cmd"),
+        "expected headless mergetool unset command\n{text}"
+    );
+    assert!(
+        stdout.contains("git config --local --unset-all merge.tool"),
+        "expected merge.tool unset command\n{text}"
+    );
+    assert!(
+        stdout.contains("git config --local --unset-all mergetool.prompt"),
+        "expected guarded mergetool.prompt unset command\n{text}"
+    );
+}
+
+#[test]
+fn uninstall_local_removes_setup_keys_from_repo() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = dir.path();
+
+    setup_e2e_init(repo);
+    let setup = run_gitcomet_in_dir(repo, ["setup", "--local"]);
+    let setup_text = output_text(&setup);
+    assert_eq!(setup.status.code(), Some(0), "setup failed\n{setup_text}");
+
+    let uninstall = run_gitcomet_in_dir(repo, ["uninstall", "--local"]);
+    let text = output_text(&uninstall);
+    assert_eq!(uninstall.status.code(), Some(0), "expected exit 0\n{text}");
+    assert!(
+        String::from_utf8_lossy(&uninstall.stdout)
+            .contains("Unconfigured gitcomet from local diff/merge tool"),
+        "expected uninstall summary message\n{text}"
+    );
+
+    // Tool selectors should be removed from local scope.
+    assert_eq!(git_config_get_local(repo, "merge.tool"), None);
+    assert_eq!(git_config_get_local(repo, "diff.tool"), None);
+    assert_eq!(git_config_get_local(repo, "merge.guitool"), None);
+    assert_eq!(git_config_get_local(repo, "diff.guitool"), None);
+
+    // Tool-specific command registrations should be removed.
+    assert_eq!(git_config_get_local(repo, "mergetool.gitcomet.cmd"), None);
+    assert_eq!(git_config_get_local(repo, "difftool.gitcomet.cmd"), None);
+    assert_eq!(
+        git_config_get_local(repo, "mergetool.gitcomet-gui.cmd"),
+        None
+    );
+    assert_eq!(
+        git_config_get_local(repo, "difftool.gitcomet-gui.cmd"),
+        None
+    );
+
+    // Generic behavior keys written by setup should be removed when selectors
+    // still point to GitComet.
+    assert_eq!(git_config_get_local(repo, "mergetool.prompt"), None);
+    assert_eq!(git_config_get_local(repo, "mergetool.trustExitCode"), None);
+    assert_eq!(git_config_get_local(repo, "difftool.prompt"), None);
+    assert_eq!(git_config_get_local(repo, "difftool.trustExitCode"), None);
+}
+
+#[test]
+fn uninstall_local_keeps_non_gitcomet_generic_settings() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = dir.path();
+
+    setup_e2e_init(repo);
+    git_config_set_local(repo, "merge.tool", "meld");
+    git_config_set_local(repo, "mergetool.prompt", "false");
+    git_config_set_local(repo, "mergetool.trustExitCode", "true");
+    git_config_set_local(repo, "mergetool.gitcomet.cmd", "echo custom");
+
+    let uninstall = run_gitcomet_in_dir(repo, ["uninstall", "--local"]);
+    let text = output_text(&uninstall);
+    assert_eq!(uninstall.status.code(), Some(0), "expected exit 0\n{text}");
+
+    // Keep non-GitComet generic behavior.
+    assert_eq!(
+        git_config_get_local(repo, "merge.tool").as_deref(),
+        Some("meld")
+    );
+    assert_eq!(
+        git_config_get_local(repo, "mergetool.prompt").as_deref(),
+        Some("false")
+    );
+    assert_eq!(
+        git_config_get_local(repo, "mergetool.trustExitCode").as_deref(),
+        Some("true")
+    );
+
+    // Remove GitComet tool-specific key regardless of command content.
+    assert_eq!(git_config_get_local(repo, "mergetool.gitcomet.cmd"), None);
+}
+
+#[test]
+fn setup_then_uninstall_local_restores_preexisting_user_settings() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = dir.path();
+
+    setup_e2e_init(repo);
+
+    git_config_set_local(repo, "merge.tool", "meld");
+    git_config_set_local(repo, "diff.tool", "vimdiff");
+    git_config_set_local(repo, "merge.guitool", "kdiff3");
+    git_config_set_local(repo, "diff.guitool", "kdiff3");
+    git_config_set_local(repo, "mergetool.prompt", "true");
+    git_config_set_local(repo, "difftool.prompt", "true");
+    git_config_set_local(repo, "mergetool.trustExitCode", "false");
+    git_config_set_local(repo, "difftool.trustExitCode", "false");
+    git_config_set_local(repo, "mergetool.guiDefault", "false");
+    git_config_set_local(repo, "difftool.guiDefault", "false");
+
+    let setup = run_gitcomet_in_dir(repo, ["setup", "--local"]);
+    let setup_text = output_text(&setup);
+    assert_eq!(setup.status.code(), Some(0), "setup failed\n{setup_text}");
+
+    let uninstall = run_gitcomet_in_dir(repo, ["uninstall", "--local"]);
+    let uninstall_text = output_text(&uninstall);
+    assert_eq!(
+        uninstall.status.code(),
+        Some(0),
+        "uninstall failed\n{uninstall_text}"
+    );
+
+    assert_eq!(
+        git_config_get_local(repo, "merge.tool").as_deref(),
+        Some("meld")
+    );
+    assert_eq!(
+        git_config_get_local(repo, "diff.tool").as_deref(),
+        Some("vimdiff")
+    );
+    assert_eq!(
+        git_config_get_local(repo, "merge.guitool").as_deref(),
+        Some("kdiff3")
+    );
+    assert_eq!(
+        git_config_get_local(repo, "diff.guitool").as_deref(),
+        Some("kdiff3")
+    );
+    assert_eq!(
+        git_config_get_local(repo, "mergetool.prompt").as_deref(),
+        Some("true")
+    );
+    assert_eq!(
+        git_config_get_local(repo, "difftool.prompt").as_deref(),
+        Some("true")
+    );
+    assert_eq!(
+        git_config_get_local(repo, "mergetool.trustExitCode").as_deref(),
+        Some("false")
+    );
+    assert_eq!(
+        git_config_get_local(repo, "difftool.trustExitCode").as_deref(),
+        Some("false")
+    );
+    assert_eq!(
+        git_config_get_local(repo, "mergetool.guiDefault").as_deref(),
+        Some("false")
+    );
+    assert_eq!(
+        git_config_get_local(repo, "difftool.guiDefault").as_deref(),
+        Some("false")
+    );
+
+    assert_eq!(git_config_get_local(repo, "mergetool.gitcomet.cmd"), None);
+    assert_eq!(git_config_get_local(repo, "difftool.gitcomet.cmd"), None);
+    assert_eq!(
+        git_config_get_local(repo, "mergetool.gitcomet-gui.cmd"),
+        None
+    );
+    assert_eq!(
+        git_config_get_local(repo, "difftool.gitcomet-gui.cmd"),
+        None
+    );
+    assert_eq!(
+        git_config_get_local(repo, "gitcomet.backup.merge-tool"),
+        None
+    );
+    assert_eq!(
+        git_config_get_local(repo, "gitcomet.backup.diff-tool"),
+        None
+    );
+}
+
+#[test]
+fn setup_local_is_idempotent_and_preserves_original_backup_state() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = dir.path();
+
+    setup_e2e_init(repo);
+    git_config_set_local(repo, "merge.tool", "meld");
+
+    let setup1 = run_gitcomet_in_dir(repo, ["setup", "--local"]);
+    let setup1_text = output_text(&setup1);
+    assert_eq!(
+        setup1.status.code(),
+        Some(0),
+        "first setup failed\n{setup1_text}"
+    );
+
+    let setup2 = run_gitcomet_in_dir(repo, ["setup", "--local"]);
+    let setup2_text = output_text(&setup2);
+    assert_eq!(
+        setup2.status.code(),
+        Some(0),
+        "second setup failed\n{setup2_text}"
+    );
+
+    let uninstall = run_gitcomet_in_dir(repo, ["uninstall", "--local"]);
+    let uninstall_text = output_text(&uninstall);
+    assert_eq!(
+        uninstall.status.code(),
+        Some(0),
+        "uninstall failed\n{uninstall_text}"
+    );
+
+    assert_eq!(
+        git_config_get_local(repo, "merge.tool").as_deref(),
+        Some("meld")
+    );
+}
+
+#[test]
+fn uninstall_local_preserves_user_changes_made_after_setup() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = dir.path();
+
+    setup_e2e_init(repo);
+    // Pre-setup values.
+    git_config_set_local(repo, "merge.tool", "meld");
+    git_config_set_local(repo, "difftool.prompt", "true");
+
+    let setup = run_gitcomet_in_dir(repo, ["setup", "--local"]);
+    let setup_text = output_text(&setup);
+    assert_eq!(setup.status.code(), Some(0), "setup failed\n{setup_text}");
+
+    // User edits after setup should be preserved by uninstall.
+    git_config_set_local(repo, "merge.tool", "vimdiff");
+    git_config_set_local(repo, "difftool.prompt", "true");
+
+    let uninstall = run_gitcomet_in_dir(repo, ["uninstall", "--local"]);
+    let uninstall_text = output_text(&uninstall);
+    assert_eq!(
+        uninstall.status.code(),
+        Some(0),
+        "uninstall failed\n{uninstall_text}"
+    );
+
+    assert_eq!(
+        git_config_get_local(repo, "merge.tool").as_deref(),
+        Some("vimdiff")
+    );
+    assert_eq!(
+        git_config_get_local(repo, "difftool.prompt").as_deref(),
+        Some("true")
+    );
+    assert_eq!(git_config_get_local(repo, "mergetool.gitcomet.cmd"), None);
+    assert_eq!(git_config_get_local(repo, "difftool.gitcomet.cmd"), None);
+    assert_eq!(
+        git_config_get_local(repo, "gitcomet.backup.merge-tool"),
+        None
+    );
+    assert_eq!(
+        git_config_get_local(repo, "gitcomet.backup.difftool-prompt"),
+        None
+    );
+}
+
+#[test]
+fn uninstall_local_is_idempotent() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = dir.path();
+
+    setup_e2e_init(repo);
+    let setup = run_gitcomet_in_dir(repo, ["setup", "--local"]);
+    let setup_text = output_text(&setup);
+    assert_eq!(setup.status.code(), Some(0), "setup failed\n{setup_text}");
+
+    let uninstall1 = run_gitcomet_in_dir(repo, ["uninstall", "--local"]);
+    let uninstall1_text = output_text(&uninstall1);
+    assert_eq!(
+        uninstall1.status.code(),
+        Some(0),
+        "first uninstall failed\n{uninstall1_text}"
+    );
+
+    let uninstall2 = run_gitcomet_in_dir(repo, ["uninstall", "--local"]);
+    let uninstall2_text = output_text(&uninstall2);
+    assert_eq!(
+        uninstall2.status.code(),
+        Some(0),
+        "second uninstall failed\n{uninstall2_text}"
+    );
+
+    assert_eq!(git_config_get_local(repo, "merge.tool"), None);
+    assert_eq!(git_config_get_local(repo, "diff.tool"), None);
+    assert_eq!(git_config_get_local(repo, "mergetool.gitcomet.cmd"), None);
+    assert_eq!(git_config_get_local(repo, "difftool.gitcomet.cmd"), None);
+}
+
 // ── Auto-resolve mode E2E ───────────────────────────────────────────
 
 #[test]
@@ -2608,7 +2950,7 @@ fn version_flag_exits_zero() {
 
 #[test]
 fn subcommand_help_exits_zero() {
-    for subcmd in ["difftool", "mergetool", "setup"] {
+    for subcmd in ["difftool", "mergetool", "setup", "uninstall"] {
         let out = run_gitcomet([subcmd, "--help"]);
         assert_eq!(out.status.code(), Some(0), "{subcmd} --help should exit 0");
     }
