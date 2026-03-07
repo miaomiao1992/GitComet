@@ -36,6 +36,9 @@ pub enum Effect {
     LoadTags {
         repo_id: RepoId,
     },
+    LoadRemoteTags {
+        repo_id: RepoId,
+    },
     LoadStashes {
         repo_id: RepoId,
         limit: usize,
@@ -214,6 +217,12 @@ pub enum Effect {
         repo_id: RepoId,
         prune: bool,
     },
+    PruneMergedBranches {
+        repo_id: RepoId,
+    },
+    PruneLocalTags {
+        repo_id: RepoId,
+    },
     Pull {
         repo_id: RepoId,
         mode: PullMode,
@@ -268,6 +277,16 @@ pub enum Effect {
     },
     DeleteTag {
         repo_id: RepoId,
+        name: String,
+    },
+    PushTag {
+        repo_id: RepoId,
+        remote: String,
+        name: String,
+    },
+    DeleteRemoteTag {
+        repo_id: RepoId,
+        remote: String,
         name: String,
     },
     AddRemote {

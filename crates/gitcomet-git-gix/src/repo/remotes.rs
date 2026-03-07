@@ -4,6 +4,7 @@ use gitcomet_core::domain::{Remote, RemoteBranch};
 use gitcomet_core::error::{Error, ErrorKind};
 use gitcomet_core::services::{CommandOutput, PullMode, RemoteUrlKind, Result};
 use gix::bstr::ByteSlice as _;
+use std::collections::HashSet;
 use std::process::Command;
 use std::str;
 
@@ -403,5 +404,127 @@ impl GixRepo {
         let _ = prune.output();
 
         Ok(output)
+    }
+
+    pub(super) fn prune_merged_branches_with_output_impl(&self) -> Result<CommandOutput> {
+        let fetch_output = self.fetch_all_with_output_impl(true)?;
+
+        let mut merged_cmd = Command::new("git");
+        merged_cmd
+            .arg("-C")
+            .arg(&self.spec.workdir)
+            .arg("for-each-ref")
+            .arg("--format=%(refname:short)")
+            .arg("--merged=HEAD")
+            .arg("refs/heads");
+        let merged_output =
+            run_git_capture(merged_cmd, "git for-each-ref --merged=HEAD refs/heads")?;
+        let merged: HashSet<String> = merged_output
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .map(ToOwned::to_owned)
+            .collect();
+
+        let mut branches_cmd = Command::new("git");
+        branches_cmd
+            .arg("-C")
+            .arg(&self.spec.workdir)
+            .arg("for-each-ref")
+            .arg("--format=%(refname:short)\t%(upstream:short)")
+            .arg("refs/heads");
+        let branches_output = run_git_capture(
+            branches_cmd,
+            "git for-each-ref --format=%(refname:short)\\t%(upstream:short) refs/heads",
+        )?;
+
+        let current_branch = self.current_branch_name()?;
+        let mut deleted: Vec<String> = Vec::new();
+        let mut deleted_outputs: Vec<CommandOutput> = Vec::new();
+
+        for line in branches_output
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+        {
+            let (branch, upstream) = line.split_once('\t').unwrap_or((line, ""));
+            if branch.is_empty() || upstream.is_empty() {
+                continue;
+            }
+            if current_branch.as_deref() == Some(branch) {
+                continue;
+            }
+            if !merged.contains(branch) {
+                continue;
+            }
+
+            let tracking_ref = format!("refs/remotes/{upstream}");
+            let tracking_exists = Command::new("git")
+                .arg("-C")
+                .arg(&self.spec.workdir)
+                .arg("show-ref")
+                .arg("--verify")
+                .arg("--quiet")
+                .arg(&tracking_ref)
+                .output()
+                .map_err(|e| Error::new(ErrorKind::Io(e.kind())))?
+                .status
+                .success();
+
+            if tracking_exists {
+                continue;
+            }
+
+            let mut delete_cmd = Command::new("git");
+            delete_cmd
+                .arg("-C")
+                .arg(&self.spec.workdir)
+                .arg("branch")
+                .arg("-d")
+                .arg(branch);
+            let output = run_git_with_output(delete_cmd, &format!("git branch -d {branch}"))?;
+            deleted.push(branch.to_string());
+            deleted_outputs.push(output);
+        }
+
+        let mut stdout = String::new();
+        let mut stderr = String::new();
+        if !fetch_output.stdout.is_empty() {
+            stdout.push_str(&fetch_output.stdout);
+        }
+        if !fetch_output.stderr.is_empty() {
+            stderr.push_str(&fetch_output.stderr);
+        }
+        for output in &deleted_outputs {
+            if !output.stdout.is_empty() {
+                stdout.push_str(&output.stdout);
+            }
+            if !output.stderr.is_empty() {
+                stderr.push_str(&output.stderr);
+            }
+        }
+        if deleted.is_empty() {
+            if !stdout.ends_with('\n') && !stdout.is_empty() {
+                stdout.push('\n');
+            }
+            stdout.push_str("No merged local branches to prune.\n");
+        } else {
+            if !stdout.ends_with('\n') && !stdout.is_empty() {
+                stdout.push('\n');
+            }
+            stdout.push_str("Pruned merged local branches:\n");
+            for branch in deleted {
+                stdout.push_str("- ");
+                stdout.push_str(&branch);
+                stdout.push('\n');
+            }
+        }
+
+        Ok(CommandOutput {
+            command: "git prune merged branches".to_string(),
+            stdout,
+            stderr,
+            exit_code: Some(0),
+        })
     }
 }

@@ -331,6 +331,7 @@ pub(super) fn repo_opened_ok(
         repo_state.set_upstream_divergence(Loadable::Loading);
         repo_state.set_branches(Loadable::Loading);
         repo_state.set_tags(Loadable::Loading);
+        repo_state.set_remote_tags(Loadable::Loading);
         repo_state.set_remotes(Loadable::Loading);
         repo_state.set_remote_branches(Loadable::Loading);
         repo_state.set_status(Loadable::Loading);

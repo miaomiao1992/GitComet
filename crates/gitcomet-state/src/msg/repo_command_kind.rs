@@ -5,6 +5,8 @@ use std::path::PathBuf;
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RepoCommandKind {
     FetchAll,
+    PruneMergedBranches,
+    PruneLocalTags,
     Pull {
         mode: PullMode,
     },
@@ -40,6 +42,14 @@ pub enum RepoCommandKind {
         target: String,
     },
     DeleteTag {
+        name: String,
+    },
+    PushTag {
+        remote: String,
+        name: String,
+    },
+    DeleteRemoteTag {
+        remote: String,
         name: String,
     },
     AddRemote {

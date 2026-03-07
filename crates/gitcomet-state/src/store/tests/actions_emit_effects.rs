@@ -30,6 +30,22 @@ fn pull_and_push_mark_in_flight_until_command_finished() {
     reduce(&mut repos, &id_alloc, &mut state, Msg::FetchAll { repo_id });
     assert_eq!(state.repos[0].pull_in_flight, 2);
 
+    reduce(
+        &mut repos,
+        &id_alloc,
+        &mut state,
+        Msg::PruneMergedBranches { repo_id },
+    );
+    assert_eq!(state.repos[0].pull_in_flight, 3);
+
+    reduce(
+        &mut repos,
+        &id_alloc,
+        &mut state,
+        Msg::PruneLocalTags { repo_id },
+    );
+    assert_eq!(state.repos[0].pull_in_flight, 4);
+
     reduce(&mut repos, &id_alloc, &mut state, Msg::Push { repo_id });
     assert_eq!(state.repos[0].push_in_flight, 1);
 
@@ -49,13 +65,37 @@ fn pull_and_push_mark_in_flight_until_command_finished() {
         &mut repos,
         &id_alloc,
         &mut state,
+        Msg::PushTag {
+            repo_id,
+            remote: "origin".to_string(),
+            name: "v1.0.0".to_string(),
+        },
+    );
+    assert_eq!(state.repos[0].push_in_flight, 3);
+
+    reduce(
+        &mut repos,
+        &id_alloc,
+        &mut state,
+        Msg::DeleteRemoteTag {
+            repo_id,
+            remote: "origin".to_string(),
+            name: "v1.0.0".to_string(),
+        },
+    );
+    assert_eq!(state.repos[0].push_in_flight, 4);
+
+    reduce(
+        &mut repos,
+        &id_alloc,
+        &mut state,
         Msg::RepoCommandFinished {
             repo_id,
             command: RepoCommandKind::FetchAll,
             result: Ok(CommandOutput::empty_success("git fetch --all")),
         },
     );
-    assert_eq!(state.repos[0].pull_in_flight, 1);
+    assert_eq!(state.repos[0].pull_in_flight, 3);
 
     reduce(
         &mut repos,
@@ -67,6 +107,30 @@ fn pull_and_push_mark_in_flight_until_command_finished() {
                 mode: PullMode::Default,
             },
             result: Ok(CommandOutput::empty_success("git pull")),
+        },
+    );
+    assert_eq!(state.repos[0].pull_in_flight, 2);
+
+    reduce(
+        &mut repos,
+        &id_alloc,
+        &mut state,
+        Msg::RepoCommandFinished {
+            repo_id,
+            command: RepoCommandKind::PruneMergedBranches,
+            result: Ok(CommandOutput::empty_success("git prune merged branches")),
+        },
+    );
+    assert_eq!(state.repos[0].pull_in_flight, 1);
+
+    reduce(
+        &mut repos,
+        &id_alloc,
+        &mut state,
+        Msg::RepoCommandFinished {
+            repo_id,
+            command: RepoCommandKind::PruneLocalTags,
+            result: Ok(CommandOutput::empty_success("git prune local tags")),
         },
     );
     assert_eq!(state.repos[0].pull_in_flight, 0);
@@ -81,7 +145,7 @@ fn pull_and_push_mark_in_flight_until_command_finished() {
             result: Ok(CommandOutput::empty_success("git push")),
         },
     );
-    assert_eq!(state.repos[0].push_in_flight, 1);
+    assert_eq!(state.repos[0].push_in_flight, 3);
 
     reduce(
         &mut repos,
@@ -95,6 +159,40 @@ fn pull_and_push_mark_in_flight_until_command_finished() {
             },
             result: Ok(CommandOutput::empty_success(
                 "git push origin --delete feature",
+            )),
+        },
+    );
+    assert_eq!(state.repos[0].push_in_flight, 2);
+
+    reduce(
+        &mut repos,
+        &id_alloc,
+        &mut state,
+        Msg::RepoCommandFinished {
+            repo_id,
+            command: RepoCommandKind::PushTag {
+                remote: "origin".to_string(),
+                name: "v1.0.0".to_string(),
+            },
+            result: Ok(CommandOutput::empty_success(
+                "git push origin refs/tags/v1.0.0",
+            )),
+        },
+    );
+    assert_eq!(state.repos[0].push_in_flight, 1);
+
+    reduce(
+        &mut repos,
+        &id_alloc,
+        &mut state,
+        Msg::RepoCommandFinished {
+            repo_id,
+            command: RepoCommandKind::DeleteRemoteTag {
+                remote: "origin".to_string(),
+                name: "v1.0.0".to_string(),
+            },
+            result: Ok(CommandOutput::empty_success(
+                "git push origin --delete refs/tags/v1.0.0",
             )),
         },
     );
@@ -698,6 +796,36 @@ fn create_and_delete_tag_emit_effects() {
         effects.as_slice(),
         [Effect::DeleteTag { repo_id: RepoId(1), name }] if name == "v1.0.0"
     ));
+
+    let effects = reduce(
+        &mut repos,
+        &id_alloc,
+        &mut state,
+        Msg::PushTag {
+            repo_id: RepoId(1),
+            remote: "origin".to_string(),
+            name: "v1.0.0".to_string(),
+        },
+    );
+    assert!(matches!(
+        effects.as_slice(),
+        [Effect::PushTag { repo_id: RepoId(1), remote, name }] if remote == "origin" && name == "v1.0.0"
+    ));
+
+    let effects = reduce(
+        &mut repos,
+        &id_alloc,
+        &mut state,
+        Msg::DeleteRemoteTag {
+            repo_id: RepoId(1),
+            remote: "origin".to_string(),
+            name: "v1.0.0".to_string(),
+        },
+    );
+    assert!(matches!(
+        effects.as_slice(),
+        [Effect::DeleteRemoteTag { repo_id: RepoId(1), remote, name }] if remote == "origin" && name == "v1.0.0"
+    ));
 }
 
 #[test]
@@ -908,6 +1036,28 @@ fn repo_operations_emit_effects() {
             repo_id: RepoId(1),
             ..
         }]
+    ));
+
+    let prune_branches = reduce(
+        &mut repos,
+        &id_alloc,
+        &mut state,
+        Msg::PruneMergedBranches { repo_id: RepoId(1) },
+    );
+    assert!(matches!(
+        prune_branches.as_slice(),
+        [Effect::PruneMergedBranches { repo_id: RepoId(1) }]
+    ));
+
+    let prune_tags = reduce(
+        &mut repos,
+        &id_alloc,
+        &mut state,
+        Msg::PruneLocalTags { repo_id: RepoId(1) },
+    );
+    assert!(matches!(
+        prune_tags.as_slice(),
+        [Effect::PruneLocalTags { repo_id: RepoId(1) }]
     ));
 
     let push = reduce(

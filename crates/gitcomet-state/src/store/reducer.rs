@@ -239,6 +239,12 @@ pub(super) fn reduce(
             actions_emit_effects::commit_amend(repo_id, message)
         }
         Msg::FetchAll { repo_id } => actions_emit_effects::fetch_all(repos, state, repo_id),
+        Msg::PruneMergedBranches { repo_id } => {
+            actions_emit_effects::prune_merged_branches(repos, state, repo_id)
+        }
+        Msg::PruneLocalTags { repo_id } => {
+            actions_emit_effects::prune_local_tags(repos, state, repo_id)
+        }
         Msg::Pull { repo_id, mode } => actions_emit_effects::pull(repos, state, repo_id, mode),
         Msg::PullBranch {
             repo_id,
@@ -273,6 +279,16 @@ pub(super) fn reduce(
             target,
         } => actions_emit_effects::create_tag(repo_id, name, target),
         Msg::DeleteTag { repo_id, name } => actions_emit_effects::delete_tag(repo_id, name),
+        Msg::PushTag {
+            repo_id,
+            remote,
+            name,
+        } => actions_emit_effects::push_tag(repos, state, repo_id, remote, name),
+        Msg::DeleteRemoteTag {
+            repo_id,
+            remote,
+            name,
+        } => actions_emit_effects::delete_remote_tag(repos, state, repo_id, remote, name),
         Msg::AddRemote { repo_id, name, url } => {
             actions_emit_effects::add_remote(repo_id, name, url)
         }
@@ -407,6 +423,9 @@ pub(super) fn reduce(
             result,
         } => external_and_history::log_loaded(state, repo_id, scope, cursor, result),
         Msg::TagsLoaded { repo_id, result } => effects::tags_loaded(state, repo_id, result),
+        Msg::RemoteTagsLoaded { repo_id, result } => {
+            effects::remote_tags_loaded(state, repo_id, result)
+        }
         Msg::StashesLoaded { repo_id, result } => effects::stashes_loaded(state, repo_id, result),
         Msg::ReflogLoaded { repo_id, result } => effects::reflog_loaded(state, repo_id, result),
         Msg::RebaseStateLoaded { repo_id, result } => {

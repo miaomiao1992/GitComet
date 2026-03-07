@@ -52,10 +52,6 @@ enum ContextMenuAction {
         show_date: bool,
         show_sha: bool,
     },
-    SetFetchPruneDeletedRemoteTrackingBranches {
-        repo_id: RepoId,
-        enabled: bool,
-    },
     #[allow(dead_code)]
     StagePath {
         repo_id: RepoId,
@@ -108,6 +104,12 @@ enum ContextMenuAction {
         path: std::path::PathBuf,
     },
     FetchAll {
+        repo_id: RepoId,
+    },
+    PruneMergedBranches {
+        repo_id: RepoId,
+    },
+    PruneLocalTags {
         repo_id: RepoId,
     },
     UpdateSubmodules {
@@ -178,6 +180,16 @@ enum ContextMenuAction {
     },
     DeleteTag {
         repo_id: RepoId,
+        name: String,
+    },
+    PushTag {
+        repo_id: RepoId,
+        remote: String,
+        name: String,
+    },
+    DeleteRemoteTag {
+        repo_id: RepoId,
+        remote: String,
         name: String,
     },
 }

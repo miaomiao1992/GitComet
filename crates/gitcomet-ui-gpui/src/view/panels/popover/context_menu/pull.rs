@@ -56,5 +56,19 @@ pub(super) fn model(this: &PopoverHost) -> ContextMenuModel {
             disabled,
             action: Box::new(ContextMenuAction::FetchAll { repo_id }),
         },
+        ContextMenuItem::Entry {
+            label: "Prune merged branches".into(),
+            icon: Some("🧹".into()),
+            shortcut: None,
+            disabled,
+            action: Box::new(ContextMenuAction::PruneMergedBranches { repo_id }),
+        },
+        ContextMenuItem::Entry {
+            label: "Prune local tags".into(),
+            icon: Some("🏷".into()),
+            shortcut: None,
+            disabled,
+            action: Box::new(ContextMenuAction::PruneLocalTags { repo_id }),
+        },
     ])
 }

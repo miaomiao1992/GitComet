@@ -303,6 +303,14 @@ impl std::fmt::Debug for Msg {
                 .debug_struct("FetchAll")
                 .field("repo_id", repo_id)
                 .finish(),
+            Msg::PruneMergedBranches { repo_id } => f
+                .debug_struct("PruneMergedBranches")
+                .field("repo_id", repo_id)
+                .finish(),
+            Msg::PruneLocalTags { repo_id } => f
+                .debug_struct("PruneLocalTags")
+                .field("repo_id", repo_id)
+                .finish(),
             Msg::Pull { repo_id, mode } => f
                 .debug_struct("Pull")
                 .field("repo_id", repo_id)
@@ -388,6 +396,26 @@ impl std::fmt::Debug for Msg {
             Msg::DeleteTag { repo_id, name } => f
                 .debug_struct("DeleteTag")
                 .field("repo_id", repo_id)
+                .field("name", name)
+                .finish(),
+            Msg::PushTag {
+                repo_id,
+                remote,
+                name,
+            } => f
+                .debug_struct("PushTag")
+                .field("repo_id", repo_id)
+                .field("remote", remote)
+                .field("name", name)
+                .finish(),
+            Msg::DeleteRemoteTag {
+                repo_id,
+                remote,
+                name,
+            } => f
+                .debug_struct("DeleteRemoteTag")
+                .field("repo_id", repo_id)
+                .field("remote", remote)
                 .field("name", name)
                 .finish(),
             Msg::AddRemote { repo_id, name, url } => f
@@ -602,6 +630,11 @@ impl std::fmt::Debug for Msg {
                 .finish(),
             Msg::TagsLoaded { repo_id, result } => f
                 .debug_struct("TagsLoaded")
+                .field("repo_id", repo_id)
+                .field("result", result)
+                .finish(),
+            Msg::RemoteTagsLoaded { repo_id, result } => f
+                .debug_struct("RemoteTagsLoaded")
                 .field("repo_id", repo_id)
                 .field("result", result)
                 .finish(),

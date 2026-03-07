@@ -150,6 +150,11 @@ pub trait GitRepository: Send + Sync {
             "tag listing is not implemented for this backend",
         )))
     }
+    fn list_remote_tags(&self) -> Result<Vec<RemoteTag>> {
+        Err(Error::new(ErrorKind::Unsupported(
+            "remote tag listing is not implemented for this backend",
+        )))
+    }
     fn list_remotes(&self) -> Result<Vec<Remote>>;
     fn list_remote_branches(&self) -> Result<Vec<RemoteBranch>>;
     fn status(&self) -> Result<RepoStatus>;
@@ -256,6 +261,26 @@ pub trait GitRepository: Send + Sync {
     fn delete_tag_with_output(&self, _name: &str) -> Result<CommandOutput> {
         Err(Error::new(ErrorKind::Unsupported(
             "git tag deletion is not implemented for this backend",
+        )))
+    }
+    fn prune_merged_branches_with_output(&self) -> Result<CommandOutput> {
+        Err(Error::new(ErrorKind::Unsupported(
+            "pruning merged branches is not implemented for this backend",
+        )))
+    }
+    fn prune_local_tags_with_output(&self) -> Result<CommandOutput> {
+        Err(Error::new(ErrorKind::Unsupported(
+            "pruning local tags is not implemented for this backend",
+        )))
+    }
+    fn push_tag_with_output(&self, _remote: &str, _name: &str) -> Result<CommandOutput> {
+        Err(Error::new(ErrorKind::Unsupported(
+            "pushing tags is not implemented for this backend",
+        )))
+    }
+    fn delete_remote_tag_with_output(&self, _remote: &str, _name: &str) -> Result<CommandOutput> {
+        Err(Error::new(ErrorKind::Unsupported(
+            "remote tag deletion is not implemented for this backend",
         )))
     }
 

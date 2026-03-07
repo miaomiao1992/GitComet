@@ -61,6 +61,13 @@ pub struct Tag {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RemoteTag {
+    pub remote: String,
+    pub name: String,
+    pub target: CommitId,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Upstream {
     pub remote: String,
     pub branch: String,

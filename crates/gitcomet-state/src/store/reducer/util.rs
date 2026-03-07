@@ -177,6 +177,12 @@ pub(super) fn refresh_full_effects(repo_state: &mut RepoState) -> Vec<Effect> {
     }
     if repo_state
         .loads_in_flight
+        .request(RepoLoadsInFlight::REMOTE_TAGS)
+    {
+        effects.push(Effect::LoadRemoteTags { repo_id });
+    }
+    if repo_state
+        .loads_in_flight
         .request(RepoLoadsInFlight::REMOTES)
     {
         effects.push(Effect::LoadRemotes { repo_id });
@@ -381,6 +387,8 @@ fn summarize_command(
     if !ok {
         let label = match command {
             RepoCommandKind::FetchAll => "Fetch",
+            RepoCommandKind::PruneMergedBranches => "Prune merged branches",
+            RepoCommandKind::PruneLocalTags => "Prune local tags",
             RepoCommandKind::Pull { .. } => "Pull",
             RepoCommandKind::PullBranch { .. } => "Pull",
             RepoCommandKind::MergeRef { .. } => "Merge",
@@ -388,6 +396,8 @@ fn summarize_command(
             RepoCommandKind::ForcePush => "Force push",
             RepoCommandKind::PushSetUpstream { .. } => "Push",
             RepoCommandKind::DeleteRemoteBranch { .. } => "Delete remote branch",
+            RepoCommandKind::PushTag { .. } => "Push tag",
+            RepoCommandKind::DeleteRemoteTag { .. } => "Delete remote tag",
             RepoCommandKind::Reset { .. } => "Reset",
             RepoCommandKind::Rebase { .. } => "Rebase",
             RepoCommandKind::RebaseContinue => "Rebase",
@@ -444,6 +454,8 @@ fn summarize_command(
                 "Fetch: Synchronized".to_string()
             }
         }
+        RepoCommandKind::PruneMergedBranches => "Prune merged branches: Completed".to_string(),
+        RepoCommandKind::PruneLocalTags => "Prune local tags: Completed".to_string(),
         RepoCommandKind::Pull { .. } => {
             if output.stdout.contains("Already up to date") {
                 "Pull: Already up to date".to_string()
@@ -507,6 +519,16 @@ fn summarize_command(
         }
         RepoCommandKind::DeleteRemoteBranch { remote, branch } => {
             format!("Remote branch {remote}/{branch}: Deleted")
+        }
+        RepoCommandKind::PushTag { remote, name } => {
+            if output.stderr.contains("Everything up-to-date") {
+                format!("Tag {name} → {remote}: Already up-to-date")
+            } else {
+                format!("Tag {name} → {remote}: Pushed")
+            }
+        }
+        RepoCommandKind::DeleteRemoteTag { remote, name } => {
+            format!("Tag {name} on {remote}: Deleted")
         }
         RepoCommandKind::CheckoutConflict { side, .. } => match side {
             ConflictSide::Ours => "Resolved using ours".to_string(),

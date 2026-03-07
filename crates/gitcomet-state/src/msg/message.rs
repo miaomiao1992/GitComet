@@ -279,6 +279,12 @@ pub enum Msg {
     FetchAll {
         repo_id: RepoId,
     },
+    PruneMergedBranches {
+        repo_id: RepoId,
+    },
+    PruneLocalTags {
+        repo_id: RepoId,
+    },
     Pull {
         repo_id: RepoId,
         mode: PullMode,
@@ -333,6 +339,16 @@ pub enum Msg {
     },
     DeleteTag {
         repo_id: RepoId,
+        name: String,
+    },
+    PushTag {
+        repo_id: RepoId,
+        remote: String,
+        name: String,
+    },
+    DeleteRemoteTag {
+        repo_id: RepoId,
+        remote: String,
         name: String,
     },
     AddRemote {
@@ -470,6 +486,10 @@ pub enum Msg {
     TagsLoaded {
         repo_id: RepoId,
         result: Result<Vec<Tag>, Error>,
+    },
+    RemoteTagsLoaded {
+        repo_id: RepoId,
+        result: Result<Vec<RemoteTag>, Error>,
     },
     StashesLoaded {
         repo_id: RepoId,

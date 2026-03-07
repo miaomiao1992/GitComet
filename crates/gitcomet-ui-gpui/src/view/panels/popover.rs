@@ -2173,6 +2173,224 @@ mod tests {
     }
 
     #[gpui::test]
+    fn tag_menu_lists_remote_push_and_delete_entries(cx: &mut gpui::TestAppContext) {
+        let (store, events) = AppStore::new(Arc::new(TestBackend));
+        let (view, cx) =
+            cx.add_window_view(|window, cx| GitCometView::new(store, events, None, window, cx));
+
+        let repo_id = RepoId(20);
+        let commit_id = CommitId("fedcba9876543210".to_string());
+        let workdir = std::env::temp_dir().join(format!(
+            "gitcomet_ui_test_{}_tag_menu_remote",
+            std::process::id()
+        ));
+
+        cx.update(|_window, app| {
+            view.update(app, |this, cx| {
+                let mut repo = RepoState::new_opening(
+                    repo_id,
+                    gitcomet_core::domain::RepoSpec {
+                        workdir: workdir.clone(),
+                    },
+                );
+                repo.tags = Loadable::Ready(Arc::new(vec![gitcomet_core::domain::Tag {
+                    name: "v2.0.0".to_string(),
+                    target: commit_id.clone(),
+                }]));
+                repo.remotes = Loadable::Ready(Arc::new(vec![
+                    gitcomet_core::domain::Remote {
+                        name: "upstream".to_string(),
+                        url: None,
+                    },
+                    gitcomet_core::domain::Remote {
+                        name: "origin".to_string(),
+                        url: None,
+                    },
+                ]));
+                repo.remote_tags =
+                    Loadable::Ready(Arc::new(vec![gitcomet_core::domain::RemoteTag {
+                        remote: "origin".to_string(),
+                        name: "v2.0.0".to_string(),
+                        target: commit_id.clone(),
+                    }]));
+
+                let state = Arc::new(AppState {
+                    repos: vec![repo],
+                    active_repo: Some(repo_id),
+                    ..Default::default()
+                });
+                this.state = Arc::clone(&state);
+                this._ui_model
+                    .update(cx, |model, cx| model.set_state(state, cx));
+                cx.notify();
+            });
+        });
+
+        cx.update(|_window, app| {
+            let model = view
+                .update(app, |this, cx| {
+                    this.popover_host.update(cx, |host, cx| {
+                        host.context_menu_model(
+                            &PopoverKind::TagMenu {
+                                repo_id,
+                                commit_id: commit_id.clone(),
+                            },
+                            cx,
+                        )
+                    })
+                })
+                .expect("expected tag context menu model");
+
+            for remote in ["origin", "upstream"] {
+                let push_label = format!("Push tag v2.0.0 to {remote}");
+                let push_action = model.items.iter().find_map(|item| match item {
+                    ContextMenuItem::Entry { label, action, .. }
+                        if label.as_ref() == push_label.as_str() =>
+                    {
+                        Some((**action).clone())
+                    }
+                    _ => None,
+                });
+                match push_action {
+                    Some(ContextMenuAction::PushTag {
+                        repo_id: rid,
+                        remote: r,
+                        name,
+                    }) => {
+                        assert_eq!(rid, repo_id);
+                        assert_eq!(r, remote);
+                        assert_eq!(name, "v2.0.0");
+                    }
+                    _ => panic!("expected Push tag action for remote {remote}"),
+                }
+            }
+
+            let delete_label = "Delete tag v2.0.0 from origin";
+            let delete_action = model.items.iter().find_map(|item| match item {
+                ContextMenuItem::Entry { label, action, .. } if label.as_ref() == delete_label => {
+                    Some((**action).clone())
+                }
+                _ => None,
+            });
+            match delete_action {
+                Some(ContextMenuAction::DeleteRemoteTag {
+                    repo_id: rid,
+                    remote: r,
+                    name,
+                }) => {
+                    assert_eq!(rid, repo_id);
+                    assert_eq!(r, "origin");
+                    assert_eq!(name, "v2.0.0");
+                }
+                _ => panic!("expected Delete remote tag action for origin"),
+            }
+
+            let has_upstream_delete = model.items.iter().any(|item| match item {
+                ContextMenuItem::Entry { label, .. } => {
+                    label.as_ref() == "Delete tag v2.0.0 from upstream"
+                }
+                _ => false,
+            });
+            assert!(
+                !has_upstream_delete,
+                "did not expect delete remote tag action for upstream without tag"
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn remote_menu_lists_fetch_and_prune_actions(cx: &mut gpui::TestAppContext) {
+        let (store, events) = AppStore::new(Arc::new(TestBackend));
+        let (view, cx) =
+            cx.add_window_view(|window, cx| GitCometView::new(store, events, None, window, cx));
+
+        let repo_id = RepoId(21);
+        let remote_name = "origin".to_string();
+        let workdir = std::env::temp_dir().join(format!(
+            "gitcomet_ui_test_{}_remote_menu_prune",
+            std::process::id()
+        ));
+
+        cx.update(|_window, app| {
+            view.update(app, |this, cx| {
+                let mut repo = RepoState::new_opening(
+                    repo_id,
+                    gitcomet_core::domain::RepoSpec {
+                        workdir: workdir.clone(),
+                    },
+                );
+                repo.remotes = Loadable::Ready(Arc::new(vec![gitcomet_core::domain::Remote {
+                    name: remote_name.clone(),
+                    url: None,
+                }]));
+
+                let state = Arc::new(AppState {
+                    repos: vec![repo],
+                    active_repo: Some(repo_id),
+                    ..Default::default()
+                });
+                this.state = Arc::clone(&state);
+                this._ui_model
+                    .update(cx, |model, cx| model.set_state(state, cx));
+                cx.notify();
+            });
+        });
+
+        cx.update(|_window, app| {
+            let model = view
+                .update(app, |this, cx| {
+                    this.popover_host.update(cx, |host, cx| {
+                        host.context_menu_model(
+                            &PopoverKind::RemoteMenu {
+                                repo_id,
+                                name: remote_name.clone(),
+                            },
+                            cx,
+                        )
+                    })
+                })
+                .expect("expected remote context menu model");
+
+            let fetch = model.items.iter().find_map(|item| match item {
+                ContextMenuItem::Entry { label, action, .. } if label.as_ref() == "Fetch all" => {
+                    Some((**action).clone())
+                }
+                _ => None,
+            });
+            assert!(matches!(
+                fetch,
+                Some(ContextMenuAction::FetchAll { repo_id: rid }) if rid == repo_id
+            ));
+
+            let prune_branches = model.items.iter().find_map(|item| match item {
+                ContextMenuItem::Entry { label, action, .. }
+                    if label.as_ref() == "Prune merged branches" =>
+                {
+                    Some((**action).clone())
+                }
+                _ => None,
+            });
+            assert!(matches!(
+                prune_branches,
+                Some(ContextMenuAction::PruneMergedBranches { repo_id: rid }) if rid == repo_id
+            ));
+
+            let prune_tags = model.items.iter().find_map(|item| match item {
+                ContextMenuItem::Entry { label, action, .. }
+                    if label.as_ref() == "Prune local tags" =>
+                {
+                    Some((**action).clone())
+                }
+                _ => None,
+            });
+            assert!(matches!(
+                prune_tags,
+                Some(ContextMenuAction::PruneLocalTags { repo_id: rid }) if rid == repo_id
+            ));
+        });
+    }
+
+    #[gpui::test]
     fn status_file_menu_uses_multi_selection_for_stage(cx: &mut gpui::TestAppContext) {
         let (store, events) = AppStore::new(Arc::new(TestBackend));
         let (view, cx) =

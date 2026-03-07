@@ -162,20 +162,44 @@ pub(super) fn fetch_all(
     state: &mut AppState,
     repo_id: RepoId,
 ) -> Vec<Effect> {
-    let prune = state
-        .repos
-        .iter()
-        .find(|r| r.id == repo_id)
-        .map(|r| r.fetch_prune_deleted_remote_tracking_branches)
-        .unwrap_or(true);
-
     if repos.contains_key(&repo_id)
         && let Some(repo_state) = state.repos.iter_mut().find(|r| r.id == repo_id)
     {
         repo_state.pull_in_flight = repo_state.pull_in_flight.saturating_add(1);
         repo_state.bump_ops_rev();
     }
-    vec![Effect::FetchAll { repo_id, prune }]
+    vec![Effect::FetchAll {
+        repo_id,
+        prune: false,
+    }]
+}
+
+pub(super) fn prune_merged_branches(
+    repos: &HashMap<RepoId, Arc<dyn GitRepository>>,
+    state: &mut AppState,
+    repo_id: RepoId,
+) -> Vec<Effect> {
+    if repos.contains_key(&repo_id)
+        && let Some(repo_state) = state.repos.iter_mut().find(|r| r.id == repo_id)
+    {
+        repo_state.pull_in_flight = repo_state.pull_in_flight.saturating_add(1);
+        repo_state.bump_ops_rev();
+    }
+    vec![Effect::PruneMergedBranches { repo_id }]
+}
+
+pub(super) fn prune_local_tags(
+    repos: &HashMap<RepoId, Arc<dyn GitRepository>>,
+    state: &mut AppState,
+    repo_id: RepoId,
+) -> Vec<Effect> {
+    if repos.contains_key(&repo_id)
+        && let Some(repo_state) = state.repos.iter_mut().find(|r| r.id == repo_id)
+    {
+        repo_state.pull_in_flight = repo_state.pull_in_flight.saturating_add(1);
+        repo_state.bump_ops_rev();
+    }
+    vec![Effect::PruneLocalTags { repo_id }]
 }
 
 pub(super) fn pull(
@@ -319,6 +343,46 @@ pub(super) fn create_tag(repo_id: RepoId, name: String, target: String) -> Vec<E
 
 pub(super) fn delete_tag(repo_id: RepoId, name: String) -> Vec<Effect> {
     vec![Effect::DeleteTag { repo_id, name }]
+}
+
+pub(super) fn push_tag(
+    repos: &HashMap<RepoId, Arc<dyn GitRepository>>,
+    state: &mut AppState,
+    repo_id: RepoId,
+    remote: String,
+    name: String,
+) -> Vec<Effect> {
+    if repos.contains_key(&repo_id)
+        && let Some(repo_state) = state.repos.iter_mut().find(|r| r.id == repo_id)
+    {
+        repo_state.push_in_flight = repo_state.push_in_flight.saturating_add(1);
+        repo_state.bump_ops_rev();
+    }
+    vec![Effect::PushTag {
+        repo_id,
+        remote,
+        name,
+    }]
+}
+
+pub(super) fn delete_remote_tag(
+    repos: &HashMap<RepoId, Arc<dyn GitRepository>>,
+    state: &mut AppState,
+    repo_id: RepoId,
+    remote: String,
+    name: String,
+) -> Vec<Effect> {
+    if repos.contains_key(&repo_id)
+        && let Some(repo_state) = state.repos.iter_mut().find(|r| r.id == repo_id)
+    {
+        repo_state.push_in_flight = repo_state.push_in_flight.saturating_add(1);
+        repo_state.bump_ops_rev();
+    }
+    vec![Effect::DeleteRemoteTag {
+        repo_id,
+        remote,
+        name,
+    }]
 }
 
 pub(super) fn add_remote(repo_id: RepoId, name: String, url: String) -> Vec<Effect> {
@@ -485,6 +549,8 @@ pub(super) fn repo_command_finished(
     if let Some(repo_state) = state.repos.iter_mut().find(|r| r.id == repo_id) {
         match command {
             RepoCommandKind::FetchAll
+            | RepoCommandKind::PruneMergedBranches
+            | RepoCommandKind::PruneLocalTags
             | RepoCommandKind::Pull { .. }
             | RepoCommandKind::PullBranch { .. } => {
                 repo_state.pull_in_flight = repo_state.pull_in_flight.saturating_sub(1);
@@ -493,7 +559,9 @@ pub(super) fn repo_command_finished(
             RepoCommandKind::Push
             | RepoCommandKind::ForcePush
             | RepoCommandKind::PushSetUpstream { .. }
-            | RepoCommandKind::DeleteRemoteBranch { .. } => {
+            | RepoCommandKind::DeleteRemoteBranch { .. }
+            | RepoCommandKind::PushTag { .. }
+            | RepoCommandKind::DeleteRemoteTag { .. } => {
                 repo_state.push_in_flight = repo_state.push_in_flight.saturating_sub(1);
                 repo_state.bump_ops_rev();
             }

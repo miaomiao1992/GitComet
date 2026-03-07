@@ -4,7 +4,7 @@ use crate::msg::Effect;
 use gitcomet_core::conflict_session::{ConflictPayload, ConflictSession};
 use gitcomet_core::domain::{
     Branch, CommitDetails, CommitId, FileStatusKind, LogPage, ReflogEntry, Remote, RemoteBranch,
-    RepoStatus, StashEntry, Submodule, Tag, UpstreamDivergence, Worktree,
+    RemoteTag, RepoStatus, StashEntry, Submodule, Tag, UpstreamDivergence, Worktree,
 };
 use gitcomet_core::error::Error;
 use std::path::PathBuf;
@@ -520,6 +520,35 @@ pub(super) fn tags_loaded(
         repo_state.set_tags(tags);
         if repo_state.loads_in_flight.finish(RepoLoadsInFlight::TAGS) {
             effects.push(Effect::LoadTags { repo_id });
+        }
+    }
+    effects
+}
+
+pub(super) fn remote_tags_loaded(
+    state: &mut AppState,
+    repo_id: RepoId,
+    result: std::result::Result<Vec<RemoteTag>, Error>,
+) -> Vec<Effect> {
+    let mut effects = Vec::new();
+    if let Some(repo_state) = state.repos.iter_mut().find(|r| r.id == repo_id) {
+        let remote_tags = match result {
+            Ok(v) => Loadable::Ready(v),
+            Err(e) => {
+                if matches!(e.kind(), gitcomet_core::error::ErrorKind::Unsupported(_)) {
+                    Loadable::Ready(Vec::new())
+                } else {
+                    push_diagnostic(repo_state, DiagnosticKind::Error, e.to_string());
+                    Loadable::Error(e.to_string())
+                }
+            }
+        };
+        repo_state.set_remote_tags(remote_tags);
+        if repo_state
+            .loads_in_flight
+            .finish(RepoLoadsInFlight::REMOTE_TAGS)
+        {
+            effects.push(Effect::LoadRemoteTags { repo_id });
         }
     }
     effects

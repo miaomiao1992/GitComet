@@ -51,6 +51,9 @@ pub(super) fn schedule_effect(
         Effect::LoadTags { repo_id } => {
             repo_load::schedule_load_tags(executor, repos, msg_tx, repo_id)
         }
+        Effect::LoadRemoteTags { repo_id } => {
+            repo_load::schedule_load_remote_tags(executor, repos, msg_tx, repo_id)
+        }
         Effect::LoadStashes { repo_id, limit } => {
             repo_load::schedule_load_stashes(executor, repos, msg_tx, repo_id, limit);
         }
@@ -214,6 +217,12 @@ pub(super) fn schedule_effect(
         Effect::FetchAll { repo_id, prune } => {
             repo_commands::schedule_fetch_all(executor, repos, msg_tx, repo_id, prune)
         }
+        Effect::PruneMergedBranches { repo_id } => {
+            repo_commands::schedule_prune_merged_branches(executor, repos, msg_tx, repo_id)
+        }
+        Effect::PruneLocalTags { repo_id } => {
+            repo_commands::schedule_prune_local_tags(executor, repos, msg_tx, repo_id)
+        }
         Effect::Pull { repo_id, mode } => {
             repo_commands::schedule_pull(executor, repos, msg_tx, repo_id, mode)
         }
@@ -268,6 +277,18 @@ pub(super) fn schedule_effect(
         Effect::DeleteTag { repo_id, name } => {
             repo_commands::schedule_delete_tag(executor, repos, msg_tx, repo_id, name);
         }
+        Effect::PushTag {
+            repo_id,
+            remote,
+            name,
+        } => repo_commands::schedule_push_tag(executor, repos, msg_tx, repo_id, remote, name),
+        Effect::DeleteRemoteTag {
+            repo_id,
+            remote,
+            name,
+        } => repo_commands::schedule_delete_remote_tag(
+            executor, repos, msg_tx, repo_id, remote, name,
+        ),
         Effect::AddRemote { repo_id, name, url } => {
             repo_commands::schedule_add_remote(executor, repos, msg_tx, repo_id, name, url);
         }

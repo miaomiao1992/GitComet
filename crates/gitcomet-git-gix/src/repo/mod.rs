@@ -1,7 +1,7 @@
 use gitcomet_core::conflict_session::ConflictSession;
 use gitcomet_core::domain::{
     Branch, CommitDetails, CommitId, DiffTarget, FileDiffImage, FileDiffText, LogCursor, LogPage,
-    ReflogEntry, Remote, RemoteBranch, RepoSpec, RepoStatus, StashEntry, Submodule, Tag,
+    ReflogEntry, Remote, RemoteBranch, RemoteTag, RepoSpec, RepoStatus, StashEntry, Submodule, Tag,
     UpstreamDivergence, Worktree,
 };
 use gitcomet_core::services::{
@@ -83,6 +83,10 @@ impl GitRepository for GixRepo {
 
     fn list_tags(&self) -> Result<Vec<Tag>> {
         self.list_tags_impl()
+    }
+
+    fn list_remote_tags(&self) -> Result<Vec<RemoteTag>> {
+        self.list_remote_tags_impl()
     }
 
     fn list_remotes(&self) -> Result<Vec<Remote>> {
@@ -263,6 +267,22 @@ impl GitRepository for GixRepo {
 
     fn delete_tag_with_output(&self, name: &str) -> Result<CommandOutput> {
         self.delete_tag_with_output_impl(name)
+    }
+
+    fn prune_merged_branches_with_output(&self) -> Result<CommandOutput> {
+        self.prune_merged_branches_with_output_impl()
+    }
+
+    fn prune_local_tags_with_output(&self) -> Result<CommandOutput> {
+        self.prune_local_tags_with_output_impl()
+    }
+
+    fn push_tag_with_output(&self, remote: &str, name: &str) -> Result<CommandOutput> {
+        self.push_tag_with_output_impl(remote, name)
+    }
+
+    fn delete_remote_tag_with_output(&self, remote: &str, name: &str) -> Result<CommandOutput> {
+        self.delete_remote_tag_with_output_impl(remote, name)
     }
 
     fn add_remote_with_output(&self, name: &str, url: &str) -> Result<CommandOutput> {

@@ -223,6 +223,12 @@ fn hash_repo_for_popover<H: Hasher>(repo: &RepoState, popover: &PopoverKind, has
             repo.remote_branches_rev.hash(hasher);
         }
 
+        PopoverKind::TagMenu { .. } => {
+            repo.tags_rev.hash(hasher);
+            repo.remotes_rev.hash(hasher);
+            repo.remote_tags_rev.hash(hasher);
+        }
+
         // Most prompt-style popovers don't require live state updates.
         PopoverKind::MergeAbortConfirm { .. }
         | PopoverKind::ConflictSaveStageConfirm { .. }
@@ -233,7 +239,6 @@ fn hash_repo_for_popover<H: Hasher>(repo: &RepoState, popover: &PopoverKind, has
         | PopoverKind::CommitMenu { .. }
         | PopoverKind::CommitFileMenu { .. }
         | PopoverKind::StatusFileMenu { .. }
-        | PopoverKind::TagMenu { .. }
         | PopoverKind::HistoryColumnSettings
         | PopoverKind::ConflictResolverInputRowMenu { .. }
         | PopoverKind::ConflictResolverChunkMenu { .. }

@@ -430,6 +430,7 @@ fn repo_opened_ok_sets_loading_and_emits_refresh_effects() {
     assert!(repo_state.head_branch.is_loading());
     assert!(repo_state.branches.is_loading());
     assert!(repo_state.tags.is_loading());
+    assert!(repo_state.remote_tags.is_loading());
     assert!(repo_state.remotes.is_loading());
     assert!(repo_state.remote_branches.is_loading());
     assert!(repo_state.status.is_loading());
@@ -450,6 +451,7 @@ fn repo_opened_ok_sets_loading_and_emits_refresh_effects() {
             Effect::LoadLog { .. },
             Effect::LoadBranches { .. },
             Effect::LoadTags { .. },
+            Effect::LoadRemoteTags { .. },
             Effect::LoadRemotes { .. },
             Effect::LoadRemoteBranches { .. },
             Effect::LoadStashes { .. },

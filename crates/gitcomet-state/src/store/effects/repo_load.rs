@@ -132,6 +132,20 @@ pub(super) fn schedule_load_tags(
     });
 }
 
+pub(super) fn schedule_load_remote_tags(
+    executor: &TaskExecutor,
+    repos: &RepoMap,
+    msg_tx: mpsc::Sender<Msg>,
+    repo_id: RepoId,
+) {
+    spawn_with_repo(executor, repos, repo_id, msg_tx, move |repo, msg_tx| {
+        let _ = msg_tx.send(Msg::RemoteTagsLoaded {
+            repo_id,
+            result: repo.list_remote_tags(),
+        });
+    });
+}
+
 pub(super) fn schedule_load_stashes(
     executor: &TaskExecutor,
     repos: &RepoMap,

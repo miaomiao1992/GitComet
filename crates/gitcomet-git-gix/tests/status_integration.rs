@@ -3072,6 +3072,182 @@ fn create_and_delete_local_tag() {
 }
 
 #[test]
+fn push_and_delete_remote_tag() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = dir.path().join("repo");
+    let origin = dir.path().join("origin.git");
+    fs::create_dir_all(&repo).unwrap();
+    fs::create_dir_all(&origin).unwrap();
+
+    run_git(&repo, &["init", "-b", "main"]);
+    run_git(&repo, &["config", "user.email", "you@example.com"]);
+    run_git(&repo, &["config", "user.name", "You"]);
+    run_git(&repo, &["config", "commit.gpgsign", "false"]);
+
+    write(&repo, "a.txt", "one\n");
+    run_git(&repo, &["add", "a.txt"]);
+    run_git(
+        &repo,
+        &["-c", "commit.gpgsign=false", "commit", "-m", "init"],
+    );
+
+    run_git(&origin, &["init", "--bare", "-b", "main"]);
+    run_git(
+        &repo,
+        &["remote", "add", "origin", origin.to_string_lossy().as_ref()],
+    );
+
+    let backend = GixBackend;
+    let opened = backend.open(&repo).unwrap();
+
+    opened.create_tag_with_output("v1.0.0", "HEAD").unwrap();
+    opened.push_tag_with_output("origin", "v1.0.0").unwrap();
+    run_git(
+        &origin,
+        &["show-ref", "--verify", "--quiet", "refs/tags/v1.0.0"],
+    );
+
+    opened
+        .delete_remote_tag_with_output("origin", "v1.0.0")
+        .unwrap();
+    let deleted = git_command()
+        .arg("-C")
+        .arg(&origin)
+        .args(["show-ref", "--verify", "--quiet", "refs/tags/v1.0.0"])
+        .status()
+        .expect("show-ref");
+    assert!(!deleted.success(), "expected remote tag to be deleted");
+}
+
+#[test]
+fn prune_merged_branches_deletes_local_branches_missing_on_remote() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = dir.path().join("repo");
+    let origin = dir.path().join("origin.git");
+    fs::create_dir_all(&repo).unwrap();
+    fs::create_dir_all(&origin).unwrap();
+
+    run_git(&repo, &["init", "-b", "main"]);
+    run_git(&repo, &["config", "user.email", "you@example.com"]);
+    run_git(&repo, &["config", "user.name", "You"]);
+    run_git(&repo, &["config", "commit.gpgsign", "false"]);
+
+    write(&repo, "a.txt", "one\n");
+    run_git(&repo, &["add", "a.txt"]);
+    run_git(
+        &repo,
+        &["-c", "commit.gpgsign=false", "commit", "-m", "init"],
+    );
+
+    run_git(&origin, &["init", "--bare", "-b", "main"]);
+    run_git(
+        &repo,
+        &["remote", "add", "origin", origin.to_string_lossy().as_ref()],
+    );
+    run_git(&repo, &["push", "-u", "origin", "main"]);
+
+    run_git(&repo, &["checkout", "-b", "feature"]);
+    write(&repo, "feature.txt", "feature\n");
+    run_git(&repo, &["add", "feature.txt"]);
+    run_git(
+        &repo,
+        &["-c", "commit.gpgsign=false", "commit", "-m", "feature"],
+    );
+    run_git(&repo, &["push", "-u", "origin", "feature"]);
+
+    run_git(&repo, &["checkout", "main"]);
+    run_git(
+        &repo,
+        &[
+            "-c",
+            "commit.gpgsign=false",
+            "merge",
+            "--no-ff",
+            "feature",
+            "-m",
+            "merge feature",
+        ],
+    );
+    run_git(&repo, &["push", "origin", "main"]);
+    run_git(&repo, &["push", "origin", "--delete", "feature"]);
+
+    run_git(
+        &repo,
+        &["show-ref", "--verify", "--quiet", "refs/heads/feature"],
+    );
+
+    let backend = GixBackend;
+    let opened = backend.open(&repo).unwrap();
+    opened.prune_merged_branches_with_output().unwrap();
+
+    let deleted = git_command()
+        .arg("-C")
+        .arg(&repo)
+        .args(["show-ref", "--verify", "--quiet", "refs/heads/feature"])
+        .status()
+        .expect("show-ref");
+    assert!(
+        !deleted.success(),
+        "expected merged local branch to be deleted"
+    );
+}
+
+#[test]
+fn prune_local_tags_deletes_tags_missing_from_remotes() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = dir.path().join("repo");
+    let origin = dir.path().join("origin.git");
+    fs::create_dir_all(&repo).unwrap();
+    fs::create_dir_all(&origin).unwrap();
+
+    run_git(&repo, &["init", "-b", "main"]);
+    run_git(&repo, &["config", "user.email", "you@example.com"]);
+    run_git(&repo, &["config", "user.name", "You"]);
+    run_git(&repo, &["config", "commit.gpgsign", "false"]);
+
+    write(&repo, "a.txt", "one\n");
+    run_git(&repo, &["add", "a.txt"]);
+    run_git(
+        &repo,
+        &["-c", "commit.gpgsign=false", "commit", "-m", "init"],
+    );
+
+    run_git(&origin, &["init", "--bare", "-b", "main"]);
+    run_git(
+        &repo,
+        &["remote", "add", "origin", origin.to_string_lossy().as_ref()],
+    );
+    run_git(&repo, &["push", "-u", "origin", "main"]);
+
+    run_git(&repo, &["tag", "v1.0.0"]);
+    run_git(&repo, &["tag", "stale-local"]);
+    run_git(&repo, &["push", "origin", "refs/tags/v1.0.0"]);
+    run_git(
+        &repo,
+        &["show-ref", "--verify", "--quiet", "refs/tags/stale-local"],
+    );
+
+    let backend = GixBackend;
+    let opened = backend.open(&repo).unwrap();
+    opened.prune_local_tags_with_output().unwrap();
+
+    run_git(
+        &repo,
+        &["show-ref", "--verify", "--quiet", "refs/tags/v1.0.0"],
+    );
+    let stale_deleted = git_command()
+        .arg("-C")
+        .arg(&repo)
+        .args(["show-ref", "--verify", "--quiet", "refs/tags/stale-local"])
+        .status()
+        .expect("show-ref");
+    assert!(
+        !stale_deleted.success(),
+        "expected stale local tag to be deleted"
+    );
+}
+
+#[test]
 fn list_remote_branches_includes_fetched_remote_tracking_refs() {
     let dir = tempfile::tempdir().unwrap();
     let repo = dir.path().join("repo");

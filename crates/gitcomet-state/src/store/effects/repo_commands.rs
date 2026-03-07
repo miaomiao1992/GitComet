@@ -238,6 +238,36 @@ pub(super) fn schedule_fetch_all(
     });
 }
 
+pub(super) fn schedule_prune_merged_branches(
+    executor: &TaskExecutor,
+    repos: &RepoMap,
+    msg_tx: mpsc::Sender<Msg>,
+    repo_id: RepoId,
+) {
+    spawn_with_repo(executor, repos, repo_id, msg_tx, move |repo, msg_tx| {
+        let _ = msg_tx.send(Msg::RepoCommandFinished {
+            repo_id,
+            command: RepoCommandKind::PruneMergedBranches,
+            result: repo.prune_merged_branches_with_output(),
+        });
+    });
+}
+
+pub(super) fn schedule_prune_local_tags(
+    executor: &TaskExecutor,
+    repos: &RepoMap,
+    msg_tx: mpsc::Sender<Msg>,
+    repo_id: RepoId,
+) {
+    spawn_with_repo(executor, repos, repo_id, msg_tx, move |repo, msg_tx| {
+        let _ = msg_tx.send(Msg::RepoCommandFinished {
+            repo_id,
+            command: RepoCommandKind::PruneLocalTags,
+            result: repo.prune_local_tags_with_output(),
+        });
+    });
+}
+
 pub(super) fn schedule_pull(
     executor: &TaskExecutor,
     repos: &RepoMap,
@@ -475,6 +505,46 @@ pub(super) fn schedule_delete_tag(
             repo_id,
             command: RepoCommandKind::DeleteTag { name: name.clone() },
             result: repo.delete_tag_with_output(&name),
+        });
+    });
+}
+
+pub(super) fn schedule_push_tag(
+    executor: &TaskExecutor,
+    repos: &RepoMap,
+    msg_tx: mpsc::Sender<Msg>,
+    repo_id: RepoId,
+    remote: String,
+    name: String,
+) {
+    spawn_with_repo(executor, repos, repo_id, msg_tx, move |repo, msg_tx| {
+        let _ = msg_tx.send(Msg::RepoCommandFinished {
+            repo_id,
+            command: RepoCommandKind::PushTag {
+                remote: remote.clone(),
+                name: name.clone(),
+            },
+            result: repo.push_tag_with_output(&remote, &name),
+        });
+    });
+}
+
+pub(super) fn schedule_delete_remote_tag(
+    executor: &TaskExecutor,
+    repos: &RepoMap,
+    msg_tx: mpsc::Sender<Msg>,
+    repo_id: RepoId,
+    remote: String,
+    name: String,
+) {
+    spawn_with_repo(executor, repos, repo_id, msg_tx, move |repo, msg_tx| {
+        let _ = msg_tx.send(Msg::RepoCommandFinished {
+            repo_id,
+            command: RepoCommandKind::DeleteRemoteTag {
+                remote: remote.clone(),
+                name: name.clone(),
+            },
+            result: repo.delete_remote_tag_with_output(&remote, &name),
         });
     });
 }

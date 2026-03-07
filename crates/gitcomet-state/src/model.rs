@@ -34,6 +34,7 @@ impl RepoLoadsInFlight {
     pub const REBASE_STATE: u32 = 1 << 9;
     pub const LOG: u32 = 1 << 10;
     pub const MERGE_COMMIT_MESSAGE: u32 = 1 << 11;
+    pub const REMOTE_TAGS: u32 = 1 << 12;
 
     pub fn is_in_flight(&self, flag: u32) -> bool {
         (self.in_flight & flag) != 0
@@ -195,6 +196,8 @@ pub struct RepoState {
     pub branches_rev: u64,
     pub tags: Loadable<Arc<Vec<Tag>>>,
     pub tags_rev: u64,
+    pub remote_tags: Loadable<Arc<Vec<RemoteTag>>>,
+    pub remote_tags_rev: u64,
     pub remotes: Loadable<Arc<Vec<Remote>>>,
     pub remotes_rev: u64,
     pub remote_branches: Loadable<Arc<Vec<RemoteBranch>>>,
@@ -269,6 +272,8 @@ impl RepoState {
             branches_rev: 0,
             tags: Loadable::NotLoaded,
             tags_rev: 0,
+            remote_tags: Loadable::NotLoaded,
+            remote_tags_rev: 0,
             remotes: Loadable::NotLoaded,
             remotes_rev: 0,
             remote_branches: Loadable::NotLoaded,
@@ -341,6 +346,15 @@ impl RepoState {
         }
         self.tags = tags;
         self.tags_rev = self.tags_rev.wrapping_add(1);
+    }
+
+    pub(crate) fn set_remote_tags(&mut self, remote_tags: Loadable<Vec<RemoteTag>>) {
+        let remote_tags = loadable_into_arc(remote_tags);
+        if self.remote_tags == remote_tags {
+            return;
+        }
+        self.remote_tags = remote_tags;
+        self.remote_tags_rev = self.remote_tags_rev.wrapping_add(1);
     }
 
     pub(crate) fn set_remotes(&mut self, remotes: Loadable<Vec<Remote>>) {

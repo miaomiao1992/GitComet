@@ -16,6 +16,7 @@ pub(super) fn reload_repo(state: &mut AppState, repo_id: crate::model::RepoId) -
     repo_state.set_head_branch(Loadable::Loading);
     repo_state.set_branches(Loadable::Loading);
     repo_state.set_tags(Loadable::Loading);
+    repo_state.set_remote_tags(Loadable::Loading);
     repo_state.set_remotes(Loadable::Loading);
     repo_state.set_remote_branches(Loadable::Loading);
     repo_state.set_status(Loadable::Loading);

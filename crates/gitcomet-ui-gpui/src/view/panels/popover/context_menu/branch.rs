@@ -122,6 +122,20 @@ pub(super) fn model(
             disabled: false,
             action: Box::new(ContextMenuAction::FetchAll { repo_id }),
         });
+        items.push(ContextMenuItem::Entry {
+            label: "Prune merged branches".into(),
+            icon: Some("🧹".into()),
+            shortcut: None,
+            disabled: false,
+            action: Box::new(ContextMenuAction::PruneMergedBranches { repo_id }),
+        });
+        items.push(ContextMenuItem::Entry {
+            label: "Prune local tags".into(),
+            icon: Some("🏷".into()),
+            shortcut: None,
+            disabled: false,
+            action: Box::new(ContextMenuAction::PruneLocalTags { repo_id }),
+        });
     }
 
     ContextMenuModel::new(items)
