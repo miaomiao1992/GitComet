@@ -18,7 +18,7 @@ pub(super) fn paint_history_graph(
     let stroke_width = px(1.6);
     let col_gap = px(HISTORY_GRAPH_COL_GAP_PX);
     let margin_x = px(HISTORY_GRAPH_MARGIN_X_PX);
-    let node_radius = if row.is_merge { px(3.5) } else { px(3.0) };
+    let node_radius = if row.is_merge { px(3.9) } else { px(3.4) };
 
     let y_top = bounds.top();
     let y_center = bounds.top() + bounds.size.height / 2.0;
@@ -126,7 +126,7 @@ pub(super) fn paint_history_graph(
     let black = gpui::rgba(0x000000ff);
 
     if is_stash_node {
-        paint_stash_node(bounds.left() + node_x, y_center, node_color, black, window);
+        paint_stash_node(bounds.left() + node_x, y_center, black, node_color, window);
     } else {
         paint_commit_node(
             bounds.left() + node_x,
@@ -179,11 +179,11 @@ fn paint_stash_node(
     window: &mut Window,
 ) {
     let border = px(1.0);
-    let box_w = px(8.0);
-    let box_h = px(7.0);
+    let box_w = px(9.0);
+    let box_h = px(8.0);
     let outer_w = box_w + border * 2.0;
     let outer_h = box_h + border * 2.0;
-    let r = px(1.6);
+    let r = px(1.8);
 
     let outer = Bounds::new(
         point(x_center - outer_w * 0.5, y_center - outer_h * 0.5),
@@ -198,7 +198,7 @@ fn paint_stash_node(
     window.paint_quad(fill(inner, fill_color).corner_radii((r - px(0.4)).max(px(0.0))));
 
     // Simple "lid" line to make it read as a stash/box.
-    let lid_y = inner.top() + px(2.2);
+    let lid_y = inner.top() + px(2.4);
     let lid = Bounds::new(
         point(inner.left() + px(1.0), lid_y),
         size((inner.size.width - px(2.0)).max(px(0.0)), px(1.0)),

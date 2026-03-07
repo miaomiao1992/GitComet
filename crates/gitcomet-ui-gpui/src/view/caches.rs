@@ -16,6 +16,7 @@ pub(super) struct HistoryCacheRequest {
     pub(super) branches_rev: u64,
     pub(super) remote_branches_rev: u64,
     pub(super) tags_rev: u64,
+    pub(super) stashes_rev: u64,
     pub(super) date_time_format: DateTimeFormat,
     pub(super) timezone: Timezone,
 }
@@ -29,6 +30,7 @@ pub(super) struct HistoryCommitRowVm {
     pub(super) when: SharedString,
     pub(super) short_sha: SharedString,
     pub(super) is_head: bool,
+    pub(super) is_stash: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

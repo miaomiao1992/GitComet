@@ -160,9 +160,10 @@ impl HistoryView {
                 let selected = repo.selected_commit.as_ref() == Some(&commit.id);
                 let show_graph_color_marker =
                     repo.history_scope == gitcomet_core::domain::LogScope::AllBranches;
-                let is_stash_node = stash_ids
-                    .as_ref()
-                    .is_some_and(|ids| ids.contains(&commit.id));
+                let is_stash_node = row_vm.is_stash
+                    || stash_ids
+                        .as_ref()
+                        .is_some_and(|ids| ids.contains(&commit.id));
 
                 Some(history_table_row(
                     theme,

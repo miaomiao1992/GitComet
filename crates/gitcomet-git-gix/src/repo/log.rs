@@ -134,6 +134,47 @@ where
     })
 }
 
+fn parse_object_ids_from_lines(lines: &str) -> Vec<gix::ObjectId> {
+    let mut tips = Vec::new();
+    let mut seen = HashSet::default();
+    for line in lines.lines() {
+        let hex = line.trim();
+        if hex.is_empty() {
+            continue;
+        }
+        if let Ok(id) = gix::ObjectId::from_hex(hex.as_bytes())
+            && seen.insert(id)
+        {
+            tips.push(id);
+        }
+    }
+
+    tips
+}
+
+fn stash_reflog_tips(workdir: &Path) -> Vec<gix::ObjectId> {
+    let mut cmd = Command::new("git");
+    cmd.arg("-C")
+        .arg(workdir)
+        .arg("-c")
+        .arg("color.ui=false")
+        .arg("--no-pager")
+        .arg("reflog")
+        .arg("show")
+        .arg("-n50")
+        .arg("--format=%H")
+        .arg("refs/stash");
+
+    let Ok(output) = cmd.output() else {
+        return Vec::new();
+    };
+    if !output.status.success() {
+        return Vec::new();
+    }
+
+    parse_object_ids_from_lines(&String::from_utf8_lossy(&output.stdout))
+}
+
 impl GixRepo {
     pub(super) fn log_head_page_impl(
         &self,
@@ -196,6 +237,15 @@ impl GixRepo {
                 continue;
             }
             let id = reference.id().detach();
+            if seen.insert(id) {
+                tips.push(id);
+            }
+        }
+
+        // `git log --all` includes only `refs/stash` tip, but users expect history scope=all
+        // to also surface older stash entries (reflog-backed). Add stash reflog commits as extra
+        // walk tips so stash rows can be rendered consistently in history graph.
+        for id in stash_reflog_tips(&self.spec.workdir) {
             if seen.insert(id) {
                 tips.push(id);
             }
@@ -363,5 +413,25 @@ mod tests {
         assert!(gate.should_skip("c2"));
         assert!(!gate.should_skip("c3"));
         assert!(!gate.should_skip("c4"));
+    }
+
+    #[test]
+    fn parse_object_ids_from_lines_dedups_and_skips_invalid() {
+        let input = "\
+aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n\
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n\
+aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n\
+not-a-sha\n\
+\n";
+        let ids = parse_object_ids_from_lines(input);
+        assert_eq!(ids.len(), 2);
+        assert_eq!(
+            ids[0].to_string(),
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        );
+        assert_eq!(
+            ids[1].to_string(),
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        );
     }
 }

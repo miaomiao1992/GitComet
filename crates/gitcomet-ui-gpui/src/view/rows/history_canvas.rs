@@ -223,16 +223,23 @@ pub(super) fn history_commit_row_canvas(
                 size((summary_right - x).max(px(0.0)), bounds.size.height),
             );
 
-            window.paint_layer(graph_bounds, |window| {
-                super::history_graph_paint::paint_history_graph(
-                    theme,
-                    &graph_row,
-                    connect_incoming_node,
-                    is_stash_node,
-                    graph_bounds,
-                    window,
-                );
-            });
+            window.with_content_mask(
+                Some(ContentMask {
+                    bounds: graph_bounds,
+                }),
+                |window| {
+                    window.paint_layer(graph_bounds, |window| {
+                        super::history_graph_paint::paint_history_graph(
+                            theme,
+                            &graph_row,
+                            connect_incoming_node,
+                            is_stash_node,
+                            graph_bounds,
+                            window,
+                        );
+                    });
+                },
+            );
 
             let chip_height = px(HISTORY_TAG_CHIP_HEIGHT_PX);
             let chip_pad_x = px(HISTORY_TAG_CHIP_PADDING_X_PX);

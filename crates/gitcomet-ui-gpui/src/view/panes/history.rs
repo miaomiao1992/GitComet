@@ -317,7 +317,7 @@ impl HistoryView {
 
 // --- History cache methods ---
 
-use gitcomet_core::domain::{LogPage, RemoteBranch};
+use gitcomet_core::domain::{LogPage, RemoteBranch, StashEntry};
 
 impl HistoryView {
     pub(in super::super) fn ensure_history_worktree_summary_cache(
@@ -485,6 +485,7 @@ impl HistoryView {
                 branches: Arc<Vec<Branch>>,
                 remote_branches: Arc<Vec<RemoteBranch>>,
                 tags: Arc<Vec<Tag>>,
+                stashes: Arc<Vec<StashEntry>>,
             },
         }
 
@@ -497,6 +498,7 @@ impl HistoryView {
                     branches_rev: repo.branches_rev,
                     remote_branches_rev: repo.remote_branches_rev,
                     tags_rev: repo.tags_rev,
+                    stashes_rev: repo.stashes_rev,
                     date_time_format: self.date_time_format,
                     timezone: self.timezone,
                 };
@@ -529,6 +531,10 @@ impl HistoryView {
                             Loadable::Ready(t) => Arc::clone(t),
                             _ => Arc::new(Vec::new()),
                         },
+                        stashes: match &repo.stashes {
+                            Loadable::Ready(s) => Arc::clone(s),
+                            _ => Arc::new(Vec::new()),
+                        },
                     }
                 }
             } else {
@@ -538,28 +544,38 @@ impl HistoryView {
             Next::Clear
         };
 
-        let (request_for_task, page, head_branch, branches, remote_branches, tags) = match next {
-            Next::Clear => {
-                self.history_cache_inflight = None;
-                self.history_cache = None;
-                return;
-            }
-            Next::CacheOk => {
-                self.history_cache_inflight = None;
-                return;
-            }
-            Next::Inflight => {
-                return;
-            }
-            Next::Build {
-                request,
-                page,
-                head_branch,
-                branches,
-                remote_branches,
-                tags,
-            } => (request, page, head_branch, branches, remote_branches, tags),
-        };
+        let (request_for_task, page, head_branch, branches, remote_branches, tags, stashes) =
+            match next {
+                Next::Clear => {
+                    self.history_cache_inflight = None;
+                    self.history_cache = None;
+                    return;
+                }
+                Next::CacheOk => {
+                    self.history_cache_inflight = None;
+                    return;
+                }
+                Next::Inflight => {
+                    return;
+                }
+                Next::Build {
+                    request,
+                    page,
+                    head_branch,
+                    branches,
+                    remote_branches,
+                    tags,
+                    stashes,
+                } => (
+                    request,
+                    page,
+                    head_branch,
+                    branches,
+                    remote_branches,
+                    tags,
+                    stashes,
+                ),
+            };
 
         self.history_cache_seq = self.history_cache_seq.wrapping_add(1);
         let seq = self.history_cache_seq;
@@ -580,7 +596,63 @@ impl HistoryView {
                 let request_for_build = request_for_task.clone();
 
                 let rebuild = smol::unblock(move || {
-                    let visible_indices = (0..page.commits.len()).collect::<Vec<_>>();
+                    let mut commit_index_by_id: HashMap<&str, usize> =
+                        HashMap::with_capacity_and_hasher(page.commits.len(), Default::default());
+                    for (ix, commit) in page.commits.iter().enumerate() {
+                        commit_index_by_id.insert(commit.id.as_ref(), ix);
+                    }
+
+                    let mut stash_messages_by_id: HashMap<&str, &str> =
+                        HashMap::with_capacity_and_hasher(stashes.len(), Default::default());
+                    for stash in stashes.iter() {
+                        stash_messages_by_id.insert(stash.id.as_ref(), stash.message.as_str());
+                    }
+
+                    let stash_tip_ids_from_list: HashSet<&str> = stash_messages_by_id
+                        .keys()
+                        .copied()
+                        .collect::<HashSet<&str>>();
+                    let mut stash_tip_ids = stash_tip_ids_from_list.clone();
+                    for commit in page.commits.iter() {
+                        if is_probable_stash_tip(commit) {
+                            stash_tip_ids.insert(commit.id.as_ref());
+                        }
+                    }
+
+                    let mut stash_helper_ids: HashSet<&str> = HashSet::default();
+                    let stash_tip_ids_for_helper_filter = if stash_tip_ids_from_list.is_empty() {
+                        &stash_tip_ids
+                    } else {
+                        &stash_tip_ids_from_list
+                    };
+                    for stash_tip_id in stash_tip_ids_for_helper_filter.iter().copied() {
+                        let Some(&stash_ix) = commit_index_by_id.get(stash_tip_id) else {
+                            continue;
+                        };
+                        let Some(stash_commit) = page.commits.get(stash_ix) else {
+                            continue;
+                        };
+                        for parent_id in stash_commit.parent_ids.iter().skip(1).map(|p| p.as_ref())
+                        {
+                            if commit_index_by_id.contains_key(parent_id) {
+                                stash_helper_ids.insert(parent_id);
+                            }
+                        }
+                    }
+
+                    let visible_indices = page
+                        .commits
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(ix, commit)| {
+                            (!stash_helper_ids.contains(commit.id.as_ref())).then_some(ix)
+                        })
+                        .collect::<Vec<_>>();
+
+                    let visible_commits = visible_indices
+                        .iter()
+                        .filter_map(|ix| page.commits.get(*ix).cloned())
+                        .collect::<Vec<_>>();
 
                     let branch_heads: HashSet<&str> = branches
                         .iter()
@@ -588,7 +660,7 @@ impl HistoryView {
                         .chain(remote_branches.iter().map(|b| b.target.as_ref()))
                         .collect();
                     let graph_rows: Vec<Arc<history_graph::GraphRow>> =
-                        history_graph::compute_graph(&page.commits, theme, &branch_heads)
+                        history_graph::compute_graph(&visible_commits, theme, &branch_heads)
                             .into_iter()
                             .map(Arc::new)
                             .collect();
@@ -689,7 +761,20 @@ impl HistoryView {
                             );
 
                             let author: SharedString = commit.author.clone().into();
-                            let summary: SharedString = commit.summary.clone().into();
+                            let is_stash = stash_tip_ids.contains(commit_id);
+                            let summary_text = stash_messages_by_id
+                                .get(commit_id)
+                                .copied()
+                                .filter(|s| !s.trim().is_empty())
+                                .or_else(|| {
+                                    if is_stash {
+                                        stash_summary_from_log_summary(&commit.summary)
+                                    } else {
+                                        None
+                                    }
+                                })
+                                .unwrap_or(commit.summary.as_str());
+                            let summary: SharedString = summary_text.to_string().into();
 
                             let when: SharedString = format_datetime(
                                 commit.time,
@@ -710,6 +795,7 @@ impl HistoryView {
                                 when,
                                 short_sha,
                                 is_head,
+                                is_stash,
                             }
                         })
                         .collect::<Vec<_>>();
@@ -766,5 +852,77 @@ impl HistoryView {
             id.hash(&mut hasher);
         }
         hasher.finish()
+    }
+}
+
+fn is_probable_stash_tip(commit: &Commit) -> bool {
+    if !(2..=3).contains(&commit.parent_ids.len()) {
+        return false;
+    }
+    let summary = commit.summary.as_str();
+    (summary.starts_with("WIP on ") || summary.starts_with("On ")) && summary.contains(": ")
+}
+
+fn stash_summary_from_log_summary(summary: &str) -> Option<&str> {
+    let (_, tail) = summary.split_once(": ")?;
+    let trimmed = tail.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gitcomet_core::domain::CommitId;
+    use std::time::SystemTime;
+
+    fn commit(id: &str, parents: &[&str], summary: &str) -> Commit {
+        Commit {
+            id: CommitId(id.to_string()),
+            parent_ids: parents.iter().map(|p| CommitId((*p).to_string())).collect(),
+            summary: summary.to_string(),
+            author: "a".to_string(),
+            time: SystemTime::UNIX_EPOCH,
+        }
+    }
+
+    #[test]
+    fn stash_tip_detection_requires_stash_like_message_and_multiple_parents() {
+        assert!(is_probable_stash_tip(&commit(
+            "s",
+            &["p0", "p1"],
+            "On main: quick stash"
+        )));
+        assert!(is_probable_stash_tip(&commit(
+            "s",
+            &["p0", "p1"],
+            "WIP on main: quick stash"
+        )));
+        assert!(!is_probable_stash_tip(&commit(
+            "c",
+            &["p0"],
+            "On main: normal commit"
+        )));
+        assert!(!is_probable_stash_tip(&commit(
+            "c",
+            &["p0", "p1"],
+            "Regular summary"
+        )));
+    }
+
+    #[test]
+    fn stash_summary_parser_extracts_tail_after_prefix() {
+        assert_eq!(
+            stash_summary_from_log_summary("On feature/x: savepoint"),
+            Some("savepoint")
+        );
+        assert_eq!(
+            stash_summary_from_log_summary("WIP on main: keep this"),
+            Some("keep this")
+        );
+        assert_eq!(stash_summary_from_log_summary("no delimiter"), None);
     }
 }

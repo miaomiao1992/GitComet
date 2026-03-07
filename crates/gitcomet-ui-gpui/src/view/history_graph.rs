@@ -136,8 +136,10 @@ pub fn compute_graph(
         //
         // We currently only do this for non-merge commits to avoid interfering with merge-parent
         // lane assignment.
-        let force_branch_head_lane =
-            had_hit_lanes && branch_heads.contains(commit.id.as_ref()) && parent_ids.len() <= 1;
+        let force_branch_head_lane = had_hit_lanes
+            && hits.len() == 1
+            && branch_heads.contains(commit.id.as_ref())
+            && parent_ids.len() <= 1;
 
         let mut node_col = if let Some(main_lane_id) = main_lane_id
             && head_chain.contains(commit.id.as_ref())
@@ -396,5 +398,29 @@ mod tests {
             base_row.lanes_now[base_row.node_col].id
         );
         assert_eq!(base_row.next_from_cols, vec![Some(1)]);
+    }
+
+    #[test]
+    fn branch_heads_do_not_split_when_multiple_lanes_converge() {
+        let theme = AppTheme::zed_ayu_dark();
+        let commits = vec![
+            commit("top1", vec!["base"]),
+            commit("top2", vec!["base"]),
+            commit("base", vec!["root"]),
+            commit("root", Vec::new()),
+        ];
+
+        let mut branch_heads = HashSet::default();
+        branch_heads.insert("top1");
+        branch_heads.insert("base");
+
+        let graph = compute_graph(&commits, theme, &branch_heads);
+
+        let base_row = &graph[2];
+        assert_eq!(base_row.lanes_now.len(), 2);
+        assert_eq!(base_row.joins_in.len(), 1);
+        assert_eq!(base_row.node_col, 0);
+        assert_eq!(base_row.lanes_next.len(), 1);
+        assert_eq!(base_row.next_from_cols, vec![Some(0)]);
     }
 }
