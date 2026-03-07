@@ -860,29 +860,29 @@ fn parse_compat_external_mode_with_config(
             idx += 1;
             continue;
         }
-        if let Some(value) = token.strip_prefix("-L1") {
-            if !value.is_empty() {
-                label_l1 = Some(value.to_string());
-                has_kdiff3_label_flags = true;
-                idx += 1;
-                continue;
-            }
+        if let Some(value) = token.strip_prefix("-L1")
+            && !value.is_empty()
+        {
+            label_l1 = Some(value.to_string());
+            has_kdiff3_label_flags = true;
+            idx += 1;
+            continue;
         }
-        if let Some(value) = token.strip_prefix("-L2") {
-            if !value.is_empty() {
-                label_l2 = Some(value.to_string());
-                has_kdiff3_label_flags = true;
-                idx += 1;
-                continue;
-            }
+        if let Some(value) = token.strip_prefix("-L2")
+            && !value.is_empty()
+        {
+            label_l2 = Some(value.to_string());
+            has_kdiff3_label_flags = true;
+            idx += 1;
+            continue;
         }
-        if let Some(value) = token.strip_prefix("-L3") {
-            if !value.is_empty() {
-                label_l3 = Some(value.to_string());
-                has_kdiff3_label_flags = true;
-                idx += 1;
-                continue;
-            }
+        if let Some(value) = token.strip_prefix("-L3")
+            && !value.is_empty()
+        {
+            label_l3 = Some(value.to_string());
+            has_kdiff3_label_flags = true;
+            idx += 1;
+            continue;
         }
         if let Some(value) = token.strip_prefix("--label=") {
             assign_next_compat_label(
