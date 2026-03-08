@@ -419,17 +419,17 @@ fn repo_monitor_thread(
         && let Err(error) = watcher
             .watch(git_dir, RecursiveMode::Recursive)
             .or_else(|_| watcher.watch(git_dir, RecursiveMode::NonRecursive))
-        {
-            record_monitor_failure(
-                MonitorFailureKind::Start,
-                "repo_monitor_thread watch git dir",
-                format!(
-                    "repo_id={repo_id:?}, workdir={}, git_dir={}: {error}",
-                    workdir.display(),
-                    git_dir.display()
-                ),
-            );
-        }
+    {
+        record_monitor_failure(
+            MonitorFailureKind::Start,
+            "repo_monitor_thread watch git dir",
+            format!(
+                "repo_id={repo_id:?}, workdir={}, git_dir={}: {error}",
+                workdir.display(),
+                git_dir.display()
+            ),
+        );
+    }
 
     let debounce = Duration::from_millis(250);
     let max_delay = Duration::from_secs(2);
