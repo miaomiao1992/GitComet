@@ -36,7 +36,10 @@ fn is_git_shell_startup_failure(text: &str) -> bool {
 fn git_shell_available_for_integration_tests() -> bool {
     static AVAILABLE: OnceLock<bool> = OnceLock::new();
     *AVAILABLE.get_or_init(|| {
-        let output = match Command::new("git").args(["difftool", "--tool-help"]).output() {
+        let output = match Command::new("git")
+            .args(["difftool", "--tool-help"])
+            .output()
+        {
             Ok(output) => output,
             Err(_) => return true,
         };
@@ -253,11 +256,13 @@ fn empty_repo_log_and_head_branch_do_not_error() {
 
     assert_eq!(opened.current_branch().unwrap(), "main");
     assert!(opened.log_head_page(200, None).unwrap().commits.is_empty());
-    assert!(opened
-        .log_all_branches_page(200, None)
-        .unwrap()
-        .commits
-        .is_empty());
+    assert!(
+        opened
+            .log_all_branches_page(200, None)
+            .unwrap()
+            .commits
+            .is_empty()
+    );
 }
 
 #[test]

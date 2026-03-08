@@ -2403,10 +2403,7 @@ mod tests {
     #[test]
     fn focused_mergetool_target_path_prefers_repo_relative_path() {
         let repo = normalize_bootstrap_repo_path(PathBuf::from("/repo"));
-        let target = focused_mergetool_target_path(
-            &repo,
-            &repo.join("src/conflict.txt"),
-        );
+        let target = focused_mergetool_target_path(&repo, &repo.join("src/conflict.txt"));
         assert_eq!(target, PathBuf::from("src/conflict.txt"));
     }
 
@@ -2428,7 +2425,9 @@ mod tests {
         let bootstrap = focused_bootstrap(repo.clone(), repo.join("src/conflict.txt"));
         let mut state = AppState::default();
         state.active_repo = Some(RepoId(1));
-        state.repos.push(open_repo_state_with_workdir(&repo.to_string_lossy()));
+        state
+            .repos
+            .push(open_repo_state_with_workdir(&repo.to_string_lossy()));
 
         assert_eq!(
             focused_mergetool_bootstrap_action(&state, &bootstrap),
