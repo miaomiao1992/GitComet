@@ -55,24 +55,36 @@ fn titlebar_control_button(
     hover_bg: gpui::Rgba,
     active_bg: gpui::Rgba,
 ) -> gpui::Div {
+    const TITLEBAR_CONTROL_HITBOX_WIDTH: Pixels = px(32.0);
+    const TITLEBAR_CONTROL_VISUAL_SIZE: Pixels = px(26.0);
+
     div()
         .h_full()
-        .w(px(46.0))
+        .w(TITLEBAR_CONTROL_HITBOX_WIDTH)
         .flex()
         .items_center()
         .justify_center()
+        .cursor(CursorStyle::PointingHand)
         .child(
             div()
                 .id(id)
-                .size(px(26.0))
+                .h_full()
+                .w_full()
                 .flex()
                 .items_center()
                 .justify_center()
                 .rounded(px(theme.radii.pill))
-                .cursor(CursorStyle::PointingHand)
                 .hover(move |s| s.bg(hover_bg))
                 .active(move |s| s.bg(active_bg))
-                .child(icon),
+                .child(
+                    div()
+                        .size(TITLEBAR_CONTROL_VISUAL_SIZE)
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .rounded(px(theme.radii.pill))
+                        .child(icon),
+                ),
         )
 }
 
@@ -347,7 +359,12 @@ impl Render for TitleBarView {
             max_active,
         )
         .id("win_max")
-        .window_control_area(WindowControlArea::Max);
+        .window_control_area(WindowControlArea::Max)
+        .on_click(cx.listener(|_this, _e: &ClickEvent, window, cx| {
+            cx.stop_propagation();
+            window.zoom_window();
+            cx.notify();
+        }));
 
         let close_hover = with_alpha(theme.colors.danger, if theme.is_dark { 0.45 } else { 0.28 });
         let close_active = with_alpha(theme.colors.danger, if theme.is_dark { 0.60 } else { 0.40 });
