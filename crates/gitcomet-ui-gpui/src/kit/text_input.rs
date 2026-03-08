@@ -42,9 +42,19 @@ actions!(
         Paste,
         Cut,
         Copy,
+        Undo,
         ShowCharacterPalette,
     ]
 );
+
+const MAX_UNDO_STEPS: usize = 100;
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct UndoSnapshot {
+    content: SharedString,
+    selected_range: Range<usize>,
+    selection_reversed: bool,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct TextInputStyle {
@@ -165,6 +175,7 @@ pub struct TextInput {
     has_focus: bool,
     cursor_blink_visible: bool,
     cursor_blink_task: Option<gpui::Task<()>>,
+    undo_stack: Vec<UndoSnapshot>,
 }
 
 impl TextInput {
@@ -198,6 +209,7 @@ impl TextInput {
             has_focus: false,
             cursor_blink_visible: true,
             cursor_blink_task: None,
+            undo_stack: Vec::new(),
         }
     }
 
@@ -230,6 +242,7 @@ impl TextInput {
             has_focus: false,
             cursor_blink_visible: true,
             cursor_blink_task: None,
+            undo_stack: Vec::new(),
         }
     }
 
@@ -257,6 +270,8 @@ impl TextInput {
         }
         self.content = text;
         self.selected_range = self.content.len()..self.content.len();
+        self.selection_reversed = false;
+        self.undo_stack.clear();
         self.cursor_blink_visible = true;
         self.scroll_x = px(0.0);
         cx.notify();
@@ -713,6 +728,16 @@ impl TextInput {
         }
     }
 
+    fn undo(&mut self, _: &Undo, _: &mut Window, cx: &mut Context<Self>) {
+        if self.read_only {
+            return;
+        }
+        let Some(snapshot) = self.undo_stack.pop() else {
+            return;
+        };
+        self.restore_undo_snapshot(snapshot, cx);
+    }
+
     pub fn cursor_offset(&self) -> usize {
         if self.selection_reversed {
             self.selected_range.start
@@ -765,6 +790,35 @@ impl TextInput {
 
     fn is_word_char(ch: char) -> bool {
         ch.is_alphanumeric() || ch == '_'
+    }
+
+    fn current_undo_snapshot(&self) -> UndoSnapshot {
+        UndoSnapshot {
+            content: self.content.clone(),
+            selected_range: self.selected_range.clone(),
+            selection_reversed: self.selection_reversed,
+        }
+    }
+
+    fn push_undo_snapshot(&mut self, snapshot: UndoSnapshot) {
+        if self.undo_stack.last() == Some(&snapshot) {
+            return;
+        }
+        if self.undo_stack.len() >= MAX_UNDO_STEPS {
+            let _ = self.undo_stack.remove(0);
+        }
+        self.undo_stack.push(snapshot);
+    }
+
+    fn restore_undo_snapshot(&mut self, snapshot: UndoSnapshot, cx: &mut Context<Self>) {
+        self.content = snapshot.content;
+        self.selected_range = snapshot.selected_range;
+        self.selection_reversed = snapshot.selection_reversed;
+        self.marked_range = None;
+        self.vertical_motion_x = None;
+        self.cursor_blink_visible = true;
+        self.is_selecting = false;
+        cx.notify();
     }
 
     fn skip_left_while(
@@ -843,6 +897,42 @@ impl TextInput {
         })
     }
 
+    fn token_range_for_offset(&self, offset: usize) -> Range<usize> {
+        let s = self.content.as_ref();
+        if s.is_empty() {
+            return 0..0;
+        }
+
+        let mut probe = offset.min(s.len());
+        if probe == s.len() && probe > 0 {
+            probe = self.previous_boundary(probe);
+        }
+
+        let Some(ch) = s[probe..].chars().next() else {
+            return probe..probe;
+        };
+
+        if ch.is_whitespace() {
+            let start = Self::skip_left_while(s, probe, |ch| ch.is_whitespace());
+            let end = Self::skip_right_while(s, probe, |ch| ch.is_whitespace());
+            return start..end;
+        }
+
+        if Self::is_word_char(ch) {
+            let start = Self::skip_left_while(s, probe, Self::is_word_char);
+            let end = Self::skip_right_while(s, probe, Self::is_word_char);
+            return start..end;
+        }
+
+        let start = Self::skip_left_while(s, probe, |ch| {
+            !ch.is_whitespace() && !Self::is_word_char(ch)
+        });
+        let end = Self::skip_right_while(s, probe, |ch| {
+            !ch.is_whitespace() && !Self::is_word_char(ch)
+        });
+        start..end
+    }
+
     fn on_mouse_down(
         &mut self,
         event: &MouseDownEvent,
@@ -852,20 +942,28 @@ impl TextInput {
         cx.stop_propagation();
         window.focus(&self.focus_handle);
         self.cursor_blink_visible = true;
-        if self.read_only && event.button == MouseButton::Left && event.click_count >= 2 {
-            self.move_to(0, cx);
-            self.select_to(self.content.len(), cx);
-            self.is_selecting = false;
-            return;
-        }
-
-        self.is_selecting = true;
+        let index = self.index_for_mouse_position(event.position);
         self.vertical_motion_x = None;
 
         if event.modifiers.shift {
-            self.select_to(self.index_for_mouse_position(event.position), cx);
+            self.is_selecting = true;
+            self.select_to(index, cx);
+            return;
+        }
+
+        if event.click_count >= 2 {
+            self.is_selecting = false;
+            let range = self.token_range_for_offset(index);
+            if range.is_empty() {
+                self.move_to(index, cx);
+            } else {
+                self.selected_range = range;
+                self.selection_reversed = false;
+                cx.notify();
+            }
         } else {
-            self.move_to(self.index_for_mouse_position(event.position), cx)
+            self.is_selecting = true;
+            self.move_to(index, cx)
         }
     }
 
@@ -1094,6 +1192,7 @@ impl EntityInputHandler for TextInput {
         let Some(new_text) = self.sanitize_insert_text(new_text) else {
             return;
         };
+        let undo_snapshot = self.current_undo_snapshot();
 
         let range = range_utf16
             .as_ref()
@@ -1104,7 +1203,9 @@ impl EntityInputHandler for TextInput {
         self.content =
             (self.content[0..range.start].to_owned() + &new_text + &self.content[range.end..])
                 .into();
+        self.push_undo_snapshot(undo_snapshot);
         self.selected_range = range.start + new_text.len()..range.start + new_text.len();
+        self.selection_reversed = false;
         self.marked_range.take();
         self.vertical_motion_x = None;
         self.cursor_blink_visible = true;
@@ -1125,6 +1226,7 @@ impl EntityInputHandler for TextInput {
         let Some(new_text) = self.sanitize_insert_text(new_text) else {
             return;
         };
+        let undo_snapshot = self.current_undo_snapshot();
 
         let range = range_utf16
             .as_ref()
@@ -1135,6 +1237,7 @@ impl EntityInputHandler for TextInput {
         self.content =
             (self.content[0..range.start].to_owned() + &new_text + &self.content[range.end..])
                 .into();
+        self.push_undo_snapshot(undo_snapshot);
         if !new_text.is_empty() {
             self.marked_range = Some(range.start..range.start + new_text.len());
         } else {
@@ -1145,6 +1248,7 @@ impl EntityInputHandler for TextInput {
             .map(|range_utf16| self.range_from_utf16(range_utf16))
             .map(|new_range| new_range.start + range.start..new_range.end + range.end)
             .unwrap_or_else(|| range.start + new_text.len()..range.start + new_text.len());
+        self.selection_reversed = false;
 
         self.vertical_motion_x = None;
         self.cursor_blink_visible = true;
@@ -1743,6 +1847,7 @@ impl Render for TextInput {
             .on_action(cx.listener(Self::paste))
             .on_action(cx.listener(Self::cut))
             .on_action(cx.listener(Self::copy))
+            .on_action(cx.listener(Self::undo))
             .on_action(cx.listener(Self::show_character_palette))
             .on_mouse_down(MouseButton::Left, cx.listener(Self::on_mouse_down))
             .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))

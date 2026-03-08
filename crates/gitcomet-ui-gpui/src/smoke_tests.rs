@@ -7,7 +7,8 @@ use gitcomet_state::msg::Msg;
 use gitcomet_state::store::AppStore;
 use gpui::prelude::*;
 use gpui::{
-    ClipboardItem, Decorations, KeyBinding, Modifiers, MouseButton, ScrollHandle, Tiling, div, px,
+    ClipboardItem, Decorations, KeyBinding, Modifiers, MouseButton, MouseDownEvent, MouseUpEvent,
+    ScrollHandle, Tiling, div, px,
 };
 use std::path::Path;
 use std::path::PathBuf;
@@ -156,7 +157,15 @@ impl gpui::Render for SmokeView {
             .flex_col()
             .gap_2()
             .child(components::panel(theme, "Tabs", None, tabs))
-            .child(components::panel(theme, "Input", None, self.input.clone()))
+            .child(components::panel(
+                theme,
+                "Input",
+                None,
+                div()
+                    .id("smoke_input")
+                    .debug_selector(|| "smoke_input".to_string())
+                    .child(self.input.clone()),
+            ))
             .child(components::panel(
                 theme,
                 "Buttons",
@@ -267,6 +276,86 @@ fn text_input_supports_basic_clipboard_and_word_shortcuts(cx: &mut gpui::TestApp
         cx.read_from_clipboard().and_then(|item| item.text()),
         Some("world".into())
     );
+}
+
+#[gpui::test]
+fn text_input_supports_ctrl_z_undo(cx: &mut gpui::TestAppContext) {
+    let (view, cx) = cx.add_window_view(SmokeView::new);
+
+    cx.update(|window, app| {
+        app.bind_keys([
+            KeyBinding::new("ctrl-v", crate::kit::Paste, Some("TextInput")),
+            KeyBinding::new("ctrl-z", crate::kit::Undo, Some("TextInput")),
+        ]);
+
+        let focus = view.update(app, |this, cx| this.input.read(cx).focus_handle());
+        window.focus(&focus);
+
+        view.update(app, |this, cx| {
+            this.input
+                .update(cx, |input, cx| input.set_text("hello", cx));
+        });
+
+        let _ = window.draw(app);
+    });
+
+    cx.write_to_clipboard(ClipboardItem::new_string(" world".to_string()));
+    cx.simulate_keystrokes("ctrl-v");
+    let text = cx.update(|_window, app| view.read(app).input.read(app).text().to_string());
+    assert_eq!(text, "hello world");
+
+    cx.simulate_keystrokes("ctrl-z");
+    let text = cx.update(|_window, app| view.read(app).input.read(app).text().to_string());
+    assert_eq!(text, "hello");
+}
+
+#[gpui::test]
+fn text_input_double_click_selects_word(cx: &mut gpui::TestAppContext) {
+    let (view, cx) = cx.add_window_view(SmokeView::new);
+
+    cx.update(|window, app| {
+        let focus = view.update(app, |this, cx| this.input.read(cx).focus_handle());
+        window.focus(&focus);
+
+        view.update(app, |this, cx| {
+            this.input
+                .update(cx, |input, cx| input.set_text("alpha beta", cx));
+        });
+
+        let _ = window.draw(app);
+    });
+
+    let bounds = cx
+        .debug_bounds("smoke_input")
+        .expect("expected smoke input bounds");
+    let click = cx.update(|_window, app| {
+        let input = view.read(app).input.clone();
+        (0..200usize)
+            .find_map(|step| {
+                let pos = gpui::point(bounds.left() + px(8.0 + step as f32), bounds.center().y);
+                let offset = input.read(app).offset_for_position(pos);
+                (2..=4).contains(&offset).then_some(pos)
+            })
+            .unwrap_or_else(|| bounds.center())
+    });
+
+    cx.simulate_mouse_move(click, None, Modifiers::default());
+    cx.simulate_event(MouseDownEvent {
+        position: click,
+        modifiers: Modifiers::default(),
+        button: MouseButton::Left,
+        click_count: 2,
+        first_mouse: false,
+    });
+    cx.simulate_event(MouseUpEvent {
+        position: click,
+        modifiers: Modifiers::default(),
+        button: MouseButton::Left,
+        click_count: 2,
+    });
+
+    let selection = cx.update(|_window, app| view.read(app).input.read(app).selected_text());
+    assert_eq!(selection, Some("alpha".into()));
 }
 
 #[gpui::test]

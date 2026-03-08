@@ -601,7 +601,15 @@ fn patience_recurse<'a>(
 
             for &(old_idx, new_idx) in &anchors {
                 if oi < old_idx || ni < new_idx {
-                    edits.extend(patience_recurse(old, new, oi, old_idx, ni, new_idx, depth + 1));
+                    edits.extend(patience_recurse(
+                        old,
+                        new,
+                        oi,
+                        old_idx,
+                        ni,
+                        new_idx,
+                        depth + 1,
+                    ));
                 }
                 edits.push(Edit {
                     kind: EditKind::Equal,

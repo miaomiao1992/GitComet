@@ -116,10 +116,11 @@ pub(super) fn set_history_scope(
         persist_result,
     );
 
-    if state.repos[repo_ix]
-        .loads_in_flight
-        .request_log(scope, super::util::DEFAULT_LOG_PAGE_SIZE, None)
-    {
+    if state.repos[repo_ix].loads_in_flight.request_log(
+        scope,
+        super::util::DEFAULT_LOG_PAGE_SIZE,
+        None,
+    ) {
         vec![Effect::LoadLog {
             repo_id,
             scope,
@@ -151,10 +152,11 @@ pub(super) fn load_more_history(
     };
 
     repo_state.set_log_loading_more(true);
-    if repo_state
-        .loads_in_flight
-        .request_log(repo_state.history_scope, super::util::DEFAULT_LOG_PAGE_SIZE, Some(cursor.clone()))
-    {
+    if repo_state.loads_in_flight.request_log(
+        repo_state.history_scope,
+        super::util::DEFAULT_LOG_PAGE_SIZE,
+        Some(cursor.clone()),
+    ) {
         vec![Effect::LoadLog {
             repo_id,
             scope: repo_state.history_scope,

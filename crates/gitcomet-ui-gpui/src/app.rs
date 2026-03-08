@@ -243,6 +243,8 @@ fn bind_text_input_keys(cx: &mut App) {
         KeyBinding::new("ctrl-c", crate::kit::Copy, Some("TextInput")),
         KeyBinding::new("cmd-x", crate::kit::Cut, Some("TextInput")),
         KeyBinding::new("ctrl-x", crate::kit::Cut, Some("TextInput")),
+        KeyBinding::new("cmd-z", crate::kit::Undo, Some("TextInput")),
+        KeyBinding::new("ctrl-z", crate::kit::Undo, Some("TextInput")),
         #[cfg(target_os = "macos")]
         KeyBinding::new(
             "ctrl-cmd-space",

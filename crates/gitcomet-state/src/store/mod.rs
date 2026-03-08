@@ -58,9 +58,7 @@ impl AppStore {
                 }
 
                 let effects = {
-                    let mut app_state = thread_state
-                        .write()
-                        .unwrap_or_else(|e| e.into_inner());
+                    let mut app_state = thread_state.write().unwrap_or_else(|e| e.into_inner());
 
                     reduce(&mut repos, &id_alloc, &mut app_state, msg)
                 };
@@ -127,10 +125,7 @@ impl AppStore {
     }
 
     pub fn snapshot(&self) -> AppState {
-        self.state
-            .read()
-            .unwrap_or_else(|e| e.into_inner())
-            .clone()
+        self.state.read().unwrap_or_else(|e| e.into_inner()).clone()
     }
 }
 

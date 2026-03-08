@@ -647,7 +647,10 @@ fn emit_conflict_markers(
             }
 
             let ours_end = ours_lines.len().saturating_sub(suffix_len).max(prefix_len);
-            let theirs_end = theirs_lines.len().saturating_sub(suffix_len).max(prefix_len);
+            let theirs_end = theirs_lines
+                .len()
+                .saturating_sub(suffix_len)
+                .max(prefix_len);
             let ours_conflict = &ours_lines[prefix_len..ours_end];
             let theirs_conflict = &theirs_lines[prefix_len..theirs_end];
 
