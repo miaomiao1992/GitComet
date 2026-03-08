@@ -246,12 +246,11 @@ pub(super) fn canonicalize_path(path: PathBuf) -> PathBuf {
 
 #[cfg(windows)]
 fn strip_windows_verbatim_prefix(path: PathBuf) -> PathBuf {
-    let path_text = path.to_string_lossy();
-    if let Some(stripped) = path_text.strip_prefix(r"\\?\UNC\") {
-        return PathBuf::from(format!(r"\\{stripped}"));
+    if let Ok(stripped) = path.strip_prefix(Path::new(r"\\?\UNC\")) {
+        return Path::new(r"\\").join(stripped);
     }
-    if let Some(stripped) = path_text.strip_prefix(r"\\?\") {
-        return PathBuf::from(stripped);
+    if let Ok(stripped) = path.strip_prefix(Path::new(r"\\?\")) {
+        return stripped.to_path_buf();
     }
     path
 }

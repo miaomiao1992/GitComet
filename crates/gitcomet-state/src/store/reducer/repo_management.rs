@@ -92,12 +92,12 @@ pub(super) fn restore_session(
 
         state.repos.push({
             let mut repo_state = crate::model::RepoState::new_opening(repo_id, spec.clone());
-            let workdir_key = spec.workdir.to_string_lossy();
-            if let Some(scope) = repo_history_scopes.get(workdir_key.as_ref()).copied() {
+            let workdir_key = session::path_storage_key(&spec.workdir);
+            if let Some(scope) = repo_history_scopes.get(&workdir_key).copied() {
                 repo_state.history_scope = scope;
             }
             if let Some(enabled) = repo_fetch_prune_deleted_remote_tracking_branches
-                .get(workdir_key.as_ref())
+                .get(&workdir_key)
                 .copied()
             {
                 repo_state.fetch_prune_deleted_remote_tracking_branches = enabled;

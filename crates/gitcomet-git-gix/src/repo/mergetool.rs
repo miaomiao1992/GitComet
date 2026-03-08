@@ -1,8 +1,10 @@
 use super::GixRepo;
+use crate::util::git_stage_blob_spec;
 use gitcomet_core::error::{Error, ErrorKind};
 use gitcomet_core::services::{
     CommandOutput, MergetoolResult, Result, validate_conflict_resolution_text,
 };
+use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -406,18 +408,27 @@ fn build_stage_paths(
         } else {
             (tmp_dir.path().to_path_buf(), Some(tmp_dir))
         };
-        merge_base = PathBuf::from(
-            merge_base
-                .file_name()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .to_string(),
-        );
+        merge_base = PathBuf::from(merge_base.file_name().unwrap_or_default());
 
-        let merge_base_name = merge_base.to_string_lossy();
-        let base = tmp_dir_path.join(format!("{merge_base_name}_BASE_{pid}{ext}"));
-        let local = tmp_dir_path.join(format!("{merge_base_name}_LOCAL_{pid}{ext}"));
-        let remote = tmp_dir_path.join(format!("{merge_base_name}_REMOTE_{pid}{ext}"));
+        let merge_base_name = merge_base.file_name().unwrap_or_default();
+        let base = tmp_dir_path.join(build_stage_variant_file_name(
+            merge_base_name,
+            "BASE",
+            pid,
+            &ext,
+        ));
+        let local = tmp_dir_path.join(build_stage_variant_file_name(
+            merge_base_name,
+            "LOCAL",
+            pid,
+            &ext,
+        ));
+        let remote = tmp_dir_path.join(build_stage_variant_file_name(
+            merge_base_name,
+            "REMOTE",
+            pid,
+            &ext,
+        ));
 
         return Ok(StagePaths {
             workdir: workdir.to_path_buf(),
@@ -431,14 +442,25 @@ fn build_stage_paths(
 
     let merge_base = PathBuf::from(".").join(merge_base);
     let parent = merge_base.parent().unwrap_or(Path::new("."));
-    let merge_base_name = merge_base
-        .file_name()
-        .unwrap_or_default()
-        .to_string_lossy()
-        .to_string();
-    let base = parent.join(format!("{merge_base_name}_BASE_{pid}{ext}"));
-    let local = parent.join(format!("{merge_base_name}_LOCAL_{pid}{ext}"));
-    let remote = parent.join(format!("{merge_base_name}_REMOTE_{pid}{ext}"));
+    let merge_base_name = merge_base.file_name().unwrap_or_default();
+    let base = parent.join(build_stage_variant_file_name(
+        merge_base_name,
+        "BASE",
+        pid,
+        &ext,
+    ));
+    let local = parent.join(build_stage_variant_file_name(
+        merge_base_name,
+        "LOCAL",
+        pid,
+        &ext,
+    ));
+    let remote = parent.join(build_stage_variant_file_name(
+        merge_base_name,
+        "REMOTE",
+        pid,
+        &ext,
+    ));
 
     Ok(StagePaths {
         workdir: workdir.to_path_buf(),
@@ -450,14 +472,28 @@ fn build_stage_paths(
     })
 }
 
-fn split_merged_path_and_extension(path: &Path) -> (PathBuf, String) {
+fn split_merged_path_and_extension(path: &Path) -> (PathBuf, Option<OsString>) {
     let mut merge_base = path.to_path_buf();
-    let Some(ext) = path.extension() else {
-        return (merge_base, String::new());
-    };
-    let ext = format!(".{}", ext.to_string_lossy());
-    merge_base.set_extension("");
+    let ext = path.extension().map(OsStr::to_os_string);
+    if ext.is_some() {
+        merge_base.set_extension("");
+    }
     (merge_base, ext)
+}
+
+fn build_stage_variant_file_name(
+    base_name: &OsStr,
+    role: &str,
+    pid: u32,
+    ext: &Option<OsString>,
+) -> OsString {
+    let mut name = base_name.to_os_string();
+    name.push(format!("_{role}_{pid}"));
+    if let Some(ext) = ext.as_deref() {
+        name.push(".");
+        name.push(ext);
+    }
+    name
 }
 
 fn normalize_path_for_platform(path: &Path) -> PathBuf {
@@ -569,12 +605,12 @@ fn parse_git_bool(value: &str) -> Option<bool> {
 /// Stage 1 = base, 2 = ours, 3 = theirs.
 /// Returns `Ok(None)` if the stage doesn't exist for this file.
 fn git_show_stage_bytes(workdir: &Path, stage: u8, path: &Path) -> Result<Option<Vec<u8>>> {
-    let rev = format!(":{stage}:{}", path.to_string_lossy());
+    let rev = git_stage_blob_spec(stage, path)?;
     let output = Command::new("git")
         .arg("-C")
         .arg(workdir)
         .arg("show")
-        .arg(&rev)
+        .arg(rev)
         .output()
         .map_err(|e| Error::new(ErrorKind::Io(e.kind())))?;
 

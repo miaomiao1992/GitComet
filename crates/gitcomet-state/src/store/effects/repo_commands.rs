@@ -4,10 +4,10 @@ use gitcomet_core::services::{
     CommandOutput, ConflictSide, GitRepository, PullMode, RemoteUrlKind, ResetMode,
 };
 use std::path::{Path, PathBuf};
-use std::sync::{mpsc, Arc};
+use std::sync::{Arc, mpsc};
 
-use super::super::{executor::TaskExecutor, RepoId};
-use super::util::{send_or_log, spawn_with_repo, RepoMap};
+use super::super::{RepoId, executor::TaskExecutor};
+use super::util::{RepoMap, send_or_log, spawn_with_repo};
 
 fn schedule_repo_command<F>(
     executor: &TaskExecutor,

@@ -2473,9 +2473,10 @@ fn resolved_counter_consistent_with_visible_map_after_incremental_picks() {
     assert_eq!(resolved_conflict_count(&segments), 0);
     let map = build_three_way_visible_map(total_lines, &conflict_ranges, &segments, true);
     assert_eq!(map.len(), 8);
-    assert!(map
-        .iter()
-        .all(|item| matches!(item, ThreeWayVisibleItem::Line(_))));
+    assert!(
+        map.iter()
+            .all(|item| matches!(item, ThreeWayVisibleItem::Line(_)))
+    );
 
     // Step 1: resolve block 0 (2 lines → 1 collapsed row)
     mark_block_resolved(&mut segments, 0);

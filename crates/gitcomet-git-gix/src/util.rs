@@ -3,6 +3,7 @@ use gitcomet_core::domain::{
 };
 use gitcomet_core::error::{Error, ErrorKind};
 use gitcomet_core::services::{CommandOutput, Result};
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::str;
@@ -21,6 +22,86 @@ pub(crate) fn run_git_simple(mut cmd: Command, label: &str) -> Result<()> {
     }
 
     Ok(())
+}
+
+pub(crate) fn path_buf_from_git_bytes(path_bytes: &[u8], context: &str) -> Result<PathBuf> {
+    #[cfg(unix)]
+    {
+        use std::ffi::OsStr;
+        use std::os::unix::ffi::OsStrExt as _;
+
+        let _ = context;
+        Ok(PathBuf::from(OsStr::from_bytes(path_bytes)))
+    }
+
+    #[cfg(windows)]
+    {
+        let path_text = std::str::from_utf8(path_bytes).map_err(|_| {
+            Error::new(ErrorKind::Backend(format!(
+                "{context}: non-UTF-8 git path bytes are not representable on Windows",
+            )))
+        })?;
+        Ok(PathBuf::from(path_text))
+    }
+}
+
+pub(crate) fn git_stage_blob_spec(stage: u8, path: &Path) -> Result<OsString> {
+    git_revision_with_path(&format!(":{stage}:"), path, "build conflict stage revision")
+}
+
+pub(crate) fn git_stash_untracked_blob_spec(index: usize, path: &Path) -> Result<OsString> {
+    git_revision_with_path(
+        &format!("stash@{{{index}}}^3:"),
+        path,
+        "build stash untracked blob revision",
+    )
+}
+
+fn git_revision_with_path(prefix: &str, path: &Path, context: &str) -> Result<OsString> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::{OsStrExt as _, OsStringExt as _};
+
+        let _ = context;
+        let path_bytes = path.as_os_str().as_bytes();
+        let mut rev = Vec::with_capacity(prefix.len().saturating_add(path_bytes.len()));
+        rev.extend_from_slice(prefix.as_bytes());
+        rev.extend_from_slice(path_bytes);
+        Ok(OsString::from_vec(rev))
+    }
+
+    #[cfg(windows)]
+    {
+        let path_text = path.to_str().ok_or_else(|| {
+            Error::new(ErrorKind::Backend(format!(
+                "{context}: non-Unicode path cannot be represented for git command arguments",
+            )))
+        })?;
+        Ok(OsString::from(format!(
+            "{prefix}{}",
+            path_text.replace('\\', "/")
+        )))
+    }
+}
+
+fn command_path_budget_len(path: &Path) -> usize {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt as _;
+
+        path.as_os_str().as_bytes().len().saturating_add(1)
+    }
+
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt as _;
+
+        path.as_os_str()
+            .encode_wide()
+            .count()
+            .saturating_mul(std::mem::size_of::<u16>())
+            .saturating_add(std::mem::size_of::<u16>())
+    }
 }
 
 pub(crate) fn run_git_simple_with_paths(
@@ -42,7 +123,7 @@ pub(crate) fn run_git_simple_with_paths(
     let mut batch: Vec<&Path> = Vec::with_capacity(paths.len().min(MAX_PATHS_PER_CMD));
     let mut bytes: usize = 0;
     for path in paths {
-        let path_len = path.to_string_lossy().len() + 1;
+        let path_len = command_path_budget_len(path);
 
         if !batch.is_empty()
             && (batch.len() >= MAX_PATHS_PER_CMD
@@ -295,6 +376,43 @@ mod tests {
     const GITPY_REV_LIST_SINGLE: &str = include_str!("../tests/fixtures/gitpython/rev_list_single");
     const GITPY_REV_LIST_COMMIT_STATS: &str =
         include_str!("../tests/fixtures/gitpython/rev_list_commit_stats");
+
+    #[cfg(unix)]
+    #[test]
+    fn path_buf_from_git_bytes_preserves_non_utf8_bytes() {
+        use std::ffi::OsStr;
+        use std::os::unix::ffi::OsStrExt as _;
+
+        let raw_path = b"docs/\xff-topic.md";
+        let path = path_buf_from_git_bytes(raw_path, "test").expect("path conversion");
+        assert_eq!(path.as_os_str(), OsStr::from_bytes(raw_path));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn git_stage_blob_spec_preserves_non_utf8_path_bytes() {
+        use std::ffi::OsStr;
+        use std::os::unix::ffi::OsStrExt as _;
+
+        let path = Path::new(OsStr::from_bytes(b"nested/\xff-file.bin"));
+        let rev = git_stage_blob_spec(2, path).expect("stage spec");
+        assert_eq!(rev.as_os_str().as_bytes(), b":2:nested/\xff-file.bin");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn git_stage_blob_spec_normalizes_windows_separators() {
+        let rev = git_stage_blob_spec(3, Path::new(r"nested\file.bin")).expect("stage spec");
+        assert_eq!(rev.to_string_lossy(), ":3:nested/file.bin");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn git_stash_untracked_blob_spec_normalizes_windows_separators() {
+        let rev =
+            git_stash_untracked_blob_spec(4, Path::new(r"nested\file.bin")).expect("stash spec");
+        assert_eq!(rev.to_string_lossy(), "stash@{4}^3:nested/file.bin");
+    }
 
     fn gitpython_raw_to_name_status_line(raw: &str) -> String {
         let mut parts = raw.split_whitespace();

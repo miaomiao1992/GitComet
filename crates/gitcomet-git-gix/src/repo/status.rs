@@ -1,10 +1,10 @@
 use super::GixRepo;
+use crate::util::path_buf_from_git_bytes;
 use gitcomet_core::domain::{
     FileConflictKind, FileStatus, FileStatusKind, RepoStatus, UpstreamDivergence,
 };
 use gitcomet_core::error::{Error, ErrorKind};
 use gitcomet_core::services::Result;
-use gix::bstr::ByteSlice as _;
 use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 use std::path::PathBuf;
 use std::process::Command;
@@ -32,7 +32,10 @@ impl GixRepo {
                     gix::status::index_worktree::Item::Modification {
                         rela_path, status, ..
                     } => {
-                        let path = PathBuf::from(rela_path.to_str_lossy().into_owned());
+                        let path = path_buf_from_git_bytes(
+                            rela_path.as_ref(),
+                            "gix status index/worktree modification path",
+                        )?;
                         let (kind, conflict) = map_entry_status(status);
                         unstaged.push(FileStatus {
                             path,
@@ -48,7 +51,10 @@ impl GixRepo {
                             gix::dir::entry::Status::Pruned => continue,
                         };
 
-                        let path = PathBuf::from(entry.rela_path.to_str_lossy().into_owned());
+                        let path = path_buf_from_git_bytes(
+                            entry.rela_path.as_ref(),
+                            "gix status directory entry path",
+                        )?;
                         unstaged.push(FileStatus {
                             path,
                             kind,
@@ -66,8 +72,10 @@ impl GixRepo {
                             FileStatusKind::Renamed
                         };
 
-                        let path =
-                            PathBuf::from(dirwalk_entry.rela_path.to_str_lossy().into_owned());
+                        let path = path_buf_from_git_bytes(
+                            dirwalk_entry.rela_path.as_ref(),
+                            "gix status rewrite path",
+                        )?;
                         unstaged.push(FileStatus {
                             path,
                             kind,
@@ -81,19 +89,31 @@ impl GixRepo {
 
                     let (path, kind) = match change {
                         ChangeRef::Addition { location, .. } => (
-                            PathBuf::from(location.to_str_lossy().into_owned()),
+                            path_buf_from_git_bytes(
+                                location.as_ref(),
+                                "gix status staged addition path",
+                            )?,
                             FileStatusKind::Added,
                         ),
                         ChangeRef::Deletion { location, .. } => (
-                            PathBuf::from(location.to_str_lossy().into_owned()),
+                            path_buf_from_git_bytes(
+                                location.as_ref(),
+                                "gix status staged deletion path",
+                            )?,
                             FileStatusKind::Deleted,
                         ),
                         ChangeRef::Modification { location, .. } => (
-                            PathBuf::from(location.to_str_lossy().into_owned()),
+                            path_buf_from_git_bytes(
+                                location.as_ref(),
+                                "gix status staged modification path",
+                            )?,
                             FileStatusKind::Modified,
                         ),
                         ChangeRef::Rewrite { location, copy, .. } => (
-                            PathBuf::from(location.to_str_lossy().into_owned()),
+                            path_buf_from_git_bytes(
+                                location.as_ref(),
+                                "gix status staged rewrite path",
+                            )?,
                             if copy {
                                 FileStatusKind::Added
                             } else {
@@ -196,14 +216,20 @@ fn gix_unmerged_conflicts(repo: &gix::Repository) -> Result<Vec<(PathBuf, FileCo
         .index_or_load_from_head_or_empty()
         .map_err(|e| Error::new(ErrorKind::Backend(format!("gix index: {e}"))))?;
     let path_backing = index.path_backing();
+    let mut stage_entries = Vec::new();
 
-    let stage_entries = index.entries().iter().filter_map(|entry| {
+    for entry in index.entries() {
         let stage = entry.stage_raw() as u8;
-        (1..=3).contains(&stage).then(|| {
-            let path = PathBuf::from(entry.path_in(path_backing).to_str_lossy().into_owned());
-            (path, stage)
-        })
-    });
+        if !(1..=3).contains(&stage) {
+            continue;
+        }
+
+        let path = path_buf_from_git_bytes(
+            entry.path_in(path_backing).as_ref(),
+            "gix index unmerged conflict path",
+        )?;
+        stage_entries.push((path, stage));
+    }
 
     Ok(collect_unmerged_conflicts(stage_entries))
 }

@@ -11,6 +11,8 @@ const CRASH_ISSUE_TEMPLATE: &str = "crash_report.md";
 const PENDING_REPORT_FILE: &str = "pending-report-path.txt";
 const MAX_TITLE_CHARS: usize = 96;
 const MAX_BACKTRACE_CHARS: usize = 2_400;
+#[cfg(windows)]
+const PENDING_REPORT_PATH_WIDE_PREFIX: &str = "gitcomet-crashlog-utf16le:";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct StartupCrashReport {
@@ -34,11 +36,7 @@ pub fn take_startup_report() -> Option<StartupCrashReport> {
 
 fn take_startup_report_from_dir(dir: &Path) -> Option<StartupCrashReport> {
     let pending_path = pending_report_path(dir);
-    let crash_log_path = std::fs::read_to_string(&pending_path)
-        .ok()
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .map(PathBuf::from)?;
+    let crash_log_path = read_pending_report_path(&pending_path)?;
     let _ = std::fs::remove_file(&pending_path);
     let crash_log = std::fs::read_to_string(&crash_log_path).ok()?;
     Some(build_startup_report(crash_log_path, &crash_log))
@@ -99,7 +97,7 @@ fn write_panic_log(info: &std::panic::PanicHookInfo<'_>) {
     let _ = writeln!(file, "backtrace:\n{bt}");
     let _ = writeln!(file);
     let _ = file.flush();
-    let _ = std::fs::write(pending_report_path(&dir), path.to_string_lossy().as_ref());
+    let _ = write_pending_report_path(&pending_report_path(&dir), &path);
 }
 
 fn crash_dir() -> Option<PathBuf> {
@@ -159,6 +157,116 @@ fn open_append(path: &Path) -> std::io::Result<File> {
 
 fn pending_report_path(dir: &Path) -> PathBuf {
     dir.join(PENDING_REPORT_FILE)
+}
+
+fn write_pending_report_path(marker: &Path, crash_log_path: &Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt as _;
+        std::fs::write(marker, crash_log_path.as_os_str().as_bytes())
+    }
+
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt as _;
+
+        let mut raw = Vec::new();
+        for unit in crash_log_path.as_os_str().encode_wide() {
+            raw.extend_from_slice(&unit.to_le_bytes());
+        }
+        let mut out = String::with_capacity(PENDING_REPORT_PATH_WIDE_PREFIX.len() + raw.len() * 2);
+        out.push_str(PENDING_REPORT_PATH_WIDE_PREFIX);
+        out.push_str(&hex_encode(&raw));
+        std::fs::write(marker, out)
+    }
+
+    #[cfg(not(any(unix, windows)))]
+    {
+        std::fs::write(marker, crash_log_path.to_string_lossy().as_ref())
+    }
+}
+
+fn read_pending_report_path(marker: &Path) -> Option<PathBuf> {
+    #[cfg(unix)]
+    {
+        use std::ffi::OsString;
+        use std::os::unix::ffi::OsStringExt as _;
+
+        let bytes = std::fs::read(marker).ok()?;
+        if bytes.is_empty() {
+            return None;
+        }
+        Some(PathBuf::from(OsString::from_vec(bytes)))
+    }
+
+    #[cfg(windows)]
+    {
+        use std::ffi::OsString;
+        use std::os::windows::ffi::OsStringExt as _;
+
+        let raw = std::fs::read_to_string(marker).ok()?;
+        let value = raw.trim();
+        if let Some(hex) = value.strip_prefix(PENDING_REPORT_PATH_WIDE_PREFIX)
+            && let Some(bytes) = hex_decode(hex)
+            && bytes.len() % 2 == 0
+        {
+            let mut wide = Vec::with_capacity(bytes.len() / 2);
+            for chunk in bytes.chunks_exact(2) {
+                wide.push(u16::from_le_bytes([chunk[0], chunk[1]]));
+            }
+            return Some(PathBuf::from(OsString::from_wide(&wide)));
+        }
+        if value.is_empty() {
+            None
+        } else {
+            Some(PathBuf::from(value))
+        }
+    }
+
+    #[cfg(not(any(unix, windows)))]
+    {
+        std::fs::read_to_string(marker)
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .map(PathBuf::from)
+    }
+}
+
+#[cfg(windows)]
+fn hex_encode(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for &byte in bytes {
+        out.push(HEX[(byte >> 4) as usize] as char);
+        out.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    out
+}
+
+#[cfg(windows)]
+fn hex_decode(hex: &str) -> Option<Vec<u8>> {
+    if hex.len() % 2 != 0 {
+        return None;
+    }
+    let mut out = Vec::with_capacity(hex.len() / 2);
+    let bytes = hex.as_bytes();
+    for pair in bytes.chunks_exact(2) {
+        let high = hex_value(pair[0])?;
+        let low = hex_value(pair[1])?;
+        out.push((high << 4) | low);
+    }
+    Some(out)
+}
+
+#[cfg(windows)]
+fn hex_value(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
 }
 
 fn unix_time_ms() -> u128 {

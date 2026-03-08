@@ -1,12 +1,13 @@
 use crate::model::RepoId;
 use crate::msg::{Msg, RepoExternalChange};
-use globset::{Glob, GlobMatcher};
 use notify::event::{AccessKind, AccessMode};
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use rustc_hash::FxHashMap as HashMap;
 use std::any::Any;
+use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc;
@@ -110,12 +111,11 @@ fn canonicalize_path(path: PathBuf) -> PathBuf {
 
 #[cfg(windows)]
 fn strip_windows_verbatim_prefix(path: PathBuf) -> PathBuf {
-    let path_text = path.to_string_lossy();
-    if let Some(stripped) = path_text.strip_prefix(r"\\?\UNC\") {
-        return PathBuf::from(format!(r"\\{stripped}"));
+    if let Ok(stripped) = path.strip_prefix(Path::new(r"\\?\UNC\")) {
+        return Path::new(r"\\").join(stripped);
     }
-    if let Some(stripped) = path_text.strip_prefix(r"\\?\") {
-        return PathBuf::from(stripped);
+    if let Ok(stripped) = path.strip_prefix(Path::new(r"\\?\")) {
+        return stripped.to_path_buf();
     }
     path
 }
@@ -257,167 +257,108 @@ struct RepoMonitorHandle {
     join: thread::JoinHandle<()>,
 }
 
-#[derive(Clone)]
-struct GitignoreRule {
-    matcher: GlobMatcher,
-    negated: bool,
-    dir_self_only: bool,
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+struct IgnoreCacheKey {
+    rel: PathBuf,
+    is_dir_hint: Option<bool>,
 }
 
 #[derive(Clone, Default)]
 struct GitignoreRules {
-    rules: Vec<GitignoreRule>,
+    workdir: Option<PathBuf>,
+    cache: HashMap<IgnoreCacheKey, bool>,
 }
 
 impl GitignoreRules {
-    fn load(workdir: &Path, git_dir: Option<&Path>) -> Self {
-        let mut rules = Vec::new();
-        load_gitignore_file_into(&mut rules, &workdir.join(".gitignore"), true);
-        if let Some(git_dir) = git_dir {
-            load_gitignore_file_into(&mut rules, &git_dir.join("info").join("exclude"), true);
+    fn load(workdir: &Path, _git_dir: Option<&Path>) -> Self {
+        Self {
+            workdir: Some(workdir.to_path_buf()),
+            cache: HashMap::default(),
         }
-        Self { rules }
     }
 
-    fn is_ignored_rel(&self, rel: &Path, is_dir_hint: Option<bool>) -> bool {
-        let mut ignored = false;
-        for rule in &self.rules {
-            if rule.dir_self_only && is_dir_hint != Some(true) {
-                continue;
-            }
-            if rule.matcher.is_match(rel) {
-                ignored = !rule.negated;
-            }
+    fn is_ignored_rel(&mut self, rel: &Path, is_dir_hint: Option<bool>) -> bool {
+        let Some(workdir) = &self.workdir else {
+            return false;
+        };
+
+        let key = IgnoreCacheKey {
+            rel: rel.to_path_buf(),
+            is_dir_hint,
+        };
+        if let Some(ignored) = self.cache.get(&key) {
+            return *ignored;
         }
+
+        let ignored = query_git_check_ignore(workdir, rel, is_dir_hint).unwrap_or(false);
+        self.cache.insert(key, ignored);
         ignored
     }
 }
 
-fn load_gitignore_file_into(rules: &mut Vec<GitignoreRule>, path: &Path, base_is_repo_root: bool) {
-    if !base_is_repo_root {
-        return;
+fn query_git_check_ignore(workdir: &Path, rel: &Path, is_dir_hint: Option<bool>) -> Option<bool> {
+    let exact = run_git_check_ignore(workdir, rel)?;
+    if exact {
+        return Some(true);
     }
-    let Ok(contents) = fs::read_to_string(path) else {
-        return;
-    };
-    for line in contents.lines() {
-        let line = line.trim();
-        if line.is_empty() {
-            continue;
-        }
 
-        // Comments (unless escaped).
-        if line.starts_with('#') {
-            continue;
-        }
+    if is_dir_hint != Some(true) {
+        return Some(false);
+    }
 
-        let (negated, pattern) = parse_gitignore_pattern(line);
-        let Some(pattern) = pattern else {
-            continue;
-        };
-        let (globs, dir_self_only_globs) = gitignore_pattern_to_globs(&pattern);
-        for glob in globs {
-            let Ok(glob) = Glob::new(&glob) else {
-                continue;
-            };
-            rules.push(GitignoreRule {
-                matcher: glob.compile_matcher(),
-                negated,
-                dir_self_only: false,
-            });
-        }
-        for glob in dir_self_only_globs {
-            let Ok(glob) = Glob::new(&glob) else {
-                continue;
-            };
-            rules.push(GitignoreRule {
-                matcher: glob.compile_matcher(),
-                negated,
-                dir_self_only: true,
-            });
-        }
+    let rel_dir = rel_path_with_trailing_separator(rel);
+    if rel_dir == rel {
+        let rel_child = rel.join(".gitcomet-ignore-probe");
+        return run_git_check_ignore(workdir, &rel_child);
+    }
+    if run_git_check_ignore(workdir, &rel_dir)? {
+        return Some(true);
+    }
+
+    // Directory-only patterns (e.g. `target/`) don't always match the directory
+    // path itself in `git check-ignore`; probing a synthetic child path mirrors
+    // how git applies the rule to contents.
+    let rel_child = rel.join(".gitcomet-ignore-probe");
+    run_git_check_ignore(workdir, &rel_child)
+}
+
+fn run_git_check_ignore(workdir: &Path, rel: &Path) -> Option<bool> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(workdir)
+        .arg("check-ignore")
+        .arg("--quiet")
+        .arg("--")
+        .arg(rel)
+        .output()
+        .ok()?;
+
+    match output.status.code() {
+        Some(0) => Some(true),
+        Some(1) => Some(false),
+        _ => None,
     }
 }
 
-fn parse_gitignore_pattern(line: &str) -> (bool, Option<String>) {
-    // Handle escaping of leading '!' and '#'.
-    if let Some(rest) = line.strip_prefix("\\!") {
-        return (false, Some(rest.to_string()));
-    }
-    if let Some(rest) = line.strip_prefix("\\#") {
-        return (false, Some(rest.to_string()));
-    }
+fn rel_path_with_trailing_separator(rel: &Path) -> PathBuf {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::{OsStrExt as _, OsStringExt as _};
 
-    let (negated, line) = if let Some(rest) = line.strip_prefix('!') {
-        (true, rest)
-    } else {
-        (false, line)
-    };
-
-    let line = line.trim();
-    if line.is_empty() {
-        return (negated, None);
-    }
-
-    // Ignore a bare "/" rule (special in gitignore); treat as unusable here.
-    if line == "/" {
-        return (negated, None);
-    }
-
-    // For the purposes of this watcher, we treat root `.gitignore` semantics:
-    // - Patterns containing '/' are anchored to the repo root.
-    // - Patterns without '/' match at any directory depth.
-    //
-    // This isn't a full implementation of gitignore semantics, but it covers the common cases
-    // that cause watcher churn (e.g. `target/`, `node_modules/`, `*.log`).
-    (negated, Some(line.to_string()))
-}
-
-fn gitignore_pattern_to_globs(pattern: &str) -> (Vec<String>, Vec<String>) {
-    let mut out = Vec::with_capacity(4);
-    let mut dir_self_only = Vec::with_capacity(2);
-
-    // Strip leading "./" and leading "/" (repo-root anchoring).
-    let mut pat = pattern.trim_start_matches("./");
-    if let Some(stripped) = pat.strip_prefix('/') {
-        pat = stripped;
-    }
-
-    if pat.is_empty() {
-        return (out, dir_self_only);
-    }
-
-    let dir_only = pat.ends_with('/');
-    let pat = pat.trim_end_matches('/');
-    if pat.is_empty() {
-        return (out, dir_self_only);
-    }
-
-    let anchored = pat.contains('/');
-
-    let mut bases = Vec::with_capacity(if anchored { 1 } else { 2 });
-    if anchored {
-        bases.push(pat.to_string());
-    } else {
-        bases.push(pat.to_string());
-        bases.push(format!("**/{pat}"));
-    }
-
-    for base in bases {
-        if dir_only {
-            out.push(format!("{base}/**"));
-            dir_self_only.push(base);
-        } else {
-            out.push(base.clone());
-            out.push(format!("{base}/**"));
+        let mut bytes = rel.as_os_str().as_bytes().to_vec();
+        if bytes.last() == Some(&b'/') {
+            return rel.to_path_buf();
         }
+        bytes.push(b'/');
+        PathBuf::from(OsString::from_vec(bytes))
     }
 
-    out.sort();
-    out.dedup();
-    dir_self_only.sort();
-    dir_self_only.dedup();
-    (out, dir_self_only)
+    #[cfg(not(unix))]
+    {
+        let mut rel_with_sep = rel.as_os_str().to_os_string();
+        rel_with_sep.push("/");
+        PathBuf::from(rel_with_sep)
+    }
 }
 
 fn repo_monitor_thread(
@@ -474,8 +415,8 @@ fn repo_monitor_thread(
         return;
     }
 
-    if let Some(git_dir) = &git_dir {
-        if let Err(error) = watcher
+    if let Some(git_dir) = &git_dir
+        && let Err(error) = watcher
             .watch(git_dir, RecursiveMode::Recursive)
             .or_else(|_| watcher.watch(git_dir, RecursiveMode::NonRecursive))
         {
@@ -489,7 +430,6 @@ fn repo_monitor_thread(
                 ),
             );
         }
-    }
 
     let debounce = Duration::from_millis(250);
     let max_delay = Duration::from_secs(2);
@@ -693,7 +633,7 @@ fn is_gitignore_config_path(workdir: &Path, git_dir: Option<&Path>, path: &Path)
 
 fn is_ignored_worktree_path_with_hint(
     workdir: &Path,
-    gitignore: &GitignoreRules,
+    gitignore: &mut GitignoreRules,
     path: &Path,
     is_dir_hint: Option<bool>,
 ) -> bool {
@@ -724,7 +664,37 @@ mod tests {
     use super::*;
     use notify::EventKind;
     use notify::event::{AccessKind, AccessMode, CreateKind};
+    use std::process::Command;
     use std::time::SystemTime;
+
+    #[cfg(windows)]
+    const NULL_DEVICE: &str = "NUL";
+    #[cfg(not(windows))]
+    const NULL_DEVICE: &str = "/dev/null";
+
+    fn run_git(repo: &Path, args: &[&str]) {
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(repo)
+            .args(args)
+            .output()
+            .expect("run git command");
+        assert!(
+            output.status.success(),
+            "git {:?} failed: stdout={} stderr={}",
+            args,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    fn init_repo_for_ignore_tests(workdir: &Path) {
+        let _ = fs::create_dir_all(workdir);
+        run_git(workdir, &["init"]);
+        // Keep tests deterministic and independent from host global excludes.
+        run_git(workdir, &["config", "core.excludesFile", NULL_DEVICE]);
+        run_git(workdir, &["config", "core.fileMode", "false"]);
+    }
 
     #[test]
     fn resolve_git_dir_handles_dot_git_directory() {
@@ -945,7 +915,7 @@ mod tests {
     }
 
     #[test]
-    fn gitignore_rules_ignore_common_build_outputs() {
+    fn gitignore_rules_match_git_semantics_for_nested_negation_and_anchoring() {
         let dir = std::env::temp_dir().join(format!(
             "gitcomet-monitor-test-{}-{}",
             std::process::id(),
@@ -955,32 +925,100 @@ mod tests {
                 .as_nanos()
         ));
         let workdir = dir.join("repo");
-        let _ = fs::create_dir_all(&workdir);
-        fs::write(workdir.join(".gitignore"), "target/\n*.log\n!keep.log\n")
-            .expect("write .gitignore");
+        init_repo_for_ignore_tests(&workdir);
+        let git_dir = resolve_git_dir(&workdir);
 
-        let rules = GitignoreRules::load(&workdir, None);
-        assert!(rules.is_ignored_rel(Path::new("target/debug/app"), None));
-        assert!(rules.is_ignored_rel(Path::new("foo.log"), None));
-        assert!(!rules.is_ignored_rel(Path::new("keep.log"), None));
+        fs::write(
+            workdir.join(".gitignore"),
+            "target/\n*.gitcomet-log\n!keep.gitcomet-log\n/build/output\nlogs/*.tmp\n",
+        )
+        .expect("write .gitignore");
+        fs::create_dir_all(workdir.join("logs")).expect("create logs directory");
+        fs::write(workdir.join("logs/.gitignore"), "!keep.tmp\n").expect("write nested .gitignore");
+        fs::write(
+            git_dir
+                .as_ref()
+                .expect("git dir")
+                .join("info")
+                .join("exclude"),
+            "info-excluded.gitcomet\n",
+        )
+        .expect("write .git/info/exclude");
+        fs::create_dir_all(workdir.join("target")).expect("create target directory");
+
+        let mut rules = GitignoreRules::load(&workdir, git_dir.as_deref());
+        assert!(rules.is_ignored_rel(Path::new("target/debug/app"), Some(false)));
+        assert!(rules.is_ignored_rel(Path::new("foo.gitcomet-log"), Some(false)));
+        assert!(!rules.is_ignored_rel(Path::new("keep.gitcomet-log"), Some(false)));
+        assert!(rules.is_ignored_rel(Path::new("build/output"), Some(false)));
+        assert!(!rules.is_ignored_rel(Path::new("nested/build/output"), Some(false)));
+        assert!(rules.is_ignored_rel(Path::new("logs/drop.tmp"), Some(false)));
+        assert!(!rules.is_ignored_rel(Path::new("logs/keep.tmp"), Some(false)));
+        assert!(rules.is_ignored_rel(Path::new("info-excluded.gitcomet"), Some(false)));
+        assert!(rules.is_ignored_rel(Path::new("target"), Some(true)));
 
         // Ensure folder create events for ignored directories are treated as ignorable worktree
         // changes.
-        let mut rules_for_event = rules.clone();
         let event = notify::Event {
             kind: EventKind::Create(CreateKind::Folder),
             paths: vec![workdir.join("target")],
             attrs: Default::default(),
         };
         assert_eq!(
-            classify_repo_event(&workdir, None, &mut rules_for_event, &event),
+            classify_repo_event(&workdir, git_dir.as_deref(), &mut rules, &event),
             None
         );
+    }
 
-        // Slash-containing patterns are treated as anchored to the repo root.
-        fs::write(workdir.join(".gitignore"), "build/output\n").expect("write .gitignore");
-        let rules = GitignoreRules::load(&workdir, None);
-        assert!(rules.is_ignored_rel(Path::new("build/output"), None));
-        assert!(!rules.is_ignored_rel(Path::new("nested/build/output"), None));
+    #[test]
+    fn tracked_paths_are_not_treated_as_ignored() {
+        let dir = std::env::temp_dir().join(format!(
+            "gitcomet-monitor-test-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        let workdir = dir.join("repo");
+        init_repo_for_ignore_tests(&workdir);
+        let git_dir = resolve_git_dir(&workdir);
+
+        fs::write(
+            workdir.join(".gitignore"),
+            "*.tracked-ignore\n*.untracked-ignore\n",
+        )
+        .expect("write .gitignore");
+        fs::write(workdir.join("tracked.tracked-ignore"), "tracked\n").expect("write tracked file");
+        fs::write(workdir.join("new.untracked-ignore"), "untracked\n").expect("write ignored file");
+
+        run_git(&workdir, &["add", "-f", "tracked.tracked-ignore"]);
+
+        let mut rules = GitignoreRules::load(&workdir, git_dir.as_deref());
+        assert!(
+            !rules.is_ignored_rel(Path::new("tracked.tracked-ignore"), Some(false)),
+            "tracked paths must not be treated as ignored"
+        );
+        assert!(rules.is_ignored_rel(Path::new("new.untracked-ignore"), Some(false)));
+
+        let tracked_event = notify::Event {
+            kind: EventKind::Any,
+            paths: vec![workdir.join("tracked.tracked-ignore")],
+            attrs: Default::default(),
+        };
+        assert_eq!(
+            classify_repo_event(&workdir, git_dir.as_deref(), &mut rules, &tracked_event),
+            Some(RepoExternalChange::Worktree)
+        );
+
+        let ignored_event = notify::Event {
+            kind: EventKind::Any,
+            paths: vec![workdir.join("new.untracked-ignore")],
+            attrs: Default::default(),
+        };
+        assert_eq!(
+            classify_repo_event(&workdir, git_dir.as_deref(), &mut rules, &ignored_event),
+            None
+        );
     }
 }

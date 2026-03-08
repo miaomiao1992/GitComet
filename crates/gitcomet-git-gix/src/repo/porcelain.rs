@@ -1,7 +1,7 @@
 use super::GixRepo;
 use crate::util::{
-    parse_reflog_index, run_git_capture, run_git_simple, run_git_simple_with_paths,
-    unix_seconds_to_system_time,
+    git_stash_untracked_blob_spec, parse_reflog_index, run_git_capture, run_git_simple,
+    run_git_simple_with_paths, unix_seconds_to_system_time,
 };
 use gitcomet_core::domain::{CommitId, StashEntry};
 use gitcomet_core::error::{Error, ErrorKind};
@@ -284,12 +284,12 @@ impl GixRepo {
     }
 
     fn stash_untracked_blob_bytes(&self, index: usize, path: &Path) -> Result<Vec<u8>> {
-        let pathspec = path.to_string_lossy().replace('\\', "/");
+        let blob_rev = git_stash_untracked_blob_spec(index, path)?;
         let mut cmd = Command::new("git");
         cmd.arg("-C")
             .arg(&self.spec.workdir)
             .arg("show")
-            .arg(format!("stash@{{{index}}}^3:{pathspec}"));
+            .arg(blob_rev);
         let output = cmd
             .output()
             .map_err(|e| Error::new(ErrorKind::Io(e.kind())))?;

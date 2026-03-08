@@ -2,10 +2,10 @@ use crate::msg::Msg;
 use gitcomet_core::error::Error;
 use gitcomet_core::services::GitRepository;
 use std::path::{Path, PathBuf};
-use std::sync::{mpsc, Arc};
+use std::sync::{Arc, mpsc};
 
-use super::super::{executor::TaskExecutor, RepoId};
-use super::util::{send_or_log, spawn_with_repo, RepoMap};
+use super::super::{RepoId, executor::TaskExecutor};
+use super::util::{RepoMap, send_or_log, spawn_with_repo};
 
 fn schedule_repo_action_with_hook<F, H, M>(
     executor: &TaskExecutor,

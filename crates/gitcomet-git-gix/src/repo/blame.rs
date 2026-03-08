@@ -1,5 +1,5 @@
 use super::GixRepo;
-use crate::util::{run_git_capture, run_git_with_output};
+use crate::util::{git_stage_blob_spec, run_git_capture, run_git_with_output};
 use gitcomet_core::error::{Error, ErrorKind};
 use gitcomet_core::services::{BlameLine, CommandOutput, ConflictSide, Result};
 use rustc_hash::FxHashMap as HashMap;
@@ -155,6 +155,7 @@ fn unmerged_stage_exists(workdir: &Path, path: &Path, desired_stage: u8) -> Resu
 }
 
 fn read_unmerged_stage_bytes(workdir: &Path, path: &Path, stage: u8) -> Result<Vec<u8>> {
+    let rev = git_stage_blob_spec(stage, path)?;
     let mut cmd = Command::new("git");
     cmd.arg("-C")
         .arg(workdir)
@@ -164,7 +165,7 @@ fn read_unmerged_stage_bytes(workdir: &Path, path: &Path, stage: u8) -> Result<V
         .arg("show")
         .arg("--no-ext-diff")
         .arg("--pretty=format:")
-        .arg(format!(":{stage}:{}", path.to_string_lossy()));
+        .arg(rev);
 
     let output = cmd
         .output()

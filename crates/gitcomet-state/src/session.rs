@@ -81,6 +81,9 @@ struct UiSessionFileV2 {
 const SESSION_FILE_VERSION_V1: u32 = 1;
 const SESSION_FILE_VERSION_V2: u32 = 2;
 const CURRENT_SESSION_FILE_VERSION: u32 = SESSION_FILE_VERSION_V2;
+const SESSION_PATH_BYTES_PREFIX: &str = "gitcomet-path-bytes:";
+#[cfg(windows)]
+const SESSION_PATH_WIDE_PREFIX: &str = "gitcomet-path-utf16le:";
 
 const SESSION_FILE_ENV: &str = "GITCOMET_SESSION_FILE";
 const DISABLE_SESSION_PERSIST_ENV: &str = "GITCOMET_DISABLE_SESSION_PERSIST";
@@ -133,12 +136,12 @@ pub fn persist_from_state_to_path(state: &AppState, path: &Path) -> io::Result<(
         if !seen.insert(workdir) {
             continue;
         }
-        open_repos.push(workdir.to_string_lossy().to_string());
+        open_repos.push(path_storage_key(workdir));
     }
 
     let active_repo: Option<String> = active_repo_path(state, state.active_repo)
         .filter(|p| seen.contains(*p))
-        .map(|p| p.to_string_lossy().to_string());
+        .map(path_storage_key);
 
     let mut file = load_file_v2(path).unwrap_or_default();
     file.version = CURRENT_SESSION_FILE_VERSION;
@@ -221,10 +224,10 @@ pub fn load_repo_history_scope_from_path(
     workdir: &Path,
     session_file_path: &Path,
 ) -> Option<LogScope> {
-    let workdir_key = workdir.to_string_lossy();
+    let workdir_key = path_storage_key(workdir);
     let file = load_file_v2(session_file_path)?;
     let scopes = file.repo_history_scopes?;
-    scopes.get(workdir_key.as_ref()).copied().map(Into::into)
+    scopes.get(&workdir_key).copied().map(Into::into)
 }
 
 pub fn load_repo_history_scopes() -> BTreeMap<String, LogScope> {
@@ -259,7 +262,7 @@ pub fn persist_repo_history_scope_to_path(
 ) -> io::Result<()> {
     let mut file = load_file_v2(session_file_path).unwrap_or_default();
     file.version = CURRENT_SESSION_FILE_VERSION;
-    let workdir_key = workdir.to_string_lossy().to_string();
+    let workdir_key = path_storage_key(workdir);
     file.repo_history_scopes
         .get_or_insert_with(BTreeMap::new)
         .insert(workdir_key, scope.into());
@@ -276,10 +279,10 @@ pub fn load_repo_fetch_prune_deleted_remote_tracking_branches_from_path(
     workdir: &Path,
     session_file_path: &Path,
 ) -> Option<bool> {
-    let workdir_key = workdir.to_string_lossy();
+    let workdir_key = path_storage_key(workdir);
     let file = load_file_v2(session_file_path)?;
     let settings = file.repo_fetch_prune_deleted_remote_tracking_branches?;
-    settings.get(workdir_key.as_ref()).copied()
+    settings.get(&workdir_key).copied()
 }
 
 pub fn load_repo_fetch_prune_deleted_remote_tracking_branches_by_repo() -> BTreeMap<String, bool> {
@@ -320,7 +323,7 @@ pub fn persist_repo_fetch_prune_deleted_remote_tracking_branches_to_path(
 ) -> io::Result<()> {
     let mut file = load_file_v2(session_file_path).unwrap_or_default();
     file.version = CURRENT_SESSION_FILE_VERSION;
-    let workdir_key = workdir.to_string_lossy().to_string();
+    let workdir_key = path_storage_key(workdir);
     file.repo_fetch_prune_deleted_remote_tracking_branches
         .get_or_insert_with(BTreeMap::new)
         .insert(workdir_key, enabled);
@@ -339,7 +342,7 @@ fn parse_repos(
         if repo.is_empty() {
             continue;
         }
-        let repo = PathBuf::from(repo);
+        let repo = path_from_storage_key(repo);
         if !seen.insert(repo.clone()) {
             continue;
         }
@@ -353,7 +356,7 @@ fn parse_repos(
             if p.is_empty() {
                 None
             } else {
-                Some(PathBuf::from(p))
+                Some(path_from_storage_key(p))
             }
         })
         .filter(|active| seen.contains(active));
@@ -396,6 +399,108 @@ fn active_repo_path(state: &AppState, active_repo_id: Option<RepoId>) -> Option<
         .map(|r| r.spec.workdir.as_path())
 }
 
+pub(crate) fn path_storage_key(path: &Path) -> String {
+    if let Some(text) = path.to_str() {
+        return text.to_string();
+    }
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt as _;
+
+        let bytes = path.as_os_str().as_bytes();
+        let mut out = String::with_capacity(SESSION_PATH_BYTES_PREFIX.len() + bytes.len() * 2);
+        out.push_str(SESSION_PATH_BYTES_PREFIX);
+        out.push_str(&hex_encode(bytes));
+        out
+    }
+
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt as _;
+
+        let mut raw = Vec::new();
+        for unit in path.as_os_str().encode_wide() {
+            raw.extend_from_slice(&unit.to_le_bytes());
+        }
+        let mut out = String::with_capacity(SESSION_PATH_WIDE_PREFIX.len() + raw.len() * 2);
+        out.push_str(SESSION_PATH_WIDE_PREFIX);
+        out.push_str(&hex_encode(&raw));
+        return out;
+    }
+
+    #[cfg(not(any(unix, windows)))]
+    {
+        path.display().to_string()
+    }
+}
+
+fn path_from_storage_key(raw: &str) -> PathBuf {
+    #[cfg(unix)]
+    {
+        use std::ffi::OsString;
+        use std::os::unix::ffi::OsStringExt as _;
+
+        if let Some(hex) = raw.strip_prefix(SESSION_PATH_BYTES_PREFIX)
+            && let Some(bytes) = hex_decode(hex)
+        {
+            return PathBuf::from(OsString::from_vec(bytes));
+        }
+    }
+
+    #[cfg(windows)]
+    {
+        use std::ffi::OsString;
+        use std::os::windows::ffi::OsStringExt as _;
+
+        if let Some(hex) = raw.strip_prefix(SESSION_PATH_WIDE_PREFIX)
+            && let Some(bytes) = hex_decode(hex)
+            && bytes.len() % 2 == 0
+        {
+            let mut wide = Vec::with_capacity(bytes.len() / 2);
+            for chunk in bytes.chunks_exact(2) {
+                wide.push(u16::from_le_bytes([chunk[0], chunk[1]]));
+            }
+            return PathBuf::from(OsString::from_wide(&wide));
+        }
+    }
+
+    PathBuf::from(raw)
+}
+
+fn hex_encode(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for &byte in bytes {
+        out.push(HEX[(byte >> 4) as usize] as char);
+        out.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    out
+}
+
+fn hex_decode(hex: &str) -> Option<Vec<u8>> {
+    if !hex.len().is_multiple_of(2) {
+        return None;
+    }
+    let mut out = Vec::with_capacity(hex.len() / 2);
+    let bytes = hex.as_bytes();
+    for pair in bytes.chunks_exact(2) {
+        let high = hex_value(pair[0])?;
+        let low = hex_value(pair[1])?;
+        out.push((high << 4) | low);
+    }
+    Some(out)
+}
+
+fn hex_value(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
+}
+
 fn persist_to_path(path: &Path, session: &impl Serialize) -> io::Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
@@ -424,7 +529,7 @@ fn persist_to_path(path: &Path, session: &impl Serialize) -> io::Result<()> {
 
 fn default_session_file_path() -> Option<PathBuf> {
     if let Some(path) = env::var_os(SESSION_FILE_ENV)
-        && !path.to_string_lossy().trim().is_empty()
+        && !path.is_empty()
     {
         return Some(PathBuf::from(path));
     }
@@ -463,7 +568,9 @@ fn looks_like_test_binary(exe: &Path) -> bool {
 }
 
 fn looks_like_cargo_test_binary_name(stem: &OsStr) -> bool {
-    let stem = stem.to_string_lossy();
+    let Some(stem) = stem.to_str() else {
+        return false;
+    };
     let Some((_prefix, suffix)) = stem.rsplit_once('-') else {
         return false;
     };
@@ -525,6 +632,27 @@ mod tests {
         assert_eq!(loaded.version, SESSION_FILE_VERSION_V1);
         assert_eq!(loaded.open_repos, vec!["/a".to_string(), "/b".to_string()]);
         assert_eq!(loaded.active_repo.as_deref(), Some("/b"));
+    }
+
+    #[test]
+    fn path_storage_key_keeps_utf8_plain_text() {
+        let path = Path::new("/tmp/gitcomet-repo");
+        let key = path_storage_key(path);
+        assert_eq!(key, "/tmp/gitcomet-repo");
+        assert_eq!(path_from_storage_key(&key), path);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn path_storage_key_round_trips_non_utf8_unix_bytes() {
+        use std::ffi::OsStr;
+        use std::os::unix::ffi::OsStrExt as _;
+
+        let path = Path::new(OsStr::from_bytes(b"/tmp/gitcomet-\xff"));
+        let key = path_storage_key(path);
+        assert!(key.starts_with(SESSION_PATH_BYTES_PREFIX), "{key}");
+        let restored = path_from_storage_key(&key);
+        assert_eq!(restored.as_os_str().as_bytes(), path.as_os_str().as_bytes());
     }
 
     #[test]
