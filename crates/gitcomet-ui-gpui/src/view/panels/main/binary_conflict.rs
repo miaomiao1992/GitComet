@@ -4,6 +4,14 @@ use gitcomet_core::services::ConflictSide;
 fn conflict_side_image(path: &std::path::Path, bytes: Option<&[u8]>) -> Option<Arc<gpui::Image>> {
     let format = crate::view::diff_utils::image_format_for_path(path)?;
     let bytes = bytes?;
+    if matches!(format, gpui::ImageFormat::Svg) {
+        return crate::view::rasterize_svg_preview_image(bytes).or_else(|| {
+            Some(Arc::new(gpui::Image::from_bytes(
+                gpui::ImageFormat::Svg,
+                bytes.to_vec(),
+            )))
+        });
+    }
     Some(Arc::new(gpui::Image::from_bytes(format, bytes.to_vec())))
 }
 

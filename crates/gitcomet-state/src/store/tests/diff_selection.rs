@@ -84,6 +84,48 @@ fn select_diff_for_image_sets_loading_and_emits_effect() {
 }
 
 #[test]
+fn select_diff_for_ico_sets_loading_and_emits_effect() {
+    let mut repos: HashMap<RepoId, Arc<dyn GitRepository>> = HashMap::default();
+    let id_alloc = AtomicU64::new(2);
+    let mut state = AppState::default();
+    state.repos.push(RepoState::new_opening(
+        RepoId(1),
+        RepoSpec {
+            workdir: PathBuf::from("/tmp/repo"),
+        },
+    ));
+    state.active_repo = Some(RepoId(1));
+
+    let target = gitcomet_core::domain::DiffTarget::WorkingTree {
+        path: PathBuf::from("app.ico"),
+        area: gitcomet_core::domain::DiffArea::Unstaged,
+    };
+
+    let effects = reduce(
+        &mut repos,
+        &id_alloc,
+        &mut state,
+        Msg::SelectDiff {
+            repo_id: RepoId(1),
+            target: target.clone(),
+        },
+    );
+
+    let repo_state = state.repos.first().expect("repo state to exist");
+    assert_eq!(repo_state.diff_target, Some(target.clone()));
+    assert!(repo_state.diff.is_loading());
+    assert!(matches!(repo_state.diff_file, Loadable::NotLoaded));
+    assert!(repo_state.diff_file_image.is_loading());
+    assert!(matches!(
+        effects.as_slice(),
+        [
+            Effect::LoadDiffFileImage { repo_id: RepoId(1), target: a },
+            Effect::LoadDiff { repo_id: RepoId(1), target: b },
+        ] if a == &target && b == &target
+    ));
+}
+
+#[test]
 fn select_diff_for_svg_loads_image_and_text() {
     let mut repos: HashMap<RepoId, Arc<dyn GitRepository>> = HashMap::default();
     let id_alloc = AtomicU64::new(2);

@@ -91,6 +91,48 @@ pub(super) fn image_format_for_path(path: &std::path::Path) -> Option<gpui::Imag
     }
 }
 
+const SVG_PREVIEW_MIN_RASTER_WIDTH_PX: f32 = 2048.0;
+const SVG_PREVIEW_MAX_RASTER_EDGE_PX: f32 = 4096.0;
+
+pub(super) fn rasterize_svg_preview_image(svg_bytes: &[u8]) -> Option<Arc<gpui::Image>> {
+    let tree = resvg::usvg::Tree::from_data(svg_bytes, &resvg::usvg::Options::default()).ok()?;
+    let svg_size = tree.size();
+    let svg_width = svg_size.width();
+    let svg_height = svg_size.height();
+    if !svg_width.is_finite() || !svg_height.is_finite() || svg_width <= 0.0 || svg_height <= 0.0 {
+        return None;
+    }
+
+    let upscale = if svg_width < SVG_PREVIEW_MIN_RASTER_WIDTH_PX {
+        SVG_PREVIEW_MIN_RASTER_WIDTH_PX / svg_width
+    } else {
+        1.0
+    };
+    let mut raster_width = (svg_width * upscale).round();
+    let mut raster_height = (svg_height * upscale).round();
+    let max_edge = raster_width.max(raster_height);
+    if max_edge > SVG_PREVIEW_MAX_RASTER_EDGE_PX {
+        let downscale = SVG_PREVIEW_MAX_RASTER_EDGE_PX / max_edge;
+        raster_width = (raster_width * downscale).round();
+        raster_height = (raster_height * downscale).round();
+    }
+
+    let raster_width = raster_width.max(1.0) as u32;
+    let raster_height = raster_height.max(1.0) as u32;
+
+    let mut pixmap = resvg::tiny_skia::Pixmap::new(raster_width, raster_height)?;
+    let transform = resvg::tiny_skia::Transform::from_scale(
+        raster_width as f32 / svg_width,
+        raster_height as f32 / svg_height,
+    );
+    resvg::render(&tree, transform, &mut pixmap.as_mut());
+    let png = pixmap.encode_png().ok()?;
+    Some(Arc::new(gpui::Image::from_bytes(
+        gpui::ImageFormat::Png,
+        png,
+    )))
+}
+
 pub(super) fn compute_diff_word_highlights(
     diff: &[AnnotatedDiffLine],
 ) -> Vec<Option<Vec<Range<usize>>>> {

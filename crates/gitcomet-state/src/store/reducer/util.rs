@@ -21,6 +21,7 @@ fn is_supported_image_path(path: &Path) -> bool {
         || ext.eq_ignore_ascii_case("gif")
         || ext.eq_ignore_ascii_case("webp")
         || ext.eq_ignore_ascii_case("bmp")
+        || ext.eq_ignore_ascii_case("ico")
         || ext.eq_ignore_ascii_case("svg")
         || ext.eq_ignore_ascii_case("tif")
         || ext.eq_ignore_ascii_case("tiff")

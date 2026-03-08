@@ -1455,10 +1455,12 @@ impl MainPaneView {
                                     if text.is_empty() {
                                         return None;
                                     }
-                                    Some(Arc::new(gpui::Image::from_bytes(
-                                        gpui::ImageFormat::Svg,
-                                        text.as_bytes().to_vec(),
-                                    )))
+                                    rasterize_svg_preview_image(text.as_bytes()).or_else(|| {
+                                        Some(Arc::new(gpui::Image::from_bytes(
+                                            gpui::ImageFormat::Svg,
+                                            text.as_bytes().to_vec(),
+                                        )))
+                                    })
                                 };
                                 let base_img = svg_image(&base);
                                 let ours_img = svg_image(&local);

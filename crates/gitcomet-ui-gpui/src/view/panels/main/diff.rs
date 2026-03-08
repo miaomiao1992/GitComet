@@ -136,11 +136,21 @@ impl MainPaneView {
                                 .items_center()
                                 .justify_center()
                                 .child(match image {
-                                    Some(CachedDiffImageSource::Path(path)) => gpui::img(path)
-                                        .w_full()
-                                        .h_full()
-                                        .object_fit(gpui::ObjectFit::Contain)
-                                        .into_any_element(),
+                                    Some(CachedDiffImageSource::Path(path)) => {
+                                        let clamp_preview_size = path
+                                            .extension()
+                                            .and_then(|s| s.to_str())
+                                            .is_some_and(|ext| ext.eq_ignore_ascii_case("ico"));
+                                        gpui::img(path)
+                                            .w_full()
+                                            .h_full()
+                                            .object_fit(if clamp_preview_size {
+                                                gpui::ObjectFit::ScaleDown
+                                            } else {
+                                                gpui::ObjectFit::Contain
+                                            })
+                                            .into_any_element()
+                                    }
                                     Some(CachedDiffImageSource::Image(img_data)) => {
                                         gpui::img(img_data)
                                             .w_full()

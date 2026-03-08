@@ -3,12 +3,15 @@ use super::*;
 fn decode_file_image_diff_bytes(
     format: gpui::ImageFormat,
     bytes: &[u8],
-    svg_temp_path: Option<&mut Option<std::path::PathBuf>>,
+    cached_path: Option<&mut Option<std::path::PathBuf>>,
 ) -> Option<Arc<gpui::Image>> {
     match format {
         gpui::ImageFormat::Svg => {
-            if let Some(path) = svg_temp_path {
-                *path = Some(svg_diff_cache_path(bytes)?);
+            if let Some(image) = rasterize_svg_preview_image(bytes) {
+                return Some(image);
+            }
+            if let Some(path) = cached_path {
+                *path = Some(cached_image_diff_path(bytes, "svg")?);
             }
             None
         }
@@ -16,16 +19,18 @@ fn decode_file_image_diff_bytes(
     }
 }
 
-fn svg_diff_cache_path(bytes: &[u8]) -> Option<std::path::PathBuf> {
+fn cached_image_diff_path(bytes: &[u8], extension: &str) -> Option<std::path::PathBuf> {
     use std::hash::{Hash, Hasher};
 
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     bytes.hash(&mut hasher);
     let key = hasher.finish();
 
-    let dir = std::env::temp_dir().join("gitcomet").join("svg_diff_cache");
+    let dir = std::env::temp_dir()
+        .join("gitcomet")
+        .join("image_diff_cache");
     std::fs::create_dir_all(&dir).ok()?;
-    let path = dir.join(format!("{key:016x}.svg"));
+    let path = dir.join(format!("{key:016x}.{extension}"));
     if !path.exists() {
         std::fs::write(&path, bytes).ok()?;
     }
@@ -303,17 +308,32 @@ impl MainPaneView {
             };
 
             let format = Self::image_format_for_path(&file.path);
+            let is_ico = file
+                .path
+                .extension()
+                .and_then(|s| s.to_str())
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("ico"));
             let mut old_svg_path = None;
             let mut new_svg_path = None;
             let old = file.old.as_ref().and_then(|bytes| {
-                format.and_then(|format| {
-                    decode_file_image_diff_bytes(format, bytes, Some(&mut old_svg_path))
-                })
+                if is_ico {
+                    old_svg_path = cached_image_diff_path(bytes, "ico");
+                    None
+                } else {
+                    format.and_then(|format| {
+                        decode_file_image_diff_bytes(format, bytes, Some(&mut old_svg_path))
+                    })
+                }
             });
             let new = file.new.as_ref().and_then(|bytes| {
-                format.and_then(|format| {
-                    decode_file_image_diff_bytes(format, bytes, Some(&mut new_svg_path))
-                })
+                if is_ico {
+                    new_svg_path = cached_image_diff_path(bytes, "ico");
+                    None
+                } else {
+                    format.and_then(|format| {
+                        decode_file_image_diff_bytes(format, bytes, Some(&mut new_svg_path))
+                    })
+                }
             });
 
             let workdir = &repo.spec.workdir;
@@ -732,6 +752,10 @@ mod tests {
             MainPaneView::image_format_for_path(Path::new("x.heic")),
             None
         );
+        assert_eq!(
+            MainPaneView::image_format_for_path(Path::new("x.ico")),
+            None
+        );
         assert_eq!(MainPaneView::image_format_for_path(Path::new("x")), None);
     }
 
@@ -748,14 +772,35 @@ mod tests {
     }
 
     #[test]
-    fn decode_file_image_diff_bytes_writes_svg_cache_file() {
+    fn decode_file_image_diff_bytes_rasterizes_svg_to_png() {
         let svg = br##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16">
 <rect width="16" height="16" fill="#00aaff"/>
 </svg>"##;
         let mut svg_path = None;
         let image = decode_file_image_diff_bytes(gpui::ImageFormat::Svg, svg, Some(&mut svg_path));
+        let image = image.expect("svg should rasterize to image");
+        assert_eq!(image.format(), gpui::ImageFormat::Png);
+        assert!(svg_path.is_none());
+    }
+
+    #[test]
+    fn decode_file_image_diff_bytes_keeps_svg_path_fallback_for_invalid_svg() {
+        let mut svg_path = None;
+        let image = decode_file_image_diff_bytes(
+            gpui::ImageFormat::Svg,
+            b"<not-valid-svg>",
+            Some(&mut svg_path),
+        );
         assert!(image.is_none());
         assert!(svg_path.is_some());
         assert!(svg_path.unwrap().exists());
+    }
+
+    #[test]
+    fn cached_image_diff_path_writes_ico_cache_file() {
+        let bytes = [0_u8, 0, 1, 0, 1, 0, 16, 16];
+        let path = cached_image_diff_path(&bytes, "ico").expect("cached path");
+        assert!(path.exists());
+        assert_eq!(path.extension().and_then(|s| s.to_str()), Some("ico"));
     }
 }
