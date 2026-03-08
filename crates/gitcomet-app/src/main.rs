@@ -113,7 +113,16 @@ fn main() {
                                 crash_log_path: report.crash_log_path,
                             }
                         });
-                        gitcomet_ui_gpui::run_with_startup_crash_report(backend, startup_report);
+                        if let Err(err) = gitcomet_ui_gpui::run_with_startup_crash_report(
+                            backend.clone(),
+                            startup_report,
+                        ) {
+                            eprintln!("Failed to launch GPUI browser UI: {err}");
+                            if let Some(report) = startup_crash_report.as_ref() {
+                                print_startup_crash_report_hint(report);
+                            }
+                            gitcomet_ui::run(backend);
+                        }
                     }
 
                     #[cfg(not(feature = "ui-gpui"))]

@@ -4,6 +4,7 @@
 //! The user reviews the diff and closes the window (exit 0).
 
 use crate::assets::GitCometAssets;
+use crate::launch_guard::run_with_panic_guard;
 use crate::theme::AppTheme;
 use gpui::prelude::*;
 use gpui::{
@@ -17,6 +18,7 @@ use std::sync::atomic::{AtomicI32, Ordering};
 // ── Actions ──────────────────────────────────────────────────────────
 
 actions!(focused_diff, [Close]);
+const FOCUSED_DIFF_EXIT_ERROR: i32 = 2;
 
 // ── Public config ────────────────────────────────────────────────────
 
@@ -252,58 +254,63 @@ fn with_alpha(color: gpui::Rgba, alpha: f32) -> gpui::Rgba {
 
 /// Launch a focused GPUI diff window.
 ///
-/// Returns the process exit code (always 0 — diff review is read-only).
+/// Returns process exit code (0 on success, 2 when the window fails to launch).
 pub fn run_focused_diff(config: FocusedDiffConfig) -> i32 {
     let exit_code = Arc::new(AtomicI32::new(0));
     let exit_code_for_app = exit_code.clone();
 
-    Application::new()
-        .with_assets(GitCometAssets)
-        .run(move |cx: &mut App| {
-            cx.on_window_closed(|cx| {
-                if cx.windows().is_empty() {
-                    cx.quit();
-                }
-            })
-            .detach();
+    if let Err(err) = run_with_panic_guard("focused diff GPUI launch", move || {
+        Application::new()
+            .with_assets(GitCometAssets)
+            .run(move |cx: &mut App| {
+                cx.on_window_closed(|cx| {
+                    if cx.windows().is_empty() {
+                        cx.quit();
+                    }
+                })
+                .detach();
 
-            cx.bind_keys([
-                KeyBinding::new("escape", Close, Some("FocusedDiff")),
-                KeyBinding::new("q", Close, Some("FocusedDiff")),
-                KeyBinding::new("ctrl-w", Close, Some("FocusedDiff")),
-                KeyBinding::new("cmd-w", Close, Some("FocusedDiff")),
-            ]);
+                cx.bind_keys([
+                    KeyBinding::new("escape", Close, Some("FocusedDiff")),
+                    KeyBinding::new("q", Close, Some("FocusedDiff")),
+                    KeyBinding::new("ctrl-w", Close, Some("FocusedDiff")),
+                    KeyBinding::new("cmd-w", Close, Some("FocusedDiff")),
+                ]);
 
-            let exit_code_clone = exit_code_for_app.clone();
-            let bounds = Bounds::centered(None, size(px(900.0), px(650.0)), cx);
+                let exit_code_clone = exit_code_for_app.clone();
+                let bounds = Bounds::centered(None, size(px(900.0), px(650.0)), cx);
 
-            cx.open_window(
-                WindowOptions {
-                    window_bounds: Some(WindowBounds::Windowed(bounds)),
-                    window_min_size: Some(size(px(500.0), px(300.0))),
-                    titlebar: Some(TitlebarOptions {
-                        title: Some("GitComet — Diff".into()),
-                        appears_transparent: false,
-                        traffic_light_position: Some(point(px(9.0), px(9.0))),
-                    }),
-                    app_id: Some("gitcomet-diff".to_string()),
-                    window_decorations: Some(WindowDecorations::Server),
-                    is_movable: true,
-                    is_resizable: true,
-                    ..Default::default()
-                },
-                move |window, cx| {
-                    cx.new(|cx| {
-                        let view = FocusedDiffView::new(config, exit_code_clone, window, cx);
-                        cx.focus_self(window);
-                        view
-                    })
-                },
-            )
-            .unwrap();
+                cx.open_window(
+                    WindowOptions {
+                        window_bounds: Some(WindowBounds::Windowed(bounds)),
+                        window_min_size: Some(size(px(500.0), px(300.0))),
+                        titlebar: Some(TitlebarOptions {
+                            title: Some("GitComet — Diff".into()),
+                            appears_transparent: false,
+                            traffic_light_position: Some(point(px(9.0), px(9.0))),
+                        }),
+                        app_id: Some("gitcomet-diff".to_string()),
+                        window_decorations: Some(WindowDecorations::Server),
+                        is_movable: true,
+                        is_resizable: true,
+                        ..Default::default()
+                    },
+                    move |window, cx| {
+                        cx.new(|cx| {
+                            let view = FocusedDiffView::new(config, exit_code_clone, window, cx);
+                            cx.focus_self(window);
+                            view
+                        })
+                    },
+                )
+                .unwrap();
 
-            cx.activate(true);
-        });
+                cx.activate(true);
+            });
+    }) {
+        eprintln!("Failed to launch focused diff window: {err}");
+        return FOCUSED_DIFF_EXIT_ERROR;
+    }
 
     exit_code.load(Ordering::SeqCst)
 }

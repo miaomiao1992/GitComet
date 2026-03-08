@@ -1,4 +1,5 @@
 use crate::assets::GitCometAssets;
+use crate::launch_guard::{UiLaunchError, run_with_panic_guard};
 use crate::view::{
     FocusedMergetoolLabels, FocusedMergetoolViewConfig, GitCometView, GitCometViewConfig,
     GitCometViewMode, StartupCrashReport,
@@ -21,7 +22,6 @@ const WINDOW_DEFAULT_HEIGHT_PX: f32 = 720.0;
 const FOCUSED_MERGETOOL_EXIT_CANCELED: i32 = 1;
 #[cfg(test)]
 const FOCUSED_MERGETOOL_EXIT_SUCCESS: i32 = 0;
-#[cfg(test)]
 const FOCUSED_MERGETOOL_EXIT_ERROR: i32 = 2;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -41,28 +41,31 @@ struct WindowLaunchConfig {
     use_legacy_constructor: bool,
 }
 
-pub fn run(backend: Arc<dyn GitBackend>) {
-    run_with_startup_crash_report(backend, None);
+pub fn run(backend: Arc<dyn GitBackend>) -> Result<(), UiLaunchError> {
+    run_with_startup_crash_report(backend, None)
 }
 
 pub fn run_with_startup_crash_report(
     backend: Arc<dyn GitBackend>,
     startup_crash_report: Option<StartupCrashReport>,
-) {
+) -> Result<(), UiLaunchError> {
     let initial_path = std::env::args_os().nth(1).map(std::path::PathBuf::from);
-    run_windowed_app(
-        backend,
-        normal_launch_config(initial_path, startup_crash_report),
-    );
+    let launch = normal_launch_config(initial_path, startup_crash_report);
+    run_with_panic_guard("main GPUI window launch", move || {
+        run_windowed_app(backend, launch)
+    })
 }
 
 /// Launch the unified focused mergetool window using the shared `GitCometView`.
 pub fn run_focused_mergetool(backend: Arc<dyn GitBackend>, config: FocusedMergetoolConfig) -> i32 {
     let exit_code = Arc::new(AtomicI32::new(FOCUSED_MERGETOOL_EXIT_CANCELED));
-    run_windowed_app(
-        backend,
-        focused_mergetool_launch_config(&config, Some(exit_code.clone())),
-    );
+    let launch = focused_mergetool_launch_config(&config, Some(exit_code.clone()));
+    if let Err(err) = run_with_panic_guard("focused mergetool GPUI launch", move || {
+        run_windowed_app(backend, launch)
+    }) {
+        eprintln!("Failed to launch focused mergetool window: {err}");
+        return FOCUSED_MERGETOOL_EXIT_ERROR;
+    }
     exit_code.load(Ordering::SeqCst)
 }
 
