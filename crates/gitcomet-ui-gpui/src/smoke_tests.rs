@@ -8,7 +8,7 @@ use gitcomet_state::store::AppStore;
 use gpui::prelude::*;
 use gpui::{
     ClipboardItem, Decorations, KeyBinding, Modifiers, MouseButton, MouseDownEvent, MouseUpEvent,
-    ScrollHandle, Tiling, div, px,
+    Pixels, ScrollDelta, ScrollHandle, ScrollWheelEvent, Tiling, div, px,
 };
 use std::path::Path;
 use std::path::PathBuf;
@@ -19,6 +19,10 @@ fn assert_no_panic(label: &str, f: impl FnOnce()) {
     if std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)).is_err() {
         panic!("component build panicked: {label}");
     }
+}
+
+fn abs_scroll_y(raw: Pixels) -> Pixels {
+    if raw < px(0.0) { -raw } else { raw }
 }
 
 #[test]
@@ -195,6 +199,73 @@ struct TextInputHostView {
     input: gpui::Entity<components::TextInput>,
 }
 
+struct TextInputCursorScrollView {
+    theme: AppTheme,
+    input: gpui::Entity<components::TextInput>,
+    scroll_handle: ScrollHandle,
+}
+
+impl TextInputCursorScrollView {
+    fn new(window: &mut gpui::Window, cx: &mut gpui::Context<Self>) -> Self {
+        let scroll_handle = ScrollHandle::new();
+        let input = cx.new({
+            let scroll_handle = scroll_handle.clone();
+            move |cx| {
+                let mut input = components::TextInput::new(
+                    components::TextInputOptions {
+                        placeholder: "Enter".into(),
+                        multiline: true,
+                        read_only: false,
+                        chromeless: false,
+                        soft_wrap: true,
+                    },
+                    window,
+                    cx,
+                );
+                input.set_vertical_scroll_handle(Some(scroll_handle.clone()));
+                input
+            }
+        });
+
+        Self {
+            theme: AppTheme::zed_ayu_dark(),
+            input,
+            scroll_handle,
+        }
+    }
+}
+
+impl gpui::Render for TextInputCursorScrollView {
+    fn render(
+        &mut self,
+        window: &mut gpui::Window,
+        _cx: &mut gpui::Context<Self>,
+    ) -> impl IntoElement {
+        let theme = self.theme;
+        let content = div()
+            .flex()
+            .flex_col()
+            .p_2()
+            .child(
+                div()
+                    .id("cursor_scroll_surface")
+                    .relative()
+                    .w(px(280.0))
+                    .h(px(100.0))
+                    .overflow_y_scroll()
+                    .track_scroll(&self.scroll_handle)
+                    .child(self.input.clone())
+                    .child(
+                        components::Scrollbar::new("cursor_scrollbar", self.scroll_handle.clone())
+                            .render(theme),
+                    ),
+            )
+            .into_any_element();
+
+        view::window_frame(theme, window.window_decorations(), content)
+    }
+}
+
 impl TextInputHostView {
     fn new(window: &mut gpui::Window, cx: &mut gpui::Context<Self>) -> Self {
         let input = cx.new(|cx| {
@@ -363,6 +434,154 @@ fn text_input_supports_basic_clipboard_and_word_shortcuts(cx: &mut gpui::TestApp
     cx.simulate_keystrokes("ctrl-left ctrl-delete");
     let text = cx.update(|_window, app| view.read(app).input.read(app).text().to_string());
     assert_eq!(text, "hello brave ");
+}
+
+#[gpui::test]
+fn multiline_text_input_cursor_navigation_keeps_scroll_in_view(cx: &mut gpui::TestAppContext) {
+    let (view, cx) = cx.add_window_view(TextInputCursorScrollView::new);
+
+    cx.update(|window, app| {
+        app.bind_keys([
+            KeyBinding::new("enter", crate::kit::Enter, Some("TextInput")),
+            KeyBinding::new("up", crate::kit::Up, Some("TextInput")),
+            KeyBinding::new("down", crate::kit::Down, Some("TextInput")),
+        ]);
+
+        let focus = view.update(app, |this, cx| this.input.read(cx).focus_handle());
+        window.focus(&focus);
+
+        view.update(app, |this, cx| {
+            this.input
+                .update(cx, |input, cx| input.set_text("line".to_string(), cx));
+        });
+
+        let _ = window.draw(app);
+    });
+
+    cx.simulate_keystrokes("enter enter enter enter enter enter enter enter enter enter");
+    cx.run_until_parked();
+    let (after_enter, max_after_enter) = cx.update(|window, app| {
+        let _ = window.draw(app);
+        let v = view.read(app);
+        (
+            abs_scroll_y(v.scroll_handle.offset().y),
+            v.scroll_handle.max_offset().height,
+        )
+    });
+    assert!(
+        after_enter > px(0.0),
+        "expected Enter to move cursor down and auto-scroll to keep it visible"
+    );
+    assert!(
+        max_after_enter <= px(0.0) || after_enter >= max_after_enter - px(1.0),
+        "expected Enter at EOF to keep scroll pinned to bottom"
+    );
+
+    cx.simulate_keystrokes("up up up up up up up up up up");
+    cx.run_until_parked();
+    let after_up = cx.update(|window, app| {
+        let _ = window.draw(app);
+        abs_scroll_y(view.read(app).scroll_handle.offset().y)
+    });
+    assert!(
+        after_up < after_enter,
+        "expected Up navigation to scroll back upward with cursor"
+    );
+
+    cx.simulate_keystrokes("down down down down down down down down down down");
+    cx.run_until_parked();
+    let after_down = cx.update(|window, app| {
+        let _ = window.draw(app);
+        abs_scroll_y(view.read(app).scroll_handle.offset().y)
+    });
+    assert!(
+        after_down > after_up,
+        "expected Down navigation to scroll downward with cursor"
+    );
+}
+
+#[gpui::test]
+fn multiline_text_input_mousewheel_does_not_trigger_cursor_autoscroll(
+    cx: &mut gpui::TestAppContext,
+) {
+    let (view, cx) = cx.add_window_view(TextInputCursorScrollView::new);
+
+    cx.update(|window, app| {
+        app.bind_keys([KeyBinding::new(
+            "enter",
+            crate::kit::Enter,
+            Some("TextInput"),
+        )]);
+
+        let focus = view.update(app, |this, cx| this.input.read(cx).focus_handle());
+        window.focus(&focus);
+
+        let long_text = (0..40)
+            .map(|ix| format!("line {ix}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        view.update(app, |this, cx| {
+            this.input
+                .update(cx, |input, cx| input.set_text(long_text, cx));
+        });
+
+        let _ = window.draw(app);
+    });
+
+    // Set a deterministic non-bottom scroll position before wheel input.
+    let (before_wheel, max_offset) = cx.update(|window, app| {
+        let _ = window.draw(app);
+        let (scroll_handle, max_offset) = {
+            let v = view.read(app);
+            (
+                v.scroll_handle.clone(),
+                v.scroll_handle.max_offset().height.max(px(0.0)),
+            )
+        };
+        let baseline = (max_offset * 0.5).max(px(1.0));
+        scroll_handle.set_offset(gpui::point(px(0.0), -baseline.min(max_offset)));
+        let _ = window.draw(app);
+        (abs_scroll_y(scroll_handle.offset().y), max_offset)
+    });
+    assert!(
+        max_offset > px(0.0),
+        "expected multiline content to overflow"
+    );
+    assert!(
+        before_wheel > px(0.0) && before_wheel < max_offset,
+        "expected baseline scroll offset to be between top and bottom"
+    );
+
+    let surface_bounds = cx.update(|window, app| {
+        let _ = window.draw(app);
+        view.read(app).scroll_handle.bounds()
+    });
+    cx.simulate_event(ScrollWheelEvent {
+        position: surface_bounds.center(),
+        delta: ScrollDelta::Pixels(gpui::point(px(0.0), px(-120.0))),
+        ..Default::default()
+    });
+    cx.run_until_parked();
+
+    let after_wheel = cx.update(|window, app| {
+        let _ = window.draw(app);
+        let v = view.read(app);
+        abs_scroll_y(v.scroll_handle.offset().y)
+    });
+
+    let wheel_delta = if after_wheel >= before_wheel {
+        after_wheel - before_wheel
+    } else {
+        before_wheel - after_wheel
+    };
+    assert!(
+        wheel_delta > px(0.5),
+        "expected mousewheel to move scroll (before={before_wheel:?}, after={after_wheel:?})"
+    );
+    assert!(
+        after_wheel < max_offset - px(1.0),
+        "expected mousewheel not to snap back to bottom (after={after_wheel:?}, max={max_offset:?})"
+    );
 }
 
 #[gpui::test]

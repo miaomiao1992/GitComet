@@ -16,6 +16,7 @@ pub(in super::super) struct DetailsPaneView {
     pub(in super::super) unstaged_scroll: UniformListScrollHandle,
     pub(in super::super) staged_scroll: UniformListScrollHandle,
     pub(in super::super) commit_files_scroll: UniformListScrollHandle,
+    pub(in super::super) commit_message_scroll: ScrollHandle,
     pub(in super::super) commit_scroll: ScrollHandle,
 
     pub(in super::super) commit_message_input: Entity<components::TextInput>,
@@ -78,18 +79,21 @@ impl DetailsPaneView {
             cx.notify();
         });
 
+        let commit_message_scroll = ScrollHandle::new();
         let commit_message_input = cx.new(|cx| {
-            components::TextInput::new(
+            let mut input = components::TextInput::new(
                 components::TextInputOptions {
                     placeholder: "Enter commit message".into(),
-                    multiline: false,
+                    multiline: true,
                     read_only: false,
                     chromeless: false,
-                    soft_wrap: false,
+                    soft_wrap: true,
                 },
                 window,
                 cx,
-            )
+            );
+            input.set_vertical_scroll_handle(Some(commit_message_scroll.clone()));
+            input
         });
 
         let commit_details_message_input = cx.new(|cx| {
@@ -175,6 +179,7 @@ impl DetailsPaneView {
             unstaged_scroll: UniformListScrollHandle::default(),
             staged_scroll: UniformListScrollHandle::default(),
             commit_files_scroll: UniformListScrollHandle::default(),
+            commit_message_scroll,
             commit_scroll: ScrollHandle::new(),
             commit_message_input,
             commit_details_message_input,
@@ -304,6 +309,8 @@ impl DetailsPaneView {
                 .scroll_to_item_strict(0, gpui::ScrollStrategy::Top);
             self.staged_scroll
                 .scroll_to_item_strict(0, gpui::ScrollStrategy::Top);
+            self.commit_message_scroll
+                .set_offset(point(px(0.0), px(0.0)));
             self.commit_scroll.set_offset(point(px(0.0), px(0.0)));
             self.commit_files_scroll
                 .scroll_to_item_strict(0, gpui::ScrollStrategy::Top);
@@ -330,6 +337,8 @@ impl DetailsPaneView {
             self.commit_message_last_text = message.clone().into();
             self.commit_message_input
                 .update(cx, |input, cx| input.set_text(message, cx));
+            self.commit_message_scroll
+                .set_offset(point(px(0.0), px(0.0)));
         }
 
         self.update_commit_details_delay(cx);

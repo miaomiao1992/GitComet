@@ -6,7 +6,7 @@ use super::*;
 use gitcomet_core::error::{Error, ErrorKind};
 use gitcomet_core::services::{GitBackend, GitRepository, Result};
 use gitcomet_state::store::AppStore;
-use gpui::px;
+use gpui::{Modifiers, MouseButton, MouseDownEvent, MouseUpEvent, px};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -709,6 +709,97 @@ fn merge_start_prefills_default_commit_message(cx: &mut gpui::TestAppContext) {
         assert_eq!(
             pane.commit_message_input.read(app).text(),
             "Merge branch 'feature'"
+        );
+    });
+}
+
+#[gpui::test]
+fn commit_click_dispatches_after_state_update_without_intermediate_redraw(
+    cx: &mut gpui::TestAppContext,
+) {
+    let (store, events) = AppStore::new(Arc::new(TestBackend));
+    let (view, cx) = cx.add_window_view(|window, cx| {
+        super::super::GitCometView::new(store, events, None, window, cx)
+    });
+
+    let repo_id = gitcomet_state::model::RepoId(44);
+    let make_state = |staged_count: usize, local_actions_in_flight: u32| {
+        let mut repo = gitcomet_state::model::RepoState::new_opening(
+            repo_id,
+            gitcomet_core::domain::RepoSpec {
+                workdir: std::path::PathBuf::from("/tmp/repo-commit-click"),
+            },
+        );
+        repo.status = gitcomet_state::model::Loadable::Ready(
+            gitcomet_core::domain::RepoStatus {
+                staged: (0..staged_count)
+                    .map(|ix| gitcomet_core::domain::FileStatus {
+                        path: std::path::PathBuf::from(format!("staged-{ix}.txt")),
+                        kind: gitcomet_core::domain::FileStatusKind::Modified,
+                        conflict: None,
+                    })
+                    .collect(),
+                unstaged: Vec::new(),
+            }
+            .into(),
+        );
+        repo.local_actions_in_flight = local_actions_in_flight;
+        Arc::new(AppState {
+            repos: vec![repo],
+            active_repo: Some(repo_id),
+            ..Default::default()
+        })
+    };
+
+    cx.update(|window, app| {
+        view.update(app, |this, cx| {
+            this._ui_model.update(cx, |model, cx| {
+                model.set_state(make_state(0, 0), cx);
+            });
+        });
+        let _ = window.draw(app);
+    });
+
+    let commit_center = cx
+        .debug_bounds("commit_button")
+        .expect("expected commit button bounds")
+        .center();
+
+    cx.update(|_window, app| {
+        view.update(app, |this, cx| {
+            this._ui_model.update(cx, |model, cx| {
+                model.set_state(make_state(1, 0), cx);
+            });
+            this.details_pane.update(cx, |pane, cx| {
+                pane.commit_message_input
+                    .update(cx, |input, cx| input.set_text("hello".to_string(), cx));
+                cx.notify();
+            });
+        });
+    });
+
+    cx.simulate_mouse_move(commit_center, None, Modifiers::default());
+    cx.simulate_event(MouseDownEvent {
+        position: commit_center,
+        modifiers: Modifiers::default(),
+        button: MouseButton::Left,
+        click_count: 1,
+        first_mouse: false,
+    });
+    cx.simulate_event(MouseUpEvent {
+        position: commit_center,
+        modifiers: Modifiers::default(),
+        button: MouseButton::Left,
+        click_count: 1,
+    });
+
+    cx.update(|_window, app| {
+        let details_pane = view.read(app).details_pane.clone();
+        let pane = details_pane.read(app);
+        assert_eq!(
+            pane.commit_message_input.read(app).text(),
+            "",
+            "expected first click to execute commit handler and clear the input"
         );
     });
 }
