@@ -15,6 +15,7 @@ pub(super) fn reload_repo(state: &mut AppState, repo_id: crate::model::RepoId) -
     };
 
     repo_state.set_head_branch(Loadable::Loading);
+    repo_state.set_detached_head_commit(None);
     repo_state.set_branches(Loadable::Loading);
     repo_state.set_tags(Loadable::Loading);
     repo_state.set_remote_tags(Loadable::Loading);
@@ -263,6 +264,13 @@ pub(super) fn log_loaded(
                     repo_state.set_log(Loadable::Error(e.to_string()));
                 }
             }
+        }
+
+        if scope == LogScope::CurrentBranch
+            && matches!(repo_state.head_branch, Loadable::Ready(ref head) if head == "HEAD")
+            && let Loadable::Ready(page) = &repo_state.log
+        {
+            repo_state.set_detached_head_commit(page.commits.first().map(|c| c.id.clone()));
         }
 
         if is_load_more {

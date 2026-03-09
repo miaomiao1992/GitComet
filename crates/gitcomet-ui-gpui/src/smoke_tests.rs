@@ -316,6 +316,111 @@ fn text_input_supports_basic_clipboard_and_word_shortcuts(cx: &mut gpui::TestApp
 }
 
 #[gpui::test]
+fn text_input_right_click_context_menu_supports_copy(cx: &mut gpui::TestAppContext) {
+    let (view, cx) = cx.add_window_view(SmokeView::new);
+
+    cx.update(|window, app| {
+        let focus = view.update(app, |this, cx| this.input.read(cx).focus_handle());
+        window.focus(&focus);
+
+        view.update(app, |this, cx| {
+            this.input
+                .update(cx, |input, cx| input.set_text("hello world", cx));
+        });
+
+        let _ = window.draw(app);
+    });
+
+    cx.write_to_clipboard(ClipboardItem::new_string("initial".to_string()));
+
+    let bounds = cx
+        .debug_bounds("smoke_input")
+        .expect("expected smoke input bounds");
+    let click = bounds.center();
+
+    cx.simulate_mouse_move(click, None, Modifiers::default());
+    cx.simulate_event(MouseDownEvent {
+        position: click,
+        modifiers: Modifiers::default(),
+        button: MouseButton::Right,
+        click_count: 1,
+        first_mouse: false,
+    });
+    cx.simulate_event(MouseUpEvent {
+        position: click,
+        modifiers: Modifiers::default(),
+        button: MouseButton::Right,
+        click_count: 1,
+    });
+
+    assert_eq!(
+        cx.read_from_clipboard().and_then(|item| item.text()),
+        Some("initial".into())
+    );
+
+    let select_all_bounds = cx
+        .debug_bounds("text_input_context_select_all")
+        .expect("expected text-input select-all context menu row");
+    let select_all_click = select_all_bounds.center();
+
+    cx.simulate_mouse_move(select_all_click, None, Modifiers::default());
+    cx.simulate_event(MouseDownEvent {
+        position: select_all_click,
+        modifiers: Modifiers::default(),
+        button: MouseButton::Left,
+        click_count: 1,
+        first_mouse: false,
+    });
+    cx.simulate_event(MouseUpEvent {
+        position: select_all_click,
+        modifiers: Modifiers::default(),
+        button: MouseButton::Left,
+        click_count: 1,
+    });
+
+    // Open menu again while full selection is active, then copy from the menu.
+    cx.simulate_mouse_move(click, None, Modifiers::default());
+    cx.simulate_event(MouseDownEvent {
+        position: click,
+        modifiers: Modifiers::default(),
+        button: MouseButton::Right,
+        click_count: 1,
+        first_mouse: false,
+    });
+    cx.simulate_event(MouseUpEvent {
+        position: click,
+        modifiers: Modifiers::default(),
+        button: MouseButton::Right,
+        click_count: 1,
+    });
+
+    let copy_bounds = cx
+        .debug_bounds("text_input_context_copy")
+        .expect("expected text-input copy context menu row");
+    let copy_click = copy_bounds.center();
+
+    cx.simulate_mouse_move(copy_click, None, Modifiers::default());
+    cx.simulate_event(MouseDownEvent {
+        position: copy_click,
+        modifiers: Modifiers::default(),
+        button: MouseButton::Left,
+        click_count: 1,
+        first_mouse: false,
+    });
+    cx.simulate_event(MouseUpEvent {
+        position: copy_click,
+        modifiers: Modifiers::default(),
+        button: MouseButton::Left,
+        click_count: 1,
+    });
+
+    assert_eq!(
+        cx.read_from_clipboard().and_then(|item| item.text()),
+        Some("hello world".into())
+    );
+}
+
+#[gpui::test]
 fn text_input_supports_ctrl_z_undo(cx: &mut gpui::TestAppContext) {
     let (view, cx) = cx.add_window_view(SmokeView::new);
 

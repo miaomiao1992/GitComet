@@ -1,4 +1,5 @@
 use super::*;
+use gitcomet_core::domain::LogScope;
 
 #[derive(Clone, Debug)]
 pub(super) struct HistoryCache {
@@ -11,8 +12,10 @@ pub(super) struct HistoryCache {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct HistoryCacheRequest {
     pub(super) repo_id: RepoId,
+    pub(super) history_scope: LogScope,
     pub(super) log_fingerprint: u64,
     pub(super) head_branch_rev: u64,
+    pub(super) detached_head_commit: Option<CommitId>,
     pub(super) branches_rev: u64,
     pub(super) remote_branches_rev: u64,
     pub(super) tags_rev: u64,

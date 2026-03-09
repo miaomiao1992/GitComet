@@ -15,7 +15,7 @@ use std::process::Command;
 impl GixRepo {
     pub(super) fn create_branch_impl(&self, name: &str, target: &CommitId) -> Result<()> {
         validate_ref_like_arg(name, "branch name")?;
-        validate_hex_commit_id(target)?;
+        validate_ref_like_arg(target.as_ref(), "branch target")?;
 
         let mut cmd = Command::new("git");
         cmd.arg("-C")

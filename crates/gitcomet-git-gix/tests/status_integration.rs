@@ -4099,6 +4099,51 @@ fn create_and_delete_local_branch() {
 }
 
 #[test]
+fn create_branch_from_detached_head_using_head_revision() {
+    if !require_git_shell_for_status_integration_tests() {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let repo = dir.path();
+
+    run_git(repo, &["init", "-b", "main"]);
+    run_git(repo, &["config", "user.email", "you@example.com"]);
+    run_git(repo, &["config", "user.name", "You"]);
+    run_git(repo, &["config", "commit.gpgsign", "false"]);
+
+    write(repo, "a.txt", "one\n");
+    run_git(repo, &["add", "a.txt"]);
+    run_git(
+        repo,
+        &["-c", "commit.gpgsign=false", "commit", "-m", "first"],
+    );
+
+    write(repo, "a.txt", "two\n");
+    run_git(repo, &["add", "a.txt"]);
+    run_git(
+        repo,
+        &["-c", "commit.gpgsign=false", "commit", "-m", "second"],
+    );
+
+    let first_commit = run_git_output(repo, &["rev-parse", "HEAD~1"]);
+
+    let backend = GixBackend;
+    let opened = backend.open(repo).unwrap();
+    opened
+        .checkout_commit(&gitcomet_core::domain::CommitId(first_commit.clone()))
+        .unwrap();
+    opened
+        .create_branch(
+            "rescue",
+            &gitcomet_core::domain::CommitId("HEAD".to_string()),
+        )
+        .unwrap();
+
+    let rescue_target = run_git_output(repo, &["rev-parse", "rescue"]);
+    assert_eq!(rescue_target, first_commit);
+}
+
+#[test]
 fn checkout_branch_switches_head_to_target_branch() {
     if !require_git_shell_for_status_integration_tests() {
         return;

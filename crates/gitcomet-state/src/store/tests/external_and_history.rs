@@ -738,6 +738,67 @@ fn log_loaded_bumps_log_rev() {
 }
 
 #[test]
+fn detached_head_target_tracks_current_branch_log_head() {
+    let mut repos: HashMap<RepoId, Arc<dyn GitRepository>> = HashMap::default();
+    let id_alloc = AtomicU64::new(2);
+    let mut state = AppState::default();
+    let repo_id = RepoId(1);
+    repos.insert(repo_id, Arc::new(DummyRepo::new("/tmp/repo")));
+    state.repos.push(RepoState::new_opening(
+        repo_id,
+        RepoSpec {
+            workdir: PathBuf::from("/tmp/repo"),
+        },
+    ));
+    state.active_repo = Some(repo_id);
+
+    reduce(
+        &mut repos,
+        &id_alloc,
+        &mut state,
+        Msg::Internal(crate::msg::InternalMsg::HeadBranchLoaded {
+            repo_id,
+            result: Ok("HEAD".to_string()),
+        }),
+    );
+
+    reduce(
+        &mut repos,
+        &id_alloc,
+        &mut state,
+        Msg::Internal(crate::msg::InternalMsg::LogLoaded {
+            repo_id,
+            scope: LogScope::CurrentBranch,
+            cursor: None,
+            result: Ok(LogPage {
+                commits: vec![
+                    Commit {
+                        id: CommitId("c1".to_string()),
+                        parent_ids: vec![CommitId("c0".to_string())],
+                        summary: "s1".to_string(),
+                        author: "a".to_string(),
+                        time: SystemTime::UNIX_EPOCH,
+                    },
+                    Commit {
+                        id: CommitId("c0".to_string()),
+                        parent_ids: Vec::new(),
+                        summary: "s0".to_string(),
+                        author: "a".to_string(),
+                        time: SystemTime::UNIX_EPOCH,
+                    },
+                ],
+                next_cursor: None,
+            }),
+        }),
+    );
+
+    assert_eq!(
+        state.repos[0].detached_head_commit,
+        Some(CommitId("c1".to_string()))
+    );
+}
+
+#[test]
 fn set_history_scope_bumps_log_rev() {
     let mut repos: HashMap<RepoId, Arc<dyn GitRepository>> = HashMap::default();
     let id_alloc = AtomicU64::new(2);

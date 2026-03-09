@@ -457,7 +457,19 @@ pub(super) fn head_branch_loaded(
     let mut effects = Vec::new();
     if let Some(repo_state) = state.repos.iter_mut().find(|r| r.id == repo_id) {
         let head_branch = match result {
-            Ok(v) => Loadable::Ready(v),
+            Ok(v) => {
+                if v == "HEAD" {
+                    if repo_state.detached_head_commit.is_none()
+                        && let Loadable::Ready(page) = &repo_state.log
+                    {
+                        repo_state
+                            .set_detached_head_commit(page.commits.first().map(|c| c.id.clone()));
+                    }
+                } else {
+                    repo_state.set_detached_head_commit(None);
+                }
+                Loadable::Ready(v)
+            }
             Err(e) => {
                 push_diagnostic(repo_state, DiagnosticKind::Error, e.to_string());
                 Loadable::Error(e.to_string())
@@ -1307,6 +1319,41 @@ mod tests {
             repo_mut(&mut state, repo_id).remote_tags,
             Loadable::Ready(_)
         ));
+    }
+
+    #[test]
+    fn head_branch_loaded_clears_detached_head_commit_when_attached() {
+        let repo_id = RepoId(1);
+        let mut state = new_state_with_repo(repo_id);
+        repo_mut(&mut state, repo_id).set_detached_head_commit(Some(CommitId("c1".into())));
+
+        let _ = head_branch_loaded(&mut state, repo_id, Ok("main".to_string()));
+
+        let repo = repo_mut(&mut state, repo_id);
+        assert!(matches!(repo.head_branch, Loadable::Ready(ref v) if v == "main"));
+        assert!(repo.detached_head_commit.is_none());
+    }
+
+    #[test]
+    fn head_branch_loaded_backfills_detached_head_commit_from_log() {
+        let repo_id = RepoId(1);
+        let mut state = new_state_with_repo(repo_id);
+        repo_mut(&mut state, repo_id).set_log(Loadable::Ready(Arc::new(LogPage {
+            commits: vec![gitcomet_core::domain::Commit {
+                id: CommitId("c1".into()),
+                parent_ids: Vec::new(),
+                summary: "s".into(),
+                author: "a".into(),
+                time: std::time::SystemTime::UNIX_EPOCH,
+            }],
+            next_cursor: None,
+        })));
+
+        let _ = head_branch_loaded(&mut state, repo_id, Ok("HEAD".to_string()));
+
+        let repo = repo_mut(&mut state, repo_id);
+        assert!(matches!(repo.head_branch, Loadable::Ready(ref v) if v == "HEAD"));
+        assert_eq!(repo.detached_head_commit, Some(CommitId("c1".into())));
     }
 
     #[test]

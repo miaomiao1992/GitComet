@@ -272,6 +272,7 @@ pub struct RepoState {
     pub history_state: HistoryState,
     pub fetch_prune_deleted_remote_tracking_branches: bool,
     pub head_branch: Loadable<String>,
+    pub detached_head_commit: Option<CommitId>,
     pub head_branch_rev: u64,
     pub upstream_divergence: Loadable<Option<UpstreamDivergence>>,
     pub upstream_divergence_rev: u64,
@@ -328,6 +329,7 @@ impl RepoState {
             history_state: HistoryState::default(),
             fetch_prune_deleted_remote_tracking_branches: true,
             head_branch: Loadable::NotLoaded,
+            detached_head_commit: None,
             head_branch_rev: 0,
             upstream_divergence: Loadable::NotLoaded,
             upstream_divergence_rev: 0,
@@ -372,6 +374,13 @@ impl RepoState {
         }
         self.head_branch = head_branch;
         self.head_branch_rev = self.head_branch_rev.wrapping_add(1);
+    }
+
+    pub(crate) fn set_detached_head_commit(&mut self, detached_head_commit: Option<CommitId>) {
+        if self.detached_head_commit == detached_head_commit {
+            return;
+        }
+        self.detached_head_commit = detached_head_commit;
     }
 
     pub(crate) fn set_branches(&mut self, branches: Loadable<Vec<Branch>>) {
@@ -863,6 +872,20 @@ mod tests {
     }
 
     #[test]
+    fn set_detached_head_commit_updates_only_on_change() {
+        let mut repo = new_repo();
+        let head = CommitId("abc123".to_string());
+        repo.set_detached_head_commit(Some(head.clone()));
+        assert_eq!(repo.detached_head_commit, Some(head.clone()));
+
+        repo.set_detached_head_commit(Some(head.clone()));
+        assert_eq!(repo.detached_head_commit, Some(head));
+
+        repo.set_detached_head_commit(None);
+        assert!(repo.detached_head_commit.is_none());
+    }
+
+    #[test]
     fn set_branches_skips_rev_bump_when_unchanged() {
         let mut repo = new_repo();
         repo.set_branches(Loadable::NotLoaded);
@@ -1036,5 +1059,6 @@ mod tests {
         ));
         assert!(repo.conflict_state.conflict_session.is_none());
         assert!(!repo.conflict_state.conflict_hide_resolved);
+        assert!(repo.detached_head_commit.is_none());
     }
 }

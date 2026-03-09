@@ -151,6 +151,9 @@ pub(super) fn reduce(
             diff_selection::apply_worktree_patch(repo_id, patch, reverse)
         }
         Msg::CheckoutBranch { repo_id, name } => {
+            if let Some(repo_state) = state.repos.iter_mut().find(|r| r.id == repo_id) {
+                repo_state.set_detached_head_commit(None);
+            }
             begin_local_action(state, repo_id);
             actions_emit_effects::checkout_branch(repo_id, name)
         }
@@ -160,10 +163,16 @@ pub(super) fn reduce(
             branch,
             local_branch,
         } => {
+            if let Some(repo_state) = state.repos.iter_mut().find(|r| r.id == repo_id) {
+                repo_state.set_detached_head_commit(None);
+            }
             begin_local_action(state, repo_id);
             actions_emit_effects::checkout_remote_branch(repo_id, remote, branch, local_branch)
         }
         Msg::CheckoutCommit { repo_id, commit_id } => {
+            if let Some(repo_state) = state.repos.iter_mut().find(|r| r.id == repo_id) {
+                repo_state.set_detached_head_commit(Some(commit_id.clone()));
+            }
             begin_local_action(state, repo_id);
             actions_emit_effects::checkout_commit(repo_id, commit_id)
         }
@@ -180,6 +189,9 @@ pub(super) fn reduce(
             actions_emit_effects::create_branch(repo_id, name)
         }
         Msg::CreateBranchAndCheckout { repo_id, name } => {
+            if let Some(repo_state) = state.repos.iter_mut().find(|r| r.id == repo_id) {
+                repo_state.set_detached_head_commit(None);
+            }
             begin_local_action(state, repo_id);
             actions_emit_effects::create_branch_and_checkout(repo_id, name)
         }

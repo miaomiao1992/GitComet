@@ -179,6 +179,49 @@ fn remote_upstream_branch_is_marked() {
 }
 
 #[test]
+fn remote_section_includes_tracked_upstream_without_remote_tracking_ref() {
+    let mut repo = RepoState::new_opening(
+        RepoId(1),
+        RepoSpec {
+            workdir: PathBuf::new(),
+        },
+    );
+
+    repo.head_branch = Loadable::Ready("feature".to_string());
+    repo.branches = Loadable::Ready(Arc::new(vec![Branch {
+        name: "feature".to_string(),
+        target: CommitId("deadbeef".to_string()),
+        upstream: Some(Upstream {
+            remote: "origin".to_string(),
+            branch: "feature".to_string(),
+        }),
+        divergence: None,
+    }]));
+    repo.remotes = Loadable::Ready(Arc::new(vec![Remote {
+        name: "origin".to_string(),
+        url: Some("https://example.com/origin.git".to_string()),
+    }]));
+    repo.remote_branches = Loadable::Ready(Arc::new(Vec::new()));
+
+    let rows = GitCometView::branch_sidebar_rows(&repo);
+    let tracked_row = rows.iter().find(|r| {
+        matches!(
+            r,
+            BranchSidebarRow::Branch {
+                section: BranchSection::Remote,
+                name,
+                is_upstream: true,
+                ..
+            } if name.as_ref() == "origin/feature"
+        )
+    });
+    assert!(
+        tracked_row.is_some(),
+        "expected tracked upstream branch to be listed under Remote section"
+    );
+}
+
+#[test]
 fn resize_edge_detects_edges_and_corners() {
     let window_size = size(px(100.0), px(100.0));
     let tiling = Tiling::default();

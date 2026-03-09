@@ -344,6 +344,7 @@ pub(super) fn repo_opened_ok(
         repo_state.spec = spec;
         repo_state.set_open(Loadable::Ready(()));
         repo_state.set_head_branch(Loadable::Loading);
+        repo_state.set_detached_head_commit(None);
         repo_state.set_upstream_divergence(Loadable::Loading);
         repo_state.set_branches(Loadable::Loading);
         repo_state.set_tags(Loadable::Loading);

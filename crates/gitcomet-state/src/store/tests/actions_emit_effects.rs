@@ -975,13 +975,14 @@ fn checkout_commit_emits_effect() {
     ));
     state.active_repo = Some(RepoId(1));
 
+    let commit_id = gitcomet_core::domain::CommitId("deadbeef".to_string());
     let effects = reduce(
         &mut repos,
         &id_alloc,
         &mut state,
         Msg::CheckoutCommit {
             repo_id: RepoId(1),
-            commit_id: gitcomet_core::domain::CommitId("deadbeef".to_string()),
+            commit_id: commit_id.clone(),
         },
     );
 
@@ -992,6 +993,13 @@ fn checkout_commit_emits_effect() {
             commit_id: _
         }]
     ));
+
+    let repo = state
+        .repos
+        .iter()
+        .find(|repo| repo.id == RepoId(1))
+        .expect("repo should exist");
+    assert_eq!(repo.detached_head_commit, Some(commit_id));
 }
 
 #[test]
@@ -2241,6 +2249,9 @@ fn checkout_branch_and_submodule_messages_emit_effects() {
             workdir: PathBuf::from("/tmp/repo"),
         },
     ));
+    if let Some(repo) = state.repos.iter_mut().find(|repo| repo.id == RepoId(1)) {
+        repo.set_detached_head_commit(Some(CommitId("deadbeef".to_string())));
+    }
     state.active_repo = Some(RepoId(1));
 
     let checkout = reduce(
@@ -2259,6 +2270,12 @@ fn checkout_branch_and_submodule_messages_emit_effects() {
             name
         }] if name == "feature/x"
     ));
+    let repo = state
+        .repos
+        .iter()
+        .find(|repo| repo.id == RepoId(1))
+        .expect("repo should exist");
+    assert!(repo.detached_head_commit.is_none());
 
     let add_submodule = reduce(
         &mut repos,

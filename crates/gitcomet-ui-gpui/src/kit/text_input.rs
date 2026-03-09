@@ -1,7 +1,7 @@
 use crate::theme::AppTheme;
 use gpui::prelude::*;
 use gpui::{
-    App, Bounds, ClipboardItem, Context, CursorStyle, Element, ElementId, ElementInputHandler,
+    App, Bounds, ClipboardItem, Context, CursorStyle, Div, Element, ElementId, ElementInputHandler,
     Entity, EntityInputHandler, FocusHandle, Focusable, GlobalElementId, IsZero, LayoutId,
     MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad, Pixels, Point, Rgba,
     ShapedLine, SharedString, Style, TextAlign, TextRun, UTF16Selection, Window, WrappedLine,
@@ -69,6 +69,11 @@ struct TextInputStyle {
     placeholder: gpui::Hsla,
     cursor: Rgba,
     selection: Rgba,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct TextInputContextMenuState {
+    can_paste: bool,
 }
 
 impl TextInputStyle {
@@ -172,6 +177,7 @@ pub struct TextInput {
     wrap_cache: Option<WrapCache>,
     is_selecting: bool,
     suppress_right_click: bool,
+    context_menu: Option<TextInputContextMenuState>,
     vertical_motion_x: Option<Pixels>,
 
     has_focus: bool,
@@ -207,6 +213,7 @@ impl TextInput {
             wrap_cache: None,
             is_selecting: false,
             suppress_right_click: false,
+            context_menu: None,
             vertical_motion_x: None,
             has_focus: false,
             cursor_blink_visible: true,
@@ -240,6 +247,7 @@ impl TextInput {
             wrap_cache: None,
             is_selecting: false,
             suppress_right_click: false,
+            context_menu: None,
             vertical_motion_x: None,
             has_focus: false,
             cursor_blink_visible: true,
@@ -975,6 +983,9 @@ impl TextInput {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.context_menu.take().is_some() {
+            cx.notify();
+        }
         cx.stop_propagation();
         window.focus(&self.focus_handle);
         self.cursor_blink_visible = true;
@@ -1011,6 +1022,231 @@ impl TextInput {
         if self.is_selecting {
             self.select_to(self.index_for_mouse_position(event.position), cx);
         }
+    }
+
+    fn on_mouse_down_right(
+        &mut self,
+        event: &MouseDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.suppress_right_click {
+            return;
+        }
+
+        cx.stop_propagation();
+        window.focus(&self.focus_handle);
+        self.cursor_blink_visible = true;
+        self.is_selecting = false;
+        self.vertical_motion_x = None;
+
+        let index = self.index_for_mouse_position(event.position);
+        let click_inside_selection = !self.selected_range.is_empty()
+            && index >= self.selected_range.start
+            && index <= self.selected_range.end;
+        if !click_inside_selection {
+            self.move_to(index, cx);
+        }
+
+        self.context_menu = Some(TextInputContextMenuState {
+            can_paste: cx
+                .read_from_clipboard()
+                .and_then(|item| item.text())
+                .is_some(),
+        });
+        cx.notify();
+    }
+
+    fn context_menu_entry_row(
+        &self,
+        label: &'static str,
+        shortcut: SharedString,
+        disabled: bool,
+    ) -> Div {
+        let mut row = div()
+            .h(px(24.0))
+            .w_full()
+            .px_2()
+            .rounded(px(4.0))
+            .flex()
+            .items_center()
+            .justify_between()
+            .gap_2()
+            .text_sm()
+            .child(label)
+            .child(
+                div()
+                    .text_xs()
+                    .font_family("monospace")
+                    .text_color(self.style.placeholder)
+                    .child(shortcut),
+            );
+
+        if disabled {
+            row = row
+                .text_color(self.style.placeholder)
+                .cursor(CursorStyle::Arrow);
+        } else {
+            let hover = self.style.selection;
+            row = row
+                .cursor(CursorStyle::PointingHand)
+                .hover(move |s| s.bg(hover));
+        }
+
+        row
+    }
+
+    fn render_context_menu(
+        &mut self,
+        state: TextInputContextMenuState,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let primary = primary_modifier_label();
+        let undo_disabled = self.read_only || self.undo_stack.is_empty();
+        let cut_disabled = self.read_only || self.selected_range.is_empty();
+        let copy_disabled = self.selected_range.is_empty();
+        let paste_disabled = self.read_only || !state.can_paste;
+        let delete_disabled = self.read_only || self.selected_range.is_empty();
+        let select_all_disabled = self.content.is_empty();
+
+        let mut undo_row =
+            self.context_menu_entry_row("Undo", format!("{primary}+Z").into(), undo_disabled);
+        if !undo_disabled {
+            undo_row = undo_row.on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _e: &MouseDownEvent, window, cx| {
+                    cx.stop_propagation();
+                    this.context_menu = None;
+                    this.undo(&Undo, window, cx);
+                    cx.notify();
+                }),
+            );
+        }
+
+        let mut cut_row =
+            self.context_menu_entry_row("Cut", format!("{primary}+X").into(), cut_disabled);
+        if !cut_disabled {
+            cut_row = cut_row
+                .debug_selector(|| "text_input_context_cut".to_string())
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|this, _e: &MouseDownEvent, window, cx| {
+                        cx.stop_propagation();
+                        this.context_menu = None;
+                        this.cut(&Cut, window, cx);
+                        cx.notify();
+                    }),
+                );
+        } else {
+            cut_row = cut_row.debug_selector(|| "text_input_context_cut".to_string());
+        }
+
+        let mut copy_row = self
+            .context_menu_entry_row("Copy", format!("{primary}+C").into(), copy_disabled)
+            .debug_selector(|| "text_input_context_copy".to_string());
+        if !copy_disabled {
+            copy_row = copy_row.on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _e: &MouseDownEvent, window, cx| {
+                    cx.stop_propagation();
+                    this.context_menu = None;
+                    this.copy(&Copy, window, cx);
+                    cx.notify();
+                }),
+            );
+        }
+
+        let mut paste_row = self
+            .context_menu_entry_row("Paste", format!("{primary}+V").into(), paste_disabled)
+            .debug_selector(|| "text_input_context_paste".to_string());
+        if !paste_disabled {
+            paste_row = paste_row.on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _e: &MouseDownEvent, window, cx| {
+                    cx.stop_propagation();
+                    this.context_menu = None;
+                    this.paste(&Paste, window, cx);
+                    cx.notify();
+                }),
+            );
+        }
+
+        let mut delete_row = self.context_menu_entry_row("Delete", "Del".into(), delete_disabled);
+        if !delete_disabled {
+            delete_row = delete_row.on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _e: &MouseDownEvent, window, cx| {
+                    cx.stop_propagation();
+                    this.context_menu = None;
+                    if !this.selected_range.is_empty() && !this.read_only {
+                        this.replace_text_in_range(None, "", window, cx);
+                    }
+                    cx.notify();
+                }),
+            );
+        }
+
+        let mut select_all_row = self
+            .context_menu_entry_row(
+                "Select all",
+                format!("{primary}+A").into(),
+                select_all_disabled,
+            )
+            .debug_selector(|| "text_input_context_select_all".to_string());
+        if !select_all_disabled {
+            select_all_row = select_all_row.on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _e: &MouseDownEvent, window, cx| {
+                    cx.stop_propagation();
+                    this.context_menu = None;
+                    this.select_all(&SelectAll, window, cx);
+                    cx.notify();
+                }),
+            );
+        }
+
+        div()
+            .mt_1()
+            .w(px(188.0))
+            .p_1()
+            .flex()
+            .flex_col()
+            .gap_0p5()
+            .bg(with_alpha(self.style.background, 0.98))
+            .border_1()
+            .border_color(self.style.hover_border)
+            .rounded(px(8.0))
+            .shadow_lg()
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|_this, _e: &MouseDownEvent, _window, cx| {
+                    cx.stop_propagation();
+                }),
+            )
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(|_this, _e: &MouseDownEvent, _window, cx| {
+                    cx.stop_propagation();
+                }),
+            )
+            .child(undo_row)
+            .child(
+                div()
+                    .h(px(1.0))
+                    .w_full()
+                    .bg(with_alpha(self.style.border, 0.6)),
+            )
+            .child(cut_row)
+            .child(copy_row)
+            .child(paste_row)
+            .child(delete_row)
+            .child(
+                div()
+                    .h(px(1.0))
+                    .w_full()
+                    .bg(with_alpha(self.style.border, 0.6)),
+            )
+            .child(select_all_row)
     }
 
     fn index_for_mouse_position(&self, position: Point<Pixels>) -> usize {
@@ -1813,6 +2049,7 @@ impl Render for TextInput {
             self.cursor_blink_visible = true;
             if !is_focused {
                 self.cursor_blink_task.take();
+                self.context_menu = None;
             }
         }
 
@@ -1853,6 +2090,7 @@ impl Render for TextInput {
             .w_full()
             .min_w(px(0.0))
             .flex()
+            .relative()
             .track_focus(&focus)
             .key_context("TextInput")
             .cursor(CursorStyle::IBeam)
@@ -1891,20 +2129,7 @@ impl Render for TextInput {
             .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
             .on_mouse_up_out(MouseButton::Left, cx.listener(Self::on_mouse_up))
             .on_mouse_move(cx.listener(Self::on_mouse_move))
-            .on_mouse_down(
-                MouseButton::Right,
-                cx.listener(|this, _e: &MouseDownEvent, _w, cx| {
-                    if this.suppress_right_click {
-                        return;
-                    }
-                    cx.stop_propagation();
-                    if !this.selected_range.is_empty() {
-                        cx.write_to_clipboard(ClipboardItem::new_string(
-                            this.content[this.selected_range.clone()].to_string(),
-                        ));
-                    }
-                }),
-            )
+            .on_mouse_down(MouseButton::Right, cx.listener(Self::on_mouse_down_right))
             .line_height(self.effective_line_height(window))
             .text_size(px(13.0))
             .when(self.multiline, |d| d.items_start())
@@ -1916,6 +2141,10 @@ impl Render for TextInput {
                     .overflow_hidden()
                     .child(TextElement { input: cx.entity() }),
             );
+
+        if let Some(state) = self.context_menu {
+            outer = outer.child(self.render_context_menu(state, cx));
+        }
 
         if !chromeless {
             outer = outer
@@ -2050,6 +2279,16 @@ fn runs_for_line(
 fn with_alpha(mut color: Rgba, alpha: f32) -> Rgba {
     color.a = alpha;
     color
+}
+
+#[cfg(target_os = "macos")]
+fn primary_modifier_label() -> &'static str {
+    "Cmd"
+}
+
+#[cfg(not(target_os = "macos"))]
+fn primary_modifier_label() -> &'static str {
+    "Ctrl"
 }
 
 fn split_lines_with_starts(text: &SharedString) -> (Vec<usize>, Vec<SharedString>) {

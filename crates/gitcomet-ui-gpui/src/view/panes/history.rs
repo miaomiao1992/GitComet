@@ -46,6 +46,7 @@ impl HistoryView {
         {
             repo.log_rev.hash(&mut hasher);
             repo.head_branch_rev.hash(&mut hasher);
+            repo.detached_head_commit.hash(&mut hasher);
             repo.branches_rev.hash(&mut hasher);
             repo.remote_branches_rev.hash(&mut hasher);
             repo.tags_rev.hash(&mut hasher);
@@ -334,7 +335,7 @@ impl HistoryView {
 
 // --- History cache methods ---
 
-use gitcomet_core::domain::{LogPage, RemoteBranch, StashEntry};
+use gitcomet_core::domain::{LogPage, LogScope, RemoteBranch, StashEntry};
 
 impl HistoryView {
     pub(in super::super) fn ensure_history_worktree_summary_cache(
@@ -510,8 +511,10 @@ impl HistoryView {
             if let Loadable::Ready(page) = &repo.log {
                 let request = HistoryCacheRequest {
                     repo_id: repo.id,
+                    history_scope: repo.history_state.history_scope,
                     log_fingerprint: Self::log_fingerprint(&page.commits),
                     head_branch_rev: repo.head_branch_rev,
+                    detached_head_commit: repo.detached_head_commit.clone(),
                     branches_rev: repo.branches_rev,
                     remote_branches_rev: repo.remote_branches_rev,
                     tags_rev: repo.tags_rev,
@@ -688,10 +691,22 @@ impl HistoryView {
                         .max()
                         .unwrap_or(1);
 
-                    let head_target = head_branch
-                        .as_deref()
-                        .and_then(|head| branches.iter().find(|b| b.name == head))
-                        .map(|b| b.target.as_ref());
+                    let head_target = match head_branch.as_deref() {
+                        Some("HEAD") => request_for_build
+                            .detached_head_commit
+                            .as_ref()
+                            .map(|id| id.as_ref())
+                            .or_else(|| {
+                                (request_for_build.history_scope == LogScope::CurrentBranch)
+                                    .then(|| visible_commits.first().map(|c| c.id.as_ref()))
+                                    .flatten()
+                            }),
+                        Some(head) => branches
+                            .iter()
+                            .find(|b| b.name == head)
+                            .map(|b| b.target.as_ref()),
+                        None => None,
+                    };
 
                     let mut branch_names_by_target: HashMap<&str, Vec<String>> =
                         HashMap::with_capacity_and_hasher(
@@ -701,7 +716,7 @@ impl HistoryView {
                     for branch in branches.iter() {
                         let should_skip = head_branch
                             .as_ref()
-                            .is_some_and(|head| branch.name == *head)
+                            .is_some_and(|head| head != "HEAD" && branch.name == *head)
                             && head_target == Some(branch.target.as_ref());
                         if should_skip {
                             continue;
@@ -742,17 +757,19 @@ impl HistoryView {
                         .map(|commit| {
                             let commit_id = commit.id.as_ref();
 
-                            let is_head = head_target == Some(commit_id) && head_branch.is_some();
+                            let is_head = head_target == Some(commit_id);
 
                             let branches_text = {
                                 let branch_count =
                                     branch_names_by_target.get(commit_id).map_or(0, |b| b.len());
                                 let mut names: Vec<String> =
                                     Vec::with_capacity(branch_count + usize::from(is_head));
-                                if head_target == Some(commit_id)
-                                    && let Some(head) = head_branch.as_ref()
-                                {
-                                    names.push(format!("HEAD → {head}"));
+                                if head_target == Some(commit_id) {
+                                    match head_branch.as_deref() {
+                                        Some("HEAD") => names.push("HEAD".to_string()),
+                                        Some(head) => names.push(format!("HEAD → {head}")),
+                                        None => {}
+                                    }
                                 }
                                 if let Some(branches) = branch_names_by_target.get(commit_id) {
                                     names.extend(branches.iter().cloned());

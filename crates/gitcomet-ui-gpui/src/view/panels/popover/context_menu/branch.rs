@@ -53,14 +53,6 @@ pub(super) fn model(
             }
         }),
     });
-    items.push(ContextMenuItem::Entry {
-        label: "Copy name".into(),
-        icon: Some("⧉".into()),
-        shortcut: Some("C".into()),
-        disabled: false,
-        action: Box::new(ContextMenuAction::CopyText { text: name.clone() }),
-    });
-
     if section == BranchSection::Local {
         items.push(ContextMenuItem::Separator);
         if !is_current_branch {

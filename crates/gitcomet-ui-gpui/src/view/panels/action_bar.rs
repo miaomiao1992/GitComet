@@ -40,6 +40,7 @@ impl ActionBarView {
         {
             repo.open_rev.hash(&mut hasher);
             repo.head_branch_rev.hash(&mut hasher);
+            repo.branches_rev.hash(&mut hasher);
             repo.upstream_divergence_rev.hash(&mut hasher);
             repo.merge_message_rev.hash(&mut hasher);
             repo.ops_rev.hash(&mut hasher);
@@ -688,7 +689,9 @@ impl Render for ActionBarView {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gitcomet_core::domain::RepoSpec;
     use gitcomet_core::domain::Upstream;
+    use std::path::PathBuf;
 
     fn test_branch(name: &str, upstream: Option<Upstream>) -> Branch {
         Branch {
@@ -730,5 +733,31 @@ mod tests {
             }),
         )]));
         assert!(!head_branch_has_tracking_upstream(&head_branch, &branches));
+    }
+
+    #[test]
+    fn notify_fingerprint_changes_when_branches_rev_changes() {
+        let repo_id = RepoId(1);
+        let mut state = AppState::default();
+        state.active_repo = Some(repo_id);
+        state.repos.push(RepoState::new_opening(
+            repo_id,
+            RepoSpec {
+                workdir: PathBuf::from("/tmp/repo"),
+            },
+        ));
+
+        let before = ActionBarView::notify_fingerprint(&state);
+        state.repos[0].branches = Loadable::Ready(Arc::new(vec![test_branch(
+            "main",
+            Some(Upstream {
+                remote: "origin".to_string(),
+                branch: "main".to_string(),
+            }),
+        )]));
+        state.repos[0].branches_rev = state.repos[0].branches_rev.wrapping_add(1);
+        let after = ActionBarView::notify_fingerprint(&state);
+
+        assert_ne!(before, after);
     }
 }

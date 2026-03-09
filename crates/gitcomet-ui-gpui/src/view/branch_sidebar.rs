@@ -209,6 +209,19 @@ pub(super) fn branch_sidebar_rows(repo: &RepoState) -> Vec<BranchSidebarRow> {
     }
 
     if !remote_section_is_loading_or_error {
+        if let Loadable::Ready(local_branches) = &repo.branches {
+            // Some repos have upstream tracking configured before any local
+            // remote-tracking refs are present. Surface those upstreams so the
+            // Remote section still reflects tracked branches.
+            for local in local_branches.iter() {
+                if let Some(upstream) = &local.upstream {
+                    remotes
+                        .entry(upstream.remote.clone())
+                        .or_default()
+                        .push(upstream.branch.clone());
+                }
+            }
+        }
         if let Loadable::Ready(known) = &repo.remotes {
             // Ensure remotes with no local remote-tracking branches are still visible (e.g. newly
             // added remotes before an initial fetch).
