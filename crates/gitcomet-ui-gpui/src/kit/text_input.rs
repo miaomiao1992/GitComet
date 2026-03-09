@@ -4,8 +4,8 @@ use gpui::{
     App, Bounds, ClipboardItem, Context, CursorStyle, Div, Element, ElementId, ElementInputHandler,
     Entity, EntityInputHandler, FocusHandle, Focusable, GlobalElementId, IsZero, LayoutId,
     MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad, Pixels, Point, Rgba,
-    ShapedLine, SharedString, Style, TextAlign, TextRun, UTF16Selection, Window, WrappedLine,
-    actions, anchored, deferred, div, fill, hsla, point, px, relative, size,
+    ScrollHandle, ShapedLine, SharedString, Style, TextAlign, TextRun, UTF16Selection, Window,
+    WrappedLine, actions, anchored, deferred, div, fill, hsla, point, px, relative, size,
 };
 use std::ops::Range;
 use std::sync::Arc;
@@ -138,7 +138,7 @@ pub struct TextInputOptions {
     pub soft_wrap: bool,
 }
 
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 struct WrapCache {
     width: Pixels,
     rows: usize,
@@ -180,6 +180,8 @@ pub struct TextInput {
     suppress_right_click: bool,
     context_menu: Option<TextInputContextMenuState>,
     vertical_motion_x: Option<Pixels>,
+    vertical_scroll_handle: Option<ScrollHandle>,
+    pending_cursor_autoscroll: bool,
 
     has_focus: bool,
     cursor_blink_visible: bool,
@@ -216,6 +218,8 @@ impl TextInput {
             suppress_right_click: false,
             context_menu: None,
             vertical_motion_x: None,
+            vertical_scroll_handle: None,
+            pending_cursor_autoscroll: false,
             has_focus: false,
             cursor_blink_visible: true,
             cursor_blink_task: None,
@@ -250,6 +254,8 @@ impl TextInput {
             suppress_right_click: false,
             context_menu: None,
             vertical_motion_x: None,
+            vertical_scroll_handle: None,
+            pending_cursor_autoscroll: false,
             has_focus: false,
             cursor_blink_visible: true,
             cursor_blink_task: None,
@@ -285,6 +291,9 @@ impl TextInput {
         self.undo_stack.clear();
         self.cursor_blink_visible = true;
         self.scroll_x = px(0.0);
+        self.wrap_cache = None;
+        self.last_layout = None;
+        self.last_line_starts = None;
         cx.notify();
     }
 
@@ -321,6 +330,14 @@ impl TextInput {
 
     pub fn set_suppress_right_click(&mut self, suppress: bool) {
         self.suppress_right_click = suppress;
+    }
+
+    pub fn set_vertical_scroll_handle(&mut self, handle: Option<ScrollHandle>) {
+        self.vertical_scroll_handle = handle;
+    }
+
+    fn queue_cursor_autoscroll(&mut self) {
+        self.pending_cursor_autoscroll = true;
     }
 
     pub fn selected_text(&self) -> Option<String> {
@@ -385,6 +402,7 @@ impl TextInput {
         } else {
             self.move_to(self.selected_range.start, cx)
         }
+        self.queue_cursor_autoscroll();
     }
 
     fn right(&mut self, _: &Right, _: &mut Window, cx: &mut Context<Self>) {
@@ -393,6 +411,7 @@ impl TextInput {
         } else {
             self.move_to(self.selected_range.end, cx)
         }
+        self.queue_cursor_autoscroll();
     }
 
     fn word_left(&mut self, _: &WordLeft, _: &mut Window, cx: &mut Context<Self>) {
@@ -401,6 +420,7 @@ impl TextInput {
         } else {
             self.move_to(self.selected_range.start, cx)
         }
+        self.queue_cursor_autoscroll();
     }
 
     fn word_right(&mut self, _: &WordRight, _: &mut Window, cx: &mut Context<Self>) {
@@ -409,22 +429,27 @@ impl TextInput {
         } else {
             self.move_to(self.selected_range.end, cx)
         }
+        self.queue_cursor_autoscroll();
     }
 
     fn select_left(&mut self, _: &SelectLeft, _: &mut Window, cx: &mut Context<Self>) {
         self.select_to(self.previous_boundary(self.cursor_offset()), cx);
+        self.queue_cursor_autoscroll();
     }
 
     fn select_right(&mut self, _: &SelectRight, _: &mut Window, cx: &mut Context<Self>) {
         self.select_to(self.next_boundary(self.cursor_offset()), cx);
+        self.queue_cursor_autoscroll();
     }
 
     fn select_word_left(&mut self, _: &SelectWordLeft, _: &mut Window, cx: &mut Context<Self>) {
         self.select_to(self.previous_word_start(self.cursor_offset()), cx);
+        self.queue_cursor_autoscroll();
     }
 
     fn select_word_right(&mut self, _: &SelectWordRight, _: &mut Window, cx: &mut Context<Self>) {
         self.select_to(self.next_word_end(self.cursor_offset()), cx);
+        self.queue_cursor_autoscroll();
     }
 
     fn up(&mut self, _: &Up, _: &mut Window, cx: &mut Context<Self>) {
@@ -435,6 +460,7 @@ impl TextInput {
         };
         self.move_to(target, cx);
         self.vertical_motion_x = Some(preferred_x);
+        self.queue_cursor_autoscroll();
     }
 
     fn down(&mut self, _: &Down, _: &mut Window, cx: &mut Context<Self>) {
@@ -445,6 +471,7 @@ impl TextInput {
         };
         self.move_to(target, cx);
         self.vertical_motion_x = Some(preferred_x);
+        self.queue_cursor_autoscroll();
     }
 
     fn select_up(&mut self, _: &SelectUp, _: &mut Window, cx: &mut Context<Self>) {
@@ -455,6 +482,7 @@ impl TextInput {
         };
         self.select_to(target, cx);
         self.vertical_motion_x = Some(preferred_x);
+        self.queue_cursor_autoscroll();
     }
 
     fn select_down(&mut self, _: &SelectDown, _: &mut Window, cx: &mut Context<Self>) {
@@ -465,6 +493,7 @@ impl TextInput {
         };
         self.select_to(target, cx);
         self.vertical_motion_x = Some(preferred_x);
+        self.queue_cursor_autoscroll();
     }
 
     fn select_all(&mut self, _: &SelectAll, _: &mut Window, cx: &mut Context<Self>) {
@@ -551,18 +580,22 @@ impl TextInput {
 
     fn home(&mut self, _: &Home, _: &mut Window, cx: &mut Context<Self>) {
         self.move_to(self.row_start(self.cursor_offset()), cx);
+        self.queue_cursor_autoscroll();
     }
 
     fn select_home(&mut self, _: &SelectHome, _: &mut Window, cx: &mut Context<Self>) {
         self.select_to(self.row_start(self.cursor_offset()), cx);
+        self.queue_cursor_autoscroll();
     }
 
     fn end(&mut self, _: &End, _: &mut Window, cx: &mut Context<Self>) {
         self.move_to(self.row_end(self.cursor_offset()), cx);
+        self.queue_cursor_autoscroll();
     }
 
     fn select_end(&mut self, _: &SelectEnd, _: &mut Window, cx: &mut Context<Self>) {
         self.select_to(self.row_end(self.cursor_offset()), cx);
+        self.queue_cursor_autoscroll();
     }
 
     fn caret_point_for_hit_testing(&self, cursor: usize) -> Option<Point<Pixels>> {
@@ -639,6 +672,116 @@ impl TextInput {
         Some((self.index_for_position(target), preferred_x))
     }
 
+    fn cursor_vertical_span(&self, cursor: usize) -> Option<(Pixels, Pixels)> {
+        let layout = self.last_layout.as_ref()?;
+        let starts = self.last_line_starts.as_ref()?;
+        let line_height = if self.last_line_height.is_zero() {
+            px(16.0)
+        } else {
+            self.last_line_height
+        };
+
+        match layout {
+            TextInputLayout::Plain(lines) => {
+                let (line_ix, _) = line_for_offset(starts, lines, cursor);
+                let top = line_height * line_ix as f32;
+                let bottom = top + line_height;
+                Some((top, bottom))
+            }
+            TextInputLayout::Wrapped { lines, y_offsets } => {
+                let mut ix = starts.partition_point(|&s| s <= cursor);
+                if ix == 0 {
+                    ix = 1;
+                }
+                let line_ix = (ix - 1).min(lines.len().saturating_sub(1));
+                let line = lines.get(line_ix)?;
+                let start = starts.get(line_ix).copied().unwrap_or(0);
+                let local = cursor.saturating_sub(start).min(line.len());
+                let pos = line
+                    .position_for_index(local, line_height)
+                    .unwrap_or(point(Pixels::ZERO, Pixels::ZERO));
+                let top = y_offsets.get(line_ix).copied().unwrap_or(Pixels::ZERO) + pos.y;
+                let bottom = top + line_height;
+                Some((top, bottom))
+            }
+        }
+    }
+
+    fn ensure_cursor_visible_in_vertical_scroll(&mut self, cx: &mut Context<Self>) {
+        let Some(handle) = self.vertical_scroll_handle.clone() else {
+            self.pending_cursor_autoscroll = false;
+            return;
+        };
+        let Some(text_bounds) = self.last_bounds else {
+            return;
+        };
+        let viewport_height = handle.bounds().size.height.max(px(0.0));
+        if viewport_height <= px(0.0) {
+            return;
+        }
+        let caret_margin = px(10.0);
+
+        let Some((cursor_top, cursor_bottom)) = self.cursor_vertical_span(self.cursor_offset())
+        else {
+            return;
+        };
+
+        let current = handle.offset();
+        let viewport_top = handle.bounds().top();
+        let child_top = viewport_top + current.y;
+        let text_origin_in_child = text_bounds.top() - child_top;
+        let cursor_top = text_origin_in_child + cursor_top;
+        let cursor_bottom = text_origin_in_child + cursor_bottom;
+        let negative_axis = current.y < px(0.0);
+        let mut scroll_y = if negative_axis { -current.y } else { current.y };
+
+        let max_offset = handle.max_offset().height.max(px(0.0));
+        if max_offset <= px(0.0) {
+            let cursor_out_of_view = cursor_top < scroll_y + caret_margin
+                || cursor_bottom > scroll_y + viewport_height - caret_margin;
+            if self.cursor_offset() == self.content.len() {
+                handle.scroll_to_bottom();
+                cx.notify();
+                self.pending_cursor_autoscroll = true;
+            } else if cursor_out_of_view {
+                cx.notify();
+                self.pending_cursor_autoscroll = true;
+            } else {
+                self.pending_cursor_autoscroll = false;
+            }
+            return;
+        }
+
+        scroll_y = scroll_y.max(px(0.0)).min(max_offset);
+
+        let target_scroll = if self.cursor_offset() == self.content.len() {
+            max_offset
+        } else if cursor_top < scroll_y + caret_margin {
+            cursor_top - caret_margin
+        } else if cursor_bottom > scroll_y + viewport_height - caret_margin {
+            cursor_bottom - viewport_height + caret_margin
+        } else {
+            self.pending_cursor_autoscroll = false;
+            return;
+        }
+        .max(px(0.0))
+        .min(max_offset);
+
+        if target_scroll == scroll_y {
+            self.pending_cursor_autoscroll = false;
+            return;
+        }
+
+        let next_y = if negative_axis {
+            -target_scroll
+        } else {
+            target_scroll
+        };
+        handle.set_offset(point(current.x, next_y));
+        self.pending_cursor_autoscroll = false;
+        cx.notify();
+    }
+
     fn page_up(&mut self, _: &PageUp, _: &mut Window, cx: &mut Context<Self>) {
         let Some((target, preferred_x)) =
             self.page_move_target(self.cursor_offset(), -1.0, self.vertical_motion_x)
@@ -647,6 +790,7 @@ impl TextInput {
         };
         self.move_to(target, cx);
         self.vertical_motion_x = Some(preferred_x);
+        self.queue_cursor_autoscroll();
     }
 
     fn select_page_up(&mut self, _: &SelectPageUp, _: &mut Window, cx: &mut Context<Self>) {
@@ -657,6 +801,7 @@ impl TextInput {
         };
         self.select_to(target, cx);
         self.vertical_motion_x = Some(preferred_x);
+        self.queue_cursor_autoscroll();
     }
 
     fn page_down(&mut self, _: &PageDown, _: &mut Window, cx: &mut Context<Self>) {
@@ -667,6 +812,7 @@ impl TextInput {
         };
         self.move_to(target, cx);
         self.vertical_motion_x = Some(preferred_x);
+        self.queue_cursor_autoscroll();
     }
 
     fn select_page_down(&mut self, _: &SelectPageDown, _: &mut Window, cx: &mut Context<Self>) {
@@ -677,6 +823,7 @@ impl TextInput {
         };
         self.select_to(target, cx);
         self.vertical_motion_x = Some(preferred_x);
+        self.queue_cursor_autoscroll();
     }
 
     fn backspace(&mut self, _: &Backspace, window: &mut Window, cx: &mut Context<Self>) {
@@ -733,6 +880,7 @@ impl TextInput {
         if self.read_only || !self.multiline {
             return;
         }
+        self.queue_cursor_autoscroll();
         self.replace_text_in_range(None, self.line_ending, window, cx);
     }
 
@@ -863,6 +1011,10 @@ impl TextInput {
         self.vertical_motion_x = None;
         self.cursor_blink_visible = true;
         self.is_selecting = false;
+        self.wrap_cache = None;
+        self.last_layout = None;
+        self.last_line_starts = None;
+        self.queue_cursor_autoscroll();
         cx.notify();
     }
 
@@ -1482,6 +1634,10 @@ impl EntityInputHandler for TextInput {
         self.marked_range.take();
         self.vertical_motion_x = None;
         self.cursor_blink_visible = true;
+        self.wrap_cache = None;
+        self.last_layout = None;
+        self.last_line_starts = None;
+        self.queue_cursor_autoscroll();
         cx.notify();
     }
 
@@ -1525,6 +1681,10 @@ impl EntityInputHandler for TextInput {
 
         self.vertical_motion_x = None;
         self.cursor_blink_visible = true;
+        self.wrap_cache = None;
+        self.last_layout = None;
+        self.last_line_starts = None;
+        self.queue_cursor_autoscroll();
         cx.notify();
     }
 
@@ -2026,13 +2186,20 @@ impl Element for TextElement {
             window.paint_quad(cursor);
         }
 
-        self.input.update(cx, |input, _cx| {
+        self.input.update(cx, |input, cx| {
+            let wrap_cache_changed = input.wrap_cache != prepaint.wrap_cache;
             input.last_layout = prepaint.layout.take();
             input.last_line_starts = prepaint.line_starts.clone();
             input.last_bounds = Some(bounds);
             input.last_line_height = line_height;
             input.wrap_cache = prepaint.wrap_cache;
             input.scroll_x = prepaint.scroll_x;
+            if input.pending_cursor_autoscroll {
+                input.ensure_cursor_visible_in_vertical_scroll(cx);
+            }
+            if wrap_cache_changed {
+                cx.notify();
+            }
         });
     }
 }
@@ -2087,6 +2254,13 @@ impl Render for TextInput {
             self.cursor_blink_task = Some(task);
         }
 
+        let text_surface = div()
+            .w_full()
+            .min_w(px(0.0))
+            .p(padding)
+            .overflow_hidden()
+            .child(TextElement { input: cx.entity() });
+
         let mut input = div()
             .w_full()
             .min_w(px(0.0))
@@ -2133,14 +2307,7 @@ impl Render for TextInput {
             .line_height(self.effective_line_height(window))
             .text_size(px(13.0))
             .when(self.multiline, |d| d.items_start())
-            .child(
-                div()
-                    .w_full()
-                    .min_w(px(0.0))
-                    .p(padding)
-                    .overflow_hidden()
-                    .child(TextElement { input: cx.entity() }),
-            );
+            .child(text_surface);
 
         if !chromeless {
             input = input
