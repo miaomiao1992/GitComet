@@ -7,8 +7,8 @@ use gitcomet_core::domain::{
 use gitcomet_core::file_diff::FileDiffRow;
 use gitcomet_core::services::{PullMode, RemoteUrlKind, ResetMode};
 use gitcomet_state::model::{
-    AppNotificationKind, AppState, CloneOpState, CloneOpStatus, DiagnosticKind, Loadable, RepoId,
-    RepoState,
+    AppNotificationKind, AppState, AuthPromptKind, CloneOpState, CloneOpStatus, DiagnosticKind,
+    Loadable, RepoId, RepoState,
 };
 use gitcomet_state::msg::{Msg, RepoExternalChange, StoreEvent};
 use gitcomet_state::session;
@@ -471,6 +471,34 @@ impl GitCometView {
             )
         });
 
+        let auth_prompt_username_input = cx.new(|cx| {
+            components::TextInput::new(
+                components::TextInputOptions {
+                    placeholder: "Username".into(),
+                    multiline: false,
+                    read_only: false,
+                    chromeless: false,
+                    soft_wrap: false,
+                },
+                window,
+                cx,
+            )
+        });
+
+        let auth_prompt_secret_input = cx.new(|cx| {
+            components::TextInput::new(
+                components::TextInputOptions {
+                    placeholder: "Password / passphrase".into(),
+                    multiline: false,
+                    read_only: false,
+                    chromeless: false,
+                    soft_wrap: false,
+                },
+                window,
+                cx,
+            )
+        });
+
         let mut view = Self {
             state: Arc::clone(&initial_state),
             _ui_model: ui_model,
@@ -515,6 +543,9 @@ impl GitCometView {
             pending_force_remove_worktree_prompt: None,
             startup_crash_report,
             error_banner_input,
+            auth_prompt_username_input,
+            auth_prompt_secret_input,
+            auth_prompt_key: None,
             active_context_menu_invoker: None,
         };
 
@@ -552,6 +583,10 @@ impl GitCometView {
         self.open_repo_input
             .update(cx, |input, cx| input.set_theme(theme, cx));
         self.error_banner_input
+            .update(cx, |input, cx| input.set_theme(theme, cx));
+        self.auth_prompt_username_input
+            .update(cx, |input, cx| input.set_theme(theme, cx));
+        self.auth_prompt_secret_input
             .update(cx, |input, cx| input.set_theme(theme, cx));
     }
 
@@ -979,7 +1014,131 @@ impl Render for GitCometView {
             );
         }
 
-        if let Some(repo_id) = self.active_repo_id()
+        if let Some(prompt) = self.state.auth_prompt.clone() {
+            let prompt_key = format!("{:?}:{:?}", prompt.kind, prompt.operation);
+            if self.auth_prompt_key.as_ref() != Some(&prompt_key) {
+                self.auth_prompt_key = Some(prompt_key);
+                self.auth_prompt_username_input
+                    .update(cx, |input, cx| input.set_text("", cx));
+                self.auth_prompt_secret_input
+                    .update(cx, |input, cx| input.set_text("", cx));
+            }
+
+            self.auth_prompt_username_input
+                .update(cx, |input, cx| input.set_theme(theme, cx));
+            self.auth_prompt_secret_input
+                .update(cx, |input, cx| input.set_theme(theme, cx));
+
+            let requires_username = prompt.kind == AuthPromptKind::UsernamePassword;
+            let title = match prompt.kind {
+                AuthPromptKind::UsernamePassword => "Repository authentication required",
+                AuthPromptKind::Passphrase => "Passphrase required",
+            };
+            let subtitle = match prompt.kind {
+                AuthPromptKind::UsernamePassword => {
+                    "Enter username and password, then confirm to retry."
+                }
+                AuthPromptKind::Passphrase => "Enter your key passphrase, then confirm to retry.",
+            };
+
+            let confirm_button = components::Button::new("auth_prompt_confirm", "Confirm")
+                .style(components::ButtonStyle::Filled)
+                .on_click(theme, cx, move |this, _e, _w, cx| {
+                    let username = this
+                        .auth_prompt_username_input
+                        .read(cx)
+                        .text()
+                        .trim()
+                        .to_string();
+                    let secret = this.auth_prompt_secret_input.read(cx).text().to_string();
+
+                    if requires_username && username.is_empty() {
+                        this.push_toast(
+                            components::ToastKind::Error,
+                            "Username is required.".to_string(),
+                            cx,
+                        );
+                        return;
+                    }
+                    if secret.trim().is_empty() {
+                        this.push_toast(
+                            components::ToastKind::Error,
+                            "Password/passphrase is required.".to_string(),
+                            cx,
+                        );
+                        return;
+                    }
+
+                    this.store.dispatch(Msg::SubmitAuthPrompt {
+                        username: requires_username.then_some(username),
+                        secret,
+                    });
+                    cx.notify();
+                });
+
+            let cancel_button = components::Button::new("auth_prompt_cancel", "Cancel")
+                .style(components::ButtonStyle::Outlined)
+                .on_click(theme, cx, |this, _e, _w, cx| {
+                    this.store.dispatch(Msg::CancelAuthPrompt);
+                    cx.notify();
+                });
+
+            let prompt_form = div()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .child(div().text_sm().font_weight(FontWeight::BOLD).child(title))
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(theme.colors.text_muted)
+                        .child(subtitle),
+                )
+                .when(requires_username, |this| {
+                    this.child(self.auth_prompt_username_input.clone())
+                })
+                .child(self.auth_prompt_secret_input.clone())
+                .when(!prompt.reason.trim().is_empty(), |this| {
+                    this.child(
+                        div()
+                            .id("auth_prompt_reason_scroll")
+                            .max_h(px(96.0))
+                            .overflow_y_scroll()
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(theme.colors.text_muted)
+                                    .child(prompt.reason.clone()),
+                            ),
+                    )
+                })
+                .child(
+                    div()
+                        .pt_1()
+                        .flex()
+                        .items_center()
+                        .gap_1()
+                        .child(confirm_button)
+                        .child(cancel_button),
+                );
+
+            body = body.child(
+                div()
+                    .relative()
+                    .px_2()
+                    .py_1()
+                    .bg(with_alpha(theme.colors.danger, 0.15))
+                    .border_1()
+                    .border_color(with_alpha(theme.colors.danger, 0.3))
+                    .rounded(px(theme.radii.panel))
+                    .child(prompt_form),
+            );
+        } else {
+            self.auth_prompt_key = None;
+        }
+
+        if self.state.auth_prompt.is_none()
+            && let Some(repo_id) = self.active_repo_id()
             && let Some(repo) = self.active_repo()
             && let Some(err) = repo.last_error.as_ref()
         {

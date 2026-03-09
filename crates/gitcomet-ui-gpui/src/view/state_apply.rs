@@ -7,6 +7,7 @@ impl GitCometView {
         cx: &mut gpui::Context<Self>,
     ) -> bool {
         let prev_error = self.active_repo().and_then(|repo| repo.last_error.clone());
+        let prev_auth_prompt = self.state.auth_prompt.clone();
         let next_error = next
             .active_repo
             .and_then(|repo_id| next.repos.iter().find(|repo| repo.id == repo_id))
@@ -117,9 +118,12 @@ impl GitCometView {
         });
 
         self.state = next;
+        if prev_auth_prompt != self.state.auth_prompt {
+            self.auth_prompt_key = None;
+        }
         self.drive_focused_mergetool_bootstrap();
 
-        prev_error != next_error
+        prev_error != next_error || prev_auth_prompt != self.state.auth_prompt
     }
 }
 

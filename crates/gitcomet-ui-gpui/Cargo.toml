@@ -36,7 +36,7 @@ unicode-segmentation = { workspace = true }
 zed-reqwest = { workspace = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
-metal = "0.29"
+metal = "0.33"
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }

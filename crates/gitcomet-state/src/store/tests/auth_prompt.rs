@@ -1,0 +1,643 @@
+use super::*;
+use crate::model::{AuthPromptKind, AuthPromptState, AuthRetryOperation, PendingCommitRetry};
+use gitcomet_core::auth::{
+    GitAuthKind, StagedGitAuth, clear_staged_git_auth, stage_git_auth, take_staged_git_auth,
+};
+use gitcomet_core::services::{ConflictSide, RemoteUrlKind, ResetMode};
+
+fn auth_error(message: &str) -> Error {
+    Error::new(ErrorKind::Backend(message.to_string()))
+}
+
+fn setup_open_repo(
+    repo_id: RepoId,
+    workdir: &str,
+) -> (HashMap<RepoId, Arc<dyn GitRepository>>, AppState) {
+    let mut repos: HashMap<RepoId, Arc<dyn GitRepository>> = HashMap::default();
+    repos.insert(repo_id, Arc::new(DummyRepo::new(workdir)));
+
+    let mut state = AppState::default();
+    state.repos.push(RepoState::new_opening(
+        repo_id,
+        RepoSpec {
+            workdir: PathBuf::from(workdir),
+        },
+    ));
+    state.active_repo = Some(repo_id);
+    (repos, state)
+}
+
+#[test]
+fn repo_command_finished_auth_error_sets_username_password_prompt() {
+    let repo_id = RepoId(1);
+    let (mut repos, mut state) = setup_open_repo(repo_id, "/tmp/repo");
+    let id_alloc = AtomicU64::new(1);
+
+    reduce(
+        &mut repos,
+        &id_alloc,
+        &mut state,
+        Msg::Internal(crate::msg::InternalMsg::RepoCommandFinished {
+            repo_id,
+            command: RepoCommandKind::Push,
+            result: Err(auth_error(
+                "git push failed: fatal: could not read Username for 'https://example.com': terminal prompts disabled",
+            )),
+        }),
+    );
+
+    let prompt = state.auth_prompt.expect("expected auth prompt");
+    assert_eq!(prompt.kind, AuthPromptKind::UsernamePassword);
+    assert!(prompt.reason.contains("could not read Username"));
+    assert_eq!(
+        prompt.operation,
+        AuthRetryOperation::RepoCommand {
+            repo_id,
+            command: RepoCommandKind::Push,
+        }
+    );
+}
+
+#[test]
+fn repo_command_finished_auth_error_sets_passphrase_prompt() {
+    let repo_id = RepoId(1);
+    let (mut repos, mut state) = setup_open_repo(repo_id, "/tmp/repo");
+    let id_alloc = AtomicU64::new(1);
+
+    reduce(
+        &mut repos,
+        &id_alloc,
+        &mut state,
+        Msg::Internal(crate::msg::InternalMsg::RepoCommandFinished {
+            repo_id,
+            command: RepoCommandKind::Pull {
+                mode: PullMode::Default,
+            },
+            result: Err(auth_error(
+                "git pull failed: Enter passphrase for key '/home/user/.ssh/id_ed25519': terminal prompts disabled",
+            )),
+        }),
+    );
+
+    let prompt = state.auth_prompt.expect("expected auth prompt");
+    assert_eq!(prompt.kind, AuthPromptKind::Passphrase);
+    assert!(prompt.reason.contains("passphrase"));
+    assert_eq!(
+        prompt.operation,
+        AuthRetryOperation::RepoCommand {
+            repo_id,
+            command: RepoCommandKind::Pull {
+                mode: PullMode::Default,
+            },
+        }
+    );
+}
+
+#[test]
+fn repo_command_finished_non_auth_error_does_not_set_prompt() {
+    let repo_id = RepoId(1);
+    let (mut repos, mut state) = setup_open_repo(repo_id, "/tmp/repo");
+    let id_alloc = AtomicU64::new(1);
+
+    reduce(
+        &mut repos,
+        &id_alloc,
+        &mut state,
+        Msg::Internal(crate::msg::InternalMsg::RepoCommandFinished {
+            repo_id,
+            command: RepoCommandKind::Push,
+            result: Err(auth_error(
+                "git push failed: remote rejected because branch is protected",
+            )),
+        }),
+    );
+
+    assert!(state.auth_prompt.is_none());
+}
+
+#[test]
+fn repo_command_finished_auth_error_does_not_prompt_for_non_replayable_commands() {
+    let repo_id = RepoId(1);
+    let (mut repos, mut state) = setup_open_repo(repo_id, "/tmp/repo");
+    let id_alloc = AtomicU64::new(1);
+
+    let commands = vec![
+        RepoCommandKind::SaveWorktreeFile {
+            path: PathBuf::from("README.md"),
+            stage: true,
+        },
+        RepoCommandKind::StageHunk,
+        RepoCommandKind::UnstageHunk,
+        RepoCommandKind::ApplyWorktreePatch { reverse: false },
+    ];
+
+    for command in commands {
+        state.auth_prompt = None;
+        reduce(
+            &mut repos,
+            &id_alloc,
+            &mut state,
+            Msg::Internal(crate::msg::InternalMsg::RepoCommandFinished {
+                repo_id,
+                command,
+                result: Err(auth_error(
+                    "git command failed: fatal: could not read Username for 'https://example.com': terminal prompts disabled",
+                )),
+            }),
+        );
+        assert!(state.auth_prompt.is_none());
+    }
+}
+
+#[test]
+fn commit_finished_auth_error_uses_pending_retry_and_clears_it() {
+    let repo_id = RepoId(1);
+    let (mut repos, mut state) = setup_open_repo(repo_id, "/tmp/repo");
+    let id_alloc = AtomicU64::new(1);
+    state.repos[0].pending_commit_retry = Some(PendingCommitRetry {
+        message: "ship it".to_string(),
+        amend: false,
+    });
+
+    reduce(
+        &mut repos,
+        &id_alloc,
+        &mut state,
+        Msg::Internal(crate::msg::InternalMsg::CommitFinished {
+            repo_id,
+            result: Err(auth_error(
+                "git commit failed: fatal: could not read Password for 'https://example.com': terminal prompts disabled",
+            )),
+        }),
+    );
+
+    assert!(state.repos[0].pending_commit_retry.is_none());
+    let prompt = state.auth_prompt.expect("expected auth prompt");
+    assert_eq!(prompt.kind, AuthPromptKind::UsernamePassword);
+    assert_eq!(
+        prompt.operation,
+        AuthRetryOperation::Commit {
+            repo_id,
+            message: "ship it".to_string(),
+            amend: false,
+        }
+    );
+}
+
+#[test]
+fn commit_finished_auth_error_without_pending_retry_does_not_prompt() {
+    let repo_id = RepoId(1);
+    let (mut repos, mut state) = setup_open_repo(repo_id, "/tmp/repo");
+    let id_alloc = AtomicU64::new(1);
+
+    reduce(
+        &mut repos,
+        &id_alloc,
+        &mut state,
+        Msg::Internal(crate::msg::InternalMsg::CommitFinished {
+            repo_id,
+            result: Err(auth_error(
+                "git commit failed: fatal: could not read Password for 'https://example.com': terminal prompts disabled",
+            )),
+        }),
+    );
+
+    assert!(state.auth_prompt.is_none());
+}
+
+#[test]
+fn commit_amend_finished_auth_error_uses_pending_retry_with_amend() {
+    let repo_id = RepoId(1);
+    let (mut repos, mut state) = setup_open_repo(repo_id, "/tmp/repo");
+    let id_alloc = AtomicU64::new(1);
+    state.repos[0].pending_commit_retry = Some(PendingCommitRetry {
+        message: "fixup".to_string(),
+        amend: true,
+    });
+
+    reduce(
+        &mut repos,
+        &id_alloc,
+        &mut state,
+        Msg::Internal(crate::msg::InternalMsg::CommitAmendFinished {
+            repo_id,
+            result: Err(auth_error(
+                "git commit --amend failed: Enter passphrase for key '/home/user/.ssh/id_ed25519': terminal prompts disabled",
+            )),
+        }),
+    );
+
+    assert!(state.repos[0].pending_commit_retry.is_none());
+    let prompt = state.auth_prompt.expect("expected auth prompt");
+    assert_eq!(prompt.kind, AuthPromptKind::Passphrase);
+    assert_eq!(
+        prompt.operation,
+        AuthRetryOperation::Commit {
+            repo_id,
+            message: "fixup".to_string(),
+            amend: true,
+        }
+    );
+}
+
+#[test]
+fn clone_finished_auth_error_sets_clone_retry_prompt() {
+    let mut repos: HashMap<RepoId, Arc<dyn GitRepository>> = HashMap::default();
+    let id_alloc = AtomicU64::new(1);
+    let mut state = AppState::default();
+    let url = "https://example.com/private/repo.git".to_string();
+    let dest = PathBuf::from("/tmp/private-repo");
+
+    reduce(
+        &mut repos,
+        &id_alloc,
+        &mut state,
+        Msg::Internal(crate::msg::InternalMsg::CloneRepoFinished {
+            url: url.clone(),
+            dest: dest.clone(),
+            result: Err(auth_error(
+                "git clone failed: fatal: could not read Username for 'https://example.com': terminal prompts disabled",
+            )),
+        }),
+    );
+
+    let prompt = state.auth_prompt.expect("expected auth prompt");
+    assert_eq!(prompt.kind, AuthPromptKind::UsernamePassword);
+    assert_eq!(
+        prompt.operation,
+        AuthRetryOperation::Clone {
+            url,
+            dest: dest.clone(),
+        }
+    );
+    assert!(prompt.reason.contains("could not read Username"));
+}
+
+#[test]
+fn submit_auth_prompt_replays_repo_command_and_stages_trimmed_credentials() {
+    let _lock = super::staged_auth_test_lock();
+    clear_staged_git_auth();
+
+    let repo_id = RepoId(1);
+    let (mut repos, mut state) = setup_open_repo(repo_id, "/tmp/repo");
+    let id_alloc = AtomicU64::new(1);
+    state.auth_prompt = Some(AuthPromptState {
+        kind: AuthPromptKind::UsernamePassword,
+        reason: "auth required".to_string(),
+        operation: AuthRetryOperation::RepoCommand {
+            repo_id,
+            command: RepoCommandKind::PushSetUpstream {
+                remote: "origin".to_string(),
+                branch: "main".to_string(),
+            },
+        },
+    });
+
+    let effects = reduce(
+        &mut repos,
+        &id_alloc,
+        &mut state,
+        Msg::SubmitAuthPrompt {
+            username: Some(" alice ".to_string()),
+            secret: "token-123".to_string(),
+        },
+    );
+
+    assert!(matches!(
+        effects.as_slice(),
+        [Effect::PushSetUpstream {
+            repo_id: RepoId(1),
+            remote,
+            branch,
+        }] if remote == "origin" && branch == "main"
+    ));
+    assert!(state.auth_prompt.is_none());
+    assert_eq!(state.repos[0].push_in_flight, 1);
+
+    let staged = take_staged_git_auth().expect("staged auth should be present");
+    assert_eq!(staged.kind, GitAuthKind::UsernamePassword);
+    assert_eq!(staged.username.as_deref(), Some("alice"));
+    assert_eq!(staged.secret, "token-123");
+
+    clear_staged_git_auth();
+}
+
+#[test]
+fn submit_auth_prompt_replays_commit_and_commit_amend() {
+    let _lock = super::staged_auth_test_lock();
+    clear_staged_git_auth();
+
+    let repo_id = RepoId(1);
+    let (mut repos, mut state) = setup_open_repo(repo_id, "/tmp/repo");
+    let id_alloc = AtomicU64::new(1);
+
+    state.auth_prompt = Some(AuthPromptState {
+        kind: AuthPromptKind::Passphrase,
+        reason: "auth required".to_string(),
+        operation: AuthRetryOperation::Commit {
+            repo_id,
+            message: "first".to_string(),
+            amend: false,
+        },
+    });
+    let commit_effects = reduce(
+        &mut repos,
+        &id_alloc,
+        &mut state,
+        Msg::SubmitAuthPrompt {
+            username: None,
+            secret: "passphrase".to_string(),
+        },
+    );
+    assert!(matches!(
+        commit_effects.as_slice(),
+        [Effect::Commit {
+            repo_id: RepoId(1),
+            message,
+        }] if message == "first"
+    ));
+    assert_eq!(
+        state.repos[0].pending_commit_retry,
+        Some(PendingCommitRetry {
+            message: "first".to_string(),
+            amend: false,
+        })
+    );
+    clear_staged_git_auth();
+
+    state.auth_prompt = Some(AuthPromptState {
+        kind: AuthPromptKind::Passphrase,
+        reason: "auth required".to_string(),
+        operation: AuthRetryOperation::Commit {
+            repo_id,
+            message: "second".to_string(),
+            amend: true,
+        },
+    });
+    let amend_effects = reduce(
+        &mut repos,
+        &id_alloc,
+        &mut state,
+        Msg::SubmitAuthPrompt {
+            username: None,
+            secret: "passphrase".to_string(),
+        },
+    );
+    assert!(matches!(
+        amend_effects.as_slice(),
+        [Effect::CommitAmend {
+            repo_id: RepoId(1),
+            message,
+        }] if message == "second"
+    ));
+    assert_eq!(
+        state.repos[0].pending_commit_retry,
+        Some(PendingCommitRetry {
+            message: "second".to_string(),
+            amend: true,
+        })
+    );
+
+    clear_staged_git_auth();
+}
+
+#[test]
+fn submit_auth_prompt_replays_clone_operation() {
+    let _lock = super::staged_auth_test_lock();
+    clear_staged_git_auth();
+
+    let mut repos: HashMap<RepoId, Arc<dyn GitRepository>> = HashMap::default();
+    let id_alloc = AtomicU64::new(1);
+    let mut state = AppState::default();
+    let url = "ssh://git@example.com/private/repo.git".to_string();
+    let dest = PathBuf::from("/tmp/retry-clone");
+    state.auth_prompt = Some(AuthPromptState {
+        kind: AuthPromptKind::Passphrase,
+        reason: "auth required".to_string(),
+        operation: AuthRetryOperation::Clone {
+            url: url.clone(),
+            dest: dest.clone(),
+        },
+    });
+
+    let effects = reduce(
+        &mut repos,
+        &id_alloc,
+        &mut state,
+        Msg::SubmitAuthPrompt {
+            username: None,
+            secret: "passphrase".to_string(),
+        },
+    );
+
+    assert!(matches!(
+        effects.as_slice(),
+        [Effect::CloneRepo {
+            url: effect_url,
+            dest: effect_dest,
+        }] if effect_url == &url && effect_dest == &dest
+    ));
+    assert!(state.auth_prompt.is_none());
+
+    clear_staged_git_auth();
+}
+
+#[test]
+fn submit_auth_prompt_validation_failure_keeps_prompt_and_sets_diagnostic() {
+    let _lock = super::staged_auth_test_lock();
+    clear_staged_git_auth();
+
+    let repo_id = RepoId(1);
+    let (mut repos, mut state) = setup_open_repo(repo_id, "/tmp/repo");
+    let id_alloc = AtomicU64::new(1);
+
+    state.auth_prompt = Some(AuthPromptState {
+        kind: AuthPromptKind::UsernamePassword,
+        reason: "auth required".to_string(),
+        operation: AuthRetryOperation::RepoCommand {
+            repo_id,
+            command: RepoCommandKind::Push,
+        },
+    });
+
+    let effects = reduce(
+        &mut repos,
+        &id_alloc,
+        &mut state,
+        Msg::SubmitAuthPrompt {
+            username: Some("   ".to_string()),
+            secret: "token".to_string(),
+        },
+    );
+
+    assert!(effects.is_empty());
+    assert!(state.auth_prompt.is_some());
+    let repo_state = &state.repos[0];
+    let diagnostic = repo_state
+        .diagnostics
+        .last()
+        .expect("expected validation diagnostic");
+    assert_eq!(diagnostic.kind, DiagnosticKind::Error);
+    assert!(diagnostic.message.contains("username cannot be empty"));
+
+    clear_staged_git_auth();
+}
+
+#[test]
+fn submit_auth_prompt_without_prompt_is_noop() {
+    let _lock = super::staged_auth_test_lock();
+    clear_staged_git_auth();
+
+    let repo_id = RepoId(1);
+    let (mut repos, mut state) = setup_open_repo(repo_id, "/tmp/repo");
+    let id_alloc = AtomicU64::new(1);
+
+    let effects = reduce(
+        &mut repos,
+        &id_alloc,
+        &mut state,
+        Msg::SubmitAuthPrompt {
+            username: Some("alice".to_string()),
+            secret: "secret".to_string(),
+        },
+    );
+
+    assert!(effects.is_empty());
+    assert!(state.auth_prompt.is_none());
+    assert!(take_staged_git_auth().is_none());
+}
+
+#[test]
+fn cancel_auth_prompt_clears_prompt_and_staged_auth() {
+    let _lock = super::staged_auth_test_lock();
+    clear_staged_git_auth();
+
+    stage_git_auth(StagedGitAuth {
+        kind: GitAuthKind::UsernamePassword,
+        username: Some("alice".to_string()),
+        secret: "token".to_string(),
+    });
+
+    let repo_id = RepoId(1);
+    let (mut repos, mut state) = setup_open_repo(repo_id, "/tmp/repo");
+    let id_alloc = AtomicU64::new(1);
+    state.auth_prompt = Some(AuthPromptState {
+        kind: AuthPromptKind::UsernamePassword,
+        reason: "auth required".to_string(),
+        operation: AuthRetryOperation::RepoCommand {
+            repo_id,
+            command: RepoCommandKind::Push,
+        },
+    });
+
+    let effects = reduce(&mut repos, &id_alloc, &mut state, Msg::CancelAuthPrompt);
+
+    assert!(effects.is_empty());
+    assert!(state.auth_prompt.is_none());
+    assert!(take_staged_git_auth().is_none());
+}
+
+#[test]
+fn submit_auth_prompt_replays_expected_repo_command_mappings() {
+    let _lock = super::staged_auth_test_lock();
+
+    let replay_case = |command: RepoCommandKind| {
+        clear_staged_git_auth();
+        let repo_id = RepoId(1);
+        let (mut repos, mut state) = setup_open_repo(repo_id, "/tmp/repo");
+        let id_alloc = AtomicU64::new(1);
+        state.auth_prompt = Some(AuthPromptState {
+            kind: AuthPromptKind::UsernamePassword,
+            reason: "auth required".to_string(),
+            operation: AuthRetryOperation::RepoCommand { repo_id, command },
+        });
+        let effects = reduce(
+            &mut repos,
+            &id_alloc,
+            &mut state,
+            Msg::SubmitAuthPrompt {
+                username: Some("alice".to_string()),
+                secret: "secret".to_string(),
+            },
+        );
+        clear_staged_git_auth();
+        effects
+    };
+
+    let fetch_effects = replay_case(RepoCommandKind::FetchAll);
+    assert!(matches!(
+        fetch_effects.as_slice(),
+        [Effect::FetchAll {
+            repo_id: RepoId(1),
+            prune: _,
+        }]
+    ));
+
+    let pull_branch_effects = replay_case(RepoCommandKind::PullBranch {
+        remote: "origin".to_string(),
+        branch: "main".to_string(),
+    });
+    assert!(matches!(
+        pull_branch_effects.as_slice(),
+        [Effect::PullBranch {
+            repo_id: RepoId(1),
+            remote,
+            branch,
+        }] if remote == "origin" && branch == "main"
+    ));
+
+    let reset_effects = replay_case(RepoCommandKind::Reset {
+        mode: ResetMode::Mixed,
+        target: "HEAD~1".to_string(),
+    });
+    assert!(matches!(
+        reset_effects.as_slice(),
+        [Effect::Reset {
+            repo_id: RepoId(1),
+            target,
+            mode: ResetMode::Mixed,
+        }] if target == "HEAD~1"
+    ));
+
+    let set_remote_url_effects = replay_case(RepoCommandKind::SetRemoteUrl {
+        name: "origin".to_string(),
+        url: "https://example.com/repo.git".to_string(),
+        kind: RemoteUrlKind::Push,
+    });
+    assert!(matches!(
+        set_remote_url_effects.as_slice(),
+        [Effect::SetRemoteUrl {
+            repo_id: RepoId(1),
+            name,
+            url,
+            kind: RemoteUrlKind::Push,
+        }] if name == "origin" && url == "https://example.com/repo.git"
+    ));
+
+    let checkout_conflict_effects = replay_case(RepoCommandKind::CheckoutConflict {
+        path: PathBuf::from("conflicted.txt"),
+        side: ConflictSide::Ours,
+    });
+    assert!(matches!(
+        checkout_conflict_effects.as_slice(),
+        [Effect::CheckoutConflictSide {
+            repo_id: RepoId(1),
+            path,
+            side: ConflictSide::Ours,
+        }] if path == &PathBuf::from("conflicted.txt")
+    ));
+
+    let remove_submodule_effects = replay_case(RepoCommandKind::RemoveSubmodule {
+        path: PathBuf::from("vendor/lib"),
+    });
+    assert!(matches!(
+        remove_submodule_effects.as_slice(),
+        [Effect::RemoveSubmodule {
+            repo_id: RepoId(1),
+            path,
+        }] if path == &PathBuf::from("vendor/lib")
+    ));
+
+    let non_replayable_effects = replay_case(RepoCommandKind::StageHunk);
+    assert!(non_replayable_effects.is_empty());
+}

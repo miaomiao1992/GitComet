@@ -1,6 +1,12 @@
 use crate::msg::Msg;
+use gitcomet_core::auth::{
+    GITCOMET_AUTH_KIND_ENV, GITCOMET_AUTH_KIND_PASSPHRASE, GITCOMET_AUTH_KIND_USERNAME_PASSWORD,
+    GITCOMET_AUTH_SECRET_ENV, GITCOMET_AUTH_USERNAME_ENV, GitAuthKind, StagedGitAuth,
+    take_staged_git_auth,
+};
 use gitcomet_core::error::{Error, ErrorKind};
 use gitcomet_core::services::CommandOutput;
+use std::fs;
 use std::io::{BufRead as _, BufReader, Read as _};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
@@ -14,6 +20,11 @@ const GIT_COMMAND_TIMEOUT_ENV: &str = "GITCOMET_GIT_COMMAND_TIMEOUT_SECS";
 const GIT_COMMAND_TIMEOUT_DEFAULT_SECS: u64 = 300;
 const GIT_COMMAND_WAIT_POLL: Duration = Duration::from_millis(100);
 const ALLOWED_CLONE_URL_SCHEMES: [&str; 4] = ["https", "ssh", "git", "file"];
+
+struct AskPassScript {
+    _dir: tempfile::TempDir,
+    path: PathBuf,
+}
 
 fn git_command_timeout() -> Duration {
     std::env::var(GIT_COMMAND_TIMEOUT_ENV)
@@ -83,6 +94,90 @@ fn validate_clone_url(url: &str) -> Result<(), Error> {
     Ok(())
 }
 
+fn take_pending_git_auth() -> Option<StagedGitAuth> {
+    let auth = take_staged_git_auth()?;
+    if auth.secret.is_empty() {
+        return None;
+    }
+    Some(auth)
+}
+
+#[cfg(unix)]
+fn askpass_script_contents() -> &'static [u8] {
+    br#"#!/bin/sh
+prompt="$1"
+kind="${GITCOMET_AUTH_KIND:-}"
+if [ "$kind" = "username_password" ]; then
+  lower_prompt=$(printf '%s' "$prompt" | tr '[:upper:]' '[:lower:]')
+  case "$lower_prompt" in
+    *username*) printf '%s\n' "${GITCOMET_AUTH_USERNAME:-}" ;;
+    *) printf '%s\n' "${GITCOMET_AUTH_SECRET:-}" ;;
+  esac
+else
+  printf '%s\n' "${GITCOMET_AUTH_SECRET:-}"
+fi
+"#
+}
+
+#[cfg(windows)]
+fn askpass_script_contents() -> &'static [u8] {
+    br#"@echo off
+setlocal EnableDelayedExpansion
+set "prompt=%~1"
+if /I "%GITCOMET_AUTH_KIND%"=="username_password" (
+  echo %prompt% | findstr /I "username" >nul
+  if not errorlevel 1 (
+    echo %GITCOMET_AUTH_USERNAME%
+    exit /b 0
+  )
+)
+echo %GITCOMET_AUTH_SECRET%
+"#
+}
+
+fn create_askpass_script() -> Result<AskPassScript, Error> {
+    let dir = tempfile::tempdir().map_err(|e| Error::new(ErrorKind::Io(e.kind())))?;
+    #[cfg(windows)]
+    let script_name = "gitcomet-askpass.cmd";
+    #[cfg(not(windows))]
+    let script_name = "gitcomet-askpass.sh";
+    let path = dir.path().join(script_name);
+
+    fs::write(&path, askpass_script_contents()).map_err(|e| Error::new(ErrorKind::Io(e.kind())))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let mut permissions = fs::metadata(&path)
+            .map_err(|e| Error::new(ErrorKind::Io(e.kind())))?
+            .permissions();
+        permissions.set_mode(0o700);
+        fs::set_permissions(&path, permissions).map_err(|e| Error::new(ErrorKind::Io(e.kind())))?;
+    }
+    Ok(AskPassScript { _dir: dir, path })
+}
+
+fn configure_clone_auth_prompt(cmd: &mut Command, auth: &StagedGitAuth, askpass: &AskPassScript) {
+    cmd.env("GIT_ASKPASS", &askpass.path);
+    cmd.env("SSH_ASKPASS", &askpass.path);
+    cmd.env("SSH_ASKPASS_REQUIRE", "force");
+    if cfg!(all(unix, not(target_os = "macos"))) && std::env::var_os("DISPLAY").is_none() {
+        cmd.env("DISPLAY", "gitcomet:0");
+    }
+
+    let kind = match auth.kind {
+        GitAuthKind::UsernamePassword => GITCOMET_AUTH_KIND_USERNAME_PASSWORD,
+        GitAuthKind::Passphrase => GITCOMET_AUTH_KIND_PASSPHRASE,
+    };
+    cmd.env(GITCOMET_AUTH_KIND_ENV, kind);
+    if let Some(username) = &auth.username {
+        cmd.env(GITCOMET_AUTH_USERNAME_ENV, username);
+    } else {
+        cmd.env_remove(GITCOMET_AUTH_USERNAME_ENV);
+    }
+    cmd.env(GITCOMET_AUTH_SECRET_ENV, &auth.secret);
+}
+
 pub(super) fn schedule_clone_repo(
     executor: &TaskExecutor,
     msg_tx: mpsc::Sender<Msg>,
@@ -114,6 +209,28 @@ pub(super) fn schedule_clone_repo(
             .stdin(Stdio::null())
             .env("GIT_TERMINAL_PROMPT", "0");
 
+        let askpass_script = match take_pending_git_auth()
+            .map(|auth| {
+                let script = create_askpass_script()?;
+                configure_clone_auth_prompt(&mut cmd, &auth, &script);
+                Ok(script)
+            })
+            .transpose()
+        {
+            Ok(script) => script,
+            Err(err) => {
+                send_or_log(
+                    &msg_tx,
+                    Msg::Internal(crate::msg::InternalMsg::CloneRepoFinished {
+                        url: url.clone(),
+                        dest: dest.clone(),
+                        result: Err(err),
+                    }),
+                );
+                return;
+            }
+        };
+
         let command_str = format!("git clone --progress {} {}", url, dest.display());
 
         let mut child = match cmd.spawn() {
@@ -131,6 +248,7 @@ pub(super) fn schedule_clone_repo(
                 return;
             }
         };
+        let _askpass_script = askpass_script;
 
         let stdout = child.stdout.take();
         let stdout_handle = std::thread::spawn(move || {

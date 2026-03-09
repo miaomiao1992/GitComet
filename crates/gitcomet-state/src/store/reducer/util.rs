@@ -1,8 +1,9 @@
 use crate::model::{
-    AppNotification, AppNotificationKind, AppState, CommandLogEntry, DiagnosticEntry,
-    DiagnosticKind, RepoId, RepoLoadsInFlight, RepoState,
+    AppNotification, AppNotificationKind, AppState, AuthPromptKind, CommandLogEntry,
+    DiagnosticEntry, DiagnosticKind, RepoId, RepoLoadsInFlight, RepoState,
 };
 use crate::msg::{ConflictAutosolveMode, ConflictAutosolveStats, Effect, RepoCommandKind};
+use gitcomet_core::auth::{GitAuthKind, StagedGitAuth, clear_staged_git_auth, stage_git_auth};
 use gitcomet_core::domain::DiffTarget;
 use gitcomet_core::error::{Error, ErrorKind};
 use gitcomet_core::services::CommandOutput;
@@ -667,6 +668,73 @@ pub(super) fn format_failure_summary(label: &str, error: &Error) -> String {
         return format!("{label} failed:\n\n{details}");
     }
     format!("{label} failed:\n\n{}", format_error_for_user(error))
+}
+
+pub(super) fn detect_auth_prompt_kind(error: &Error) -> Option<AuthPromptKind> {
+    let ErrorKind::Backend(message) = error.kind() else {
+        return None;
+    };
+    detect_auth_prompt_kind_from_message(message)
+}
+
+pub(super) fn detect_auth_prompt_kind_from_message(message: &str) -> Option<AuthPromptKind> {
+    let lower = message.to_ascii_lowercase();
+
+    let passphrase = lower.contains("could not read passphrase")
+        || lower.contains("enter passphrase for key")
+        || lower.contains("read_passphrase")
+        || lower.contains("passphrase for key")
+        || (lower.contains("passphrase") && lower.contains("terminal prompts disabled"));
+    if passphrase {
+        return Some(AuthPromptKind::Passphrase);
+    }
+
+    let user_password = lower.contains("could not read username")
+        || lower.contains("could not read password")
+        || lower.contains("authentication failed")
+        || lower.contains("invalid username or password")
+        || lower.contains("http basic: access denied")
+        || (lower.contains("terminal prompts disabled")
+            && (lower.contains("https://")
+                || lower.contains("http://")
+                || lower.contains("username")
+                || lower.contains("password")));
+    if user_password {
+        return Some(AuthPromptKind::UsernamePassword);
+    }
+
+    None
+}
+
+pub(super) fn clear_staged_git_auth_env() {
+    clear_staged_git_auth();
+}
+
+pub(super) fn stage_git_auth_env(
+    kind: AuthPromptKind,
+    username: Option<&str>,
+    secret: &str,
+) -> Result<(), Error> {
+    if secret.trim().is_empty() {
+        return Err(Error::new(ErrorKind::Backend(
+            "credential/passphrase cannot be empty".to_string(),
+        )));
+    }
+    if kind.requires_username() && username.unwrap_or_default().trim().is_empty() {
+        return Err(Error::new(ErrorKind::Backend(
+            "username cannot be empty".to_string(),
+        )));
+    }
+
+    stage_git_auth(StagedGitAuth {
+        kind: match kind {
+            AuthPromptKind::UsernamePassword => GitAuthKind::UsernamePassword,
+            AuthPromptKind::Passphrase => GitAuthKind::Passphrase,
+        },
+        username: username.map(ToOwned::to_owned),
+        secret: secret.to_string(),
+    });
+    Ok(())
 }
 
 fn try_format_git_backend_error(error: &Error) -> Option<(String, String)> {
@@ -1353,5 +1421,51 @@ mod tests {
             "value".to_string().if_empty_else(|| "fallback".to_string()),
             "value"
         );
+    }
+
+    #[test]
+    fn detect_auth_prompt_kind_classifies_username_password_and_passphrase() {
+        assert_eq!(
+            detect_auth_prompt_kind_from_message(
+                "git pull failed: fatal: could not read Username for 'https://example.com': terminal prompts disabled"
+            ),
+            Some(crate::model::AuthPromptKind::UsernamePassword)
+        );
+        assert_eq!(
+            detect_auth_prompt_kind_from_message(
+                "git push failed: Enter passphrase for key '/home/user/.ssh/id_ed25519': terminal prompts disabled"
+            ),
+            Some(crate::model::AuthPromptKind::Passphrase)
+        );
+        assert!(detect_auth_prompt_kind_from_message("git status failed").is_none());
+    }
+
+    #[test]
+    fn stage_git_auth_env_stages_and_clears_shared_auth_slot() {
+        let _lock = crate::store::tests::staged_auth_test_lock();
+        gitcomet_core::auth::clear_staged_git_auth();
+        stage_git_auth_env(
+            crate::model::AuthPromptKind::UsernamePassword,
+            Some("alice"),
+            "secret-token",
+        )
+        .expect("staging auth");
+
+        let staged = gitcomet_core::auth::take_staged_git_auth().expect("staged auth to exist");
+        assert_eq!(staged.username.as_deref(), Some("alice"));
+        assert_eq!(staged.secret, "secret-token");
+        assert_eq!(
+            staged.kind,
+            gitcomet_core::auth::GitAuthKind::UsernamePassword
+        );
+
+        stage_git_auth_env(
+            crate::model::AuthPromptKind::Passphrase,
+            None,
+            "ssh-passphrase",
+        )
+        .expect("staging passphrase");
+        clear_staged_git_auth_env();
+        assert!(gitcomet_core::auth::take_staged_git_auth().is_none());
     }
 }

@@ -9,9 +9,7 @@ use gitcomet_core::error::{Error, ErrorKind};
 use gitcomet_core::services::{CommandOutput, PullMode, Result};
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::Arc;
-#[cfg(windows)]
-use std::sync::OnceLock;
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use std::time::{Duration, Instant, SystemTime};
 
 struct DummyRepo {
@@ -198,6 +196,13 @@ fn wait_for_state_changed(event_rx: &smol::channel::Receiver<StoreEvent>) {
     }
 }
 
+pub(crate) fn staged_auth_test_lock() -> MutexGuard<'static, ()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+}
+
 #[test]
 fn app_store_clone_dispatches_restore_and_close_paths() {
     let backend: Arc<dyn GitBackend> = Arc::new(FailingBackend);
@@ -264,6 +269,7 @@ fn app_store_open_repo_effect_propagates_open_error_into_state() {
 }
 
 mod actions_emit_effects;
+mod auth_prompt;
 mod conflict_session;
 mod conflict_telemetry;
 mod diff_selection;

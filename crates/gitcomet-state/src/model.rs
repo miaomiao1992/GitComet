@@ -1,3 +1,4 @@
+use crate::msg::RepoCommandKind;
 use gitcomet_core::conflict_session::ConflictSession;
 use gitcomet_core::domain::*;
 use gitcomet_core::services::BlameLine;
@@ -131,6 +132,43 @@ pub struct AppState {
     pub active_repo: Option<RepoId>,
     pub clone: Option<CloneOpState>,
     pub notifications: Vec<AppNotification>,
+    pub auth_prompt: Option<AuthPromptState>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AuthPromptKind {
+    UsernamePassword,
+    Passphrase,
+}
+
+impl AuthPromptKind {
+    pub fn requires_username(self) -> bool {
+        matches!(self, Self::UsernamePassword)
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum AuthRetryOperation {
+    RepoCommand {
+        repo_id: RepoId,
+        command: RepoCommandKind,
+    },
+    Commit {
+        repo_id: RepoId,
+        message: String,
+        amend: bool,
+    },
+    Clone {
+        url: String,
+        dest: PathBuf,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AuthPromptState {
+    pub kind: AuthPromptKind,
+    pub reason: String,
+    pub operation: AuthRetryOperation,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -172,6 +210,12 @@ pub struct CommandLogEntry {
     pub summary: String,
     pub stdout: String,
     pub stderr: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PendingCommitRetry {
+    pub message: String,
+    pub amend: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -312,6 +356,7 @@ pub struct RepoState {
     pub diagnostics: Vec<DiagnosticEntry>,
 
     pub command_log: Vec<CommandLogEntry>,
+    pub pending_commit_retry: Option<PendingCommitRetry>,
 }
 
 impl RepoState {
@@ -365,6 +410,7 @@ impl RepoState {
             last_error: None,
             diagnostics: Vec::new(),
             command_log: Vec::new(),
+            pending_commit_retry: None,
         }
     }
 

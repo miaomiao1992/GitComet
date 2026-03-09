@@ -77,6 +77,11 @@ pub enum Msg {
     DismissRepoError {
         repo_id: RepoId,
     },
+    SubmitAuthPrompt {
+        username: Option<String>,
+        secret: String,
+    },
+    CancelAuthPrompt,
     SetActiveRepo {
         repo_id: RepoId,
     },

@@ -1,7 +1,13 @@
+use gitcomet_core::auth::{
+    GITCOMET_AUTH_KIND_ENV, GITCOMET_AUTH_KIND_PASSPHRASE, GITCOMET_AUTH_KIND_USERNAME_PASSWORD,
+    GITCOMET_AUTH_SECRET_ENV, GITCOMET_AUTH_USERNAME_ENV, GitAuthKind, StagedGitAuth,
+    take_staged_git_auth,
+};
 use gitcomet_core::domain::{Commit, CommitFileChange, CommitId, FileStatusKind, LogPage};
 use gitcomet_core::error::{Error, ErrorKind};
 use gitcomet_core::services::{CommandOutput, Result};
 use std::ffi::OsString;
+use std::fs;
 use std::io::Read as _;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
@@ -15,6 +21,11 @@ use gitcomet_core::domain::RemoteBranch;
 const GIT_COMMAND_TIMEOUT_ENV: &str = "GITCOMET_GIT_COMMAND_TIMEOUT_SECS";
 const GIT_COMMAND_TIMEOUT_DEFAULT_SECS: u64 = 300;
 const GIT_COMMAND_WAIT_POLL: Duration = Duration::from_millis(100);
+
+struct AskPassScript {
+    _dir: tempfile::TempDir,
+    path: PathBuf,
+}
 
 fn git_command_timeout() -> Duration {
     std::env::var(GIT_COMMAND_TIMEOUT_ENV)
@@ -30,13 +41,132 @@ fn configure_non_interactive_git(cmd: &mut Command) {
     cmd.stdin(Stdio::null());
 }
 
+fn command_may_require_auth(cmd: &Command) -> bool {
+    let mut args = cmd.get_args();
+    while let Some(arg) = args.next() {
+        let arg = arg.to_string_lossy();
+        match arg.as_ref() {
+            "-C" | "-c" => {
+                let _ = args.next();
+            }
+            "--git-dir" | "--work-tree" | "--namespace" => {
+                let _ = args.next();
+            }
+            value if value.starts_with('-') => {}
+            "clone" | "fetch" | "pull" | "push" | "submodule" | "ls-remote" | "commit" => {
+                return true;
+            }
+            _ => return false,
+        }
+    }
+    false
+}
+
+fn take_pending_git_auth() -> Option<StagedGitAuth> {
+    let auth = take_staged_git_auth()?;
+    if auth.secret.is_empty() {
+        return None;
+    }
+    Some(auth)
+}
+
+#[cfg(unix)]
+fn askpass_script_contents() -> &'static [u8] {
+    br#"#!/bin/sh
+prompt="$1"
+kind="${GITCOMET_AUTH_KIND:-}"
+if [ "$kind" = "username_password" ]; then
+  lower_prompt=$(printf '%s' "$prompt" | tr '[:upper:]' '[:lower:]')
+  case "$lower_prompt" in
+    *username*) printf '%s\n' "${GITCOMET_AUTH_USERNAME:-}" ;;
+    *) printf '%s\n' "${GITCOMET_AUTH_SECRET:-}" ;;
+  esac
+else
+  printf '%s\n' "${GITCOMET_AUTH_SECRET:-}"
+fi
+"#
+}
+
+#[cfg(windows)]
+fn askpass_script_contents() -> &'static [u8] {
+    br#"@echo off
+setlocal EnableDelayedExpansion
+set "prompt=%~1"
+if /I "%GITCOMET_AUTH_KIND%"=="username_password" (
+  echo %prompt% | findstr /I "username" >nul
+  if not errorlevel 1 (
+    echo %GITCOMET_AUTH_USERNAME%
+    exit /b 0
+  )
+)
+echo %GITCOMET_AUTH_SECRET%
+"#
+}
+
+fn create_askpass_script() -> Result<AskPassScript> {
+    let dir = tempfile::tempdir().map_err(|e| Error::new(ErrorKind::Io(e.kind())))?;
+    #[cfg(windows)]
+    let script_name = "gitcomet-askpass.cmd";
+    #[cfg(not(windows))]
+    let script_name = "gitcomet-askpass.sh";
+    let path = dir.path().join(script_name);
+
+    fs::write(&path, askpass_script_contents()).map_err(|e| Error::new(ErrorKind::Io(e.kind())))?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let mut permissions = fs::metadata(&path)
+            .map_err(|e| Error::new(ErrorKind::Io(e.kind())))?
+            .permissions();
+        permissions.set_mode(0o700);
+        fs::set_permissions(&path, permissions).map_err(|e| Error::new(ErrorKind::Io(e.kind())))?;
+    }
+
+    Ok(AskPassScript { _dir: dir, path })
+}
+
+fn configure_git_auth_prompt(cmd: &mut Command, auth: &StagedGitAuth, askpass: &AskPassScript) {
+    cmd.env("GIT_ASKPASS", &askpass.path);
+    cmd.env("SSH_ASKPASS", &askpass.path);
+    cmd.env("SSH_ASKPASS_REQUIRE", "force");
+    if cfg!(all(unix, not(target_os = "macos"))) && std::env::var_os("DISPLAY").is_none() {
+        cmd.env("DISPLAY", "gitcomet:0");
+    }
+
+    let kind = match auth.kind {
+        GitAuthKind::UsernamePassword => GITCOMET_AUTH_KIND_USERNAME_PASSWORD,
+        GitAuthKind::Passphrase => GITCOMET_AUTH_KIND_PASSPHRASE,
+    };
+    cmd.env(GITCOMET_AUTH_KIND_ENV, kind);
+    if let Some(username) = &auth.username {
+        cmd.env(GITCOMET_AUTH_USERNAME_ENV, username);
+    } else {
+        cmd.env_remove(GITCOMET_AUTH_USERNAME_ENV);
+    }
+    cmd.env(GITCOMET_AUTH_SECRET_ENV, &auth.secret);
+}
+
 fn run_git_output_with_timeout(mut cmd: Command, label: &str) -> Result<Output> {
     configure_non_interactive_git(&mut cmd);
+    let askpass_script = if command_may_require_auth(&cmd) {
+        take_pending_git_auth()
+            .map(|auth| {
+                let script = create_askpass_script()?;
+                configure_git_auth_prompt(&mut cmd, &auth, &script);
+                Ok(script)
+            })
+            .transpose()?
+    } else {
+        None
+    };
     cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
 
     let mut child = cmd
         .spawn()
         .map_err(|e| Error::new(ErrorKind::Io(e.kind())))?;
+    let _askpass_script = askpass_script;
 
     let stdout = child.stdout.take();
     let stdout_handle = thread::spawn(move || {
@@ -901,5 +1031,144 @@ mod tests {
             assert_eq!(parsed.path, PathBuf::from(&path));
             assert_eq!(parsed.kind, FileStatusKind::Added);
         }
+    }
+
+    #[test]
+    fn command_may_require_auth_detects_auth_related_git_commands() {
+        let mut push = Command::new("git");
+        push.args(["-C", "/tmp/repo", "push", "origin", "main"]);
+        assert!(command_may_require_auth(&push));
+
+        let mut fetch = Command::new("git");
+        fetch.args(["-c", "color.ui=false", "fetch", "--all"]);
+        assert!(command_may_require_auth(&fetch));
+
+        let mut ls_remote = Command::new("git");
+        ls_remote.args(["ls-remote", "origin"]);
+        assert!(command_may_require_auth(&ls_remote));
+
+        let mut commit = Command::new("git");
+        commit.args(["commit", "-m", "msg"]);
+        assert!(command_may_require_auth(&commit));
+
+        let mut status = Command::new("git");
+        status.args(["-C", "/tmp/repo", "status", "--short"]);
+        assert!(!command_may_require_auth(&status));
+
+        let mut log = Command::new("git");
+        log.args(["log", "--oneline", "-n", "1"]);
+        assert!(!command_may_require_auth(&log));
+    }
+
+    #[test]
+    fn create_askpass_script_writes_expected_content_and_permissions() {
+        let askpass = create_askpass_script().expect("askpass script creation");
+        assert!(askpass.path.exists());
+
+        let contents =
+            std::fs::read_to_string(&askpass.path).expect("askpass script should be readable");
+        assert!(contents.contains("GITCOMET_AUTH_SECRET"));
+        assert!(contents.contains("GITCOMET_AUTH_KIND"));
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+
+            let mode = std::fs::metadata(&askpass.path)
+                .expect("askpass metadata")
+                .permissions()
+                .mode()
+                & 0o777;
+            assert_eq!(mode, 0o700);
+        }
+    }
+
+    fn command_env_value(cmd: &Command, key: &str) -> Option<String> {
+        use std::ffi::OsStr;
+
+        cmd.get_envs().find_map(|(k, v)| {
+            if k == OsStr::new(key) {
+                v.map(|value| value.to_string_lossy().into_owned())
+            } else {
+                None
+            }
+        })
+    }
+
+    fn command_env_removed(cmd: &Command, key: &str) -> bool {
+        use std::ffi::OsStr;
+
+        cmd.get_envs()
+            .any(|(k, v)| k == OsStr::new(key) && v.is_none())
+    }
+
+    #[test]
+    fn configure_git_auth_prompt_sets_username_password_env() {
+        let askpass = create_askpass_script().expect("askpass script creation");
+        let mut cmd = Command::new("git");
+        let auth = StagedGitAuth {
+            kind: GitAuthKind::UsernamePassword,
+            username: Some("alice".to_string()),
+            secret: "secret-token".to_string(),
+        };
+
+        configure_git_auth_prompt(&mut cmd, &auth, &askpass);
+
+        let askpass_path = askpass.path.to_string_lossy().to_string();
+        assert_eq!(
+            command_env_value(&cmd, "GIT_ASKPASS").as_deref(),
+            Some(askpass_path.as_str())
+        );
+        assert_eq!(
+            command_env_value(&cmd, "SSH_ASKPASS").as_deref(),
+            Some(askpass_path.as_str())
+        );
+        assert_eq!(
+            command_env_value(&cmd, "SSH_ASKPASS_REQUIRE").as_deref(),
+            Some("force")
+        );
+        assert_eq!(
+            command_env_value(&cmd, GITCOMET_AUTH_KIND_ENV).as_deref(),
+            Some(GITCOMET_AUTH_KIND_USERNAME_PASSWORD)
+        );
+        assert_eq!(
+            command_env_value(&cmd, GITCOMET_AUTH_USERNAME_ENV).as_deref(),
+            Some("alice")
+        );
+        assert_eq!(
+            command_env_value(&cmd, GITCOMET_AUTH_SECRET_ENV).as_deref(),
+            Some("secret-token")
+        );
+
+        if cfg!(all(unix, not(target_os = "macos"))) && std::env::var_os("DISPLAY").is_none() {
+            assert_eq!(
+                command_env_value(&cmd, "DISPLAY").as_deref(),
+                Some("gitcomet:0")
+            );
+        }
+    }
+
+    #[test]
+    fn configure_git_auth_prompt_sets_passphrase_env_and_removes_username() {
+        let askpass = create_askpass_script().expect("askpass script creation");
+        let mut cmd = Command::new("git");
+        cmd.env(GITCOMET_AUTH_USERNAME_ENV, "legacy-user");
+        let auth = StagedGitAuth {
+            kind: GitAuthKind::Passphrase,
+            username: None,
+            secret: "ssh-passphrase".to_string(),
+        };
+
+        configure_git_auth_prompt(&mut cmd, &auth, &askpass);
+
+        assert_eq!(
+            command_env_value(&cmd, GITCOMET_AUTH_KIND_ENV).as_deref(),
+            Some(GITCOMET_AUTH_KIND_PASSPHRASE)
+        );
+        assert!(command_env_removed(&cmd, GITCOMET_AUTH_USERNAME_ENV));
+        assert_eq!(
+            command_env_value(&cmd, GITCOMET_AUTH_SECRET_ENV).as_deref(),
+            Some("ssh-passphrase")
+        );
     }
 }
