@@ -13,6 +13,18 @@ pub(super) struct PreparedDiffSyntaxDocument {
     inner: syntax::PreparedSyntaxDocument,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) struct DiffSyntaxConfig {
+    pub language: Option<DiffSyntaxLanguage>,
+    pub mode: DiffSyntaxMode,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) struct PreparedDiffSyntaxLine {
+    pub document: Option<PreparedDiffSyntaxDocument>,
+    pub line_ix: usize,
+}
+
 pub(super) fn prepare_diff_syntax_document<'a, I>(
     language: DiffSyntaxLanguage,
     syntax_mode: DiffSyntaxMode,
@@ -332,12 +344,14 @@ pub(super) fn build_cached_diff_styled_text_for_prepared_document_line(
     text: &str,
     word_ranges: &[Range<usize>],
     query: &str,
-    language: Option<DiffSyntaxLanguage>,
-    syntax_mode: DiffSyntaxMode,
+    syntax: DiffSyntaxConfig,
     word_color: Option<gpui::Rgba>,
-    syntax_document: Option<PreparedDiffSyntaxDocument>,
-    line_ix: usize,
+    prepared_line: PreparedDiffSyntaxLine,
 ) -> CachedDiffStyledText {
+    let DiffSyntaxConfig {
+        language,
+        mode: syntax_mode,
+    } = syntax;
     if language.is_none() {
         return build_cached_diff_styled_text(
             theme,
@@ -350,7 +364,7 @@ pub(super) fn build_cached_diff_styled_text_for_prepared_document_line(
         );
     }
 
-    let Some(document) = syntax_document else {
+    let Some(document) = prepared_line.document else {
         return build_cached_diff_styled_text(
             theme,
             text,
@@ -362,7 +376,8 @@ pub(super) fn build_cached_diff_styled_text_for_prepared_document_line(
         );
     };
 
-    let Some(tokens) = syntax::syntax_tokens_for_prepared_document_line(document.inner, line_ix)
+    let Some(tokens) =
+        syntax::syntax_tokens_for_prepared_document_line(document.inner, prepared_line.line_ix)
     else {
         return build_cached_diff_styled_text(
             theme,

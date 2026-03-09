@@ -209,6 +209,7 @@ impl GitCometView {
         });
     }
 
+    #[cfg(test)]
     pub fn new(
         store: AppStore,
         events: smol::channel::Receiver<StoreEvent>,

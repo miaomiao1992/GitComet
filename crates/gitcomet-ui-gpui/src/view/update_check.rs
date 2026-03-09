@@ -160,9 +160,7 @@ fn build_update_notice(
         }
     }
 
-    let Some((latest_version, latest_url)) = latest else {
-        return None;
-    };
+    let (latest_version, latest_url) = latest?;
 
     if latest_version <= current {
         return None;

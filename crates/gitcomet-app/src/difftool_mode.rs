@@ -250,10 +250,10 @@ fn resolve_allowed_staging_roots(local: &Path, remote: &Path) -> Result<Vec<Path
         }
     }
 
-    if let Ok(cwd) = std::env::current_dir() {
-        if let Some(repo_root) = find_git_root(&cwd) {
-            push_unique_root(&mut roots, repo_root);
-        }
+    if let Ok(cwd) = std::env::current_dir()
+        && let Some(repo_root) = find_git_root(&cwd)
+    {
+        push_unique_root(&mut roots, repo_root);
     }
 
     Ok(roots)

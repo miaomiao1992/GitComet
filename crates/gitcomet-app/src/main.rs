@@ -156,26 +156,26 @@ fn main() {
             // When UI is available and --gui was requested, open a focused
             // GPUI diff window instead of printing raw text to stdout.
             #[cfg(feature = "ui-gpui")]
-            if let Ok(result) = &result {
-                if should_launch_focused_diff_gui(&config, result) {
-                    let label_left = config
-                        .label_left
-                        .clone()
-                        .unwrap_or_else(|| path_label(&config.local));
-                    let label_right = config
-                        .label_right
-                        .clone()
-                        .unwrap_or_else(|| path_label(&config.remote));
+            if let Ok(result) = &result
+                && should_launch_focused_diff_gui(&config, result)
+            {
+                let label_left = config
+                    .label_left
+                    .clone()
+                    .unwrap_or_else(|| path_label(&config.local));
+                let label_right = config
+                    .label_right
+                    .clone()
+                    .unwrap_or_else(|| path_label(&config.remote));
 
-                    let gui_config = gitcomet_ui_gpui::FocusedDiffConfig {
-                        label_left,
-                        label_right,
-                        display_path: config.display_path.clone(),
-                        diff_text: result.stdout.clone(),
-                    };
-                    let code = gitcomet_ui_gpui::run_focused_diff(gui_config);
-                    std::process::exit(code);
-                }
+                let gui_config = gitcomet_ui_gpui::FocusedDiffConfig {
+                    label_left,
+                    label_right,
+                    display_path: config.display_path.clone(),
+                    diff_text: result.stdout.clone(),
+                };
+                let code = gitcomet_ui_gpui::run_focused_diff(gui_config);
+                std::process::exit(code);
             }
 
             run_and_exit(result);
@@ -246,44 +246,44 @@ fn main() {
             // conflicts remain unresolved, open the focused GPUI merge
             // window for interactive resolution.
             #[cfg(feature = "ui-gpui")]
-            if let Ok(result) = &result {
-                if should_launch_focused_merge_gui(&config, result) {
-                    let Some(repo_path) = resolve_mergetool_repo_path(&config.merged) else {
-                        eprintln!(
-                            "Failed to locate repository root for merged path {}",
-                            config.merged.display()
-                        );
-                        std::process::exit(exit_code::ERROR);
-                    };
+            if let Ok(result) = &result
+                && should_launch_focused_merge_gui(&config, result)
+            {
+                let Some(repo_path) = resolve_mergetool_repo_path(&config.merged) else {
+                    eprintln!(
+                        "Failed to locate repository root for merged path {}",
+                        config.merged.display()
+                    );
+                    std::process::exit(exit_code::ERROR);
+                };
 
-                    // Determine labels for display.
-                    let label_local = config
-                        .label_local
-                        .clone()
-                        .unwrap_or_else(|| path_label(&config.local));
-                    let label_remote = config
-                        .label_remote
-                        .clone()
-                        .unwrap_or_else(|| path_label(&config.remote));
-                    let label_base = config.label_base.clone().unwrap_or_else(|| {
-                        config
-                            .base
-                            .as_ref()
-                            .map(|p| path_label(p))
-                            .unwrap_or_else(|| "empty tree".to_string())
-                    });
+                // Determine labels for display.
+                let label_local = config
+                    .label_local
+                    .clone()
+                    .unwrap_or_else(|| path_label(&config.local));
+                let label_remote = config
+                    .label_remote
+                    .clone()
+                    .unwrap_or_else(|| path_label(&config.remote));
+                let label_base = config.label_base.clone().unwrap_or_else(|| {
+                    config
+                        .base
+                        .as_ref()
+                        .map(|p| path_label(p))
+                        .unwrap_or_else(|| "empty tree".to_string())
+                });
 
-                    let gui_config = gitcomet_ui_gpui::FocusedMergetoolConfig {
-                        repo_path,
-                        conflicted_file_path: config.merged.clone(),
-                        label_local,
-                        label_remote,
-                        label_base,
-                    };
-                    let backend = build_backend();
-                    let code = gitcomet_ui_gpui::run_focused_mergetool(backend, gui_config);
-                    std::process::exit(code);
-                }
+                let gui_config = gitcomet_ui_gpui::FocusedMergetoolConfig {
+                    repo_path,
+                    conflicted_file_path: config.merged.clone(),
+                    label_local,
+                    label_remote,
+                    label_base,
+                };
+                let backend = build_backend();
+                let code = gitcomet_ui_gpui::run_focused_mergetool(backend, gui_config);
+                std::process::exit(code);
             }
 
             run_and_exit(result);

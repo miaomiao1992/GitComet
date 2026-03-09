@@ -367,14 +367,10 @@ fn side_content(
     let mut lines: Vec<String> = Vec::new();
     reconstruct_side_with(
         base_lines,
-        range_start,
-        range_end,
+        range_start..range_end,
         hunks,
         &mut lines,
-        |h| h.base_start,
-        |h| h.base_end,
         |line| line.to_string(),
-        |h, out| out.extend(h.new_lines.iter().cloned()),
     );
     let line_refs: Vec<&str> = lines.iter().map(String::as_str).collect();
     lines_to_text(&line_refs, line_ending)

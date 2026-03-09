@@ -300,13 +300,13 @@ pub(crate) fn classify_difftool_input(
         Ok(metadata) if metadata.is_dir() => Ok(DifftoolInputKind::Directory),
         Ok(metadata) if metadata.is_file() => Ok(DifftoolInputKind::FileLike),
         Ok(_) => {
-            if let Ok(link_meta) = std::fs::symlink_metadata(path) {
-                if link_meta.file_type().is_symlink() {
-                    return Err(format!(
-                        "{role_name} path symlink target must resolve to a regular file or directory: {}",
-                        path.display()
-                    ));
-                }
+            if let Ok(link_meta) = std::fs::symlink_metadata(path)
+                && link_meta.file_type().is_symlink()
+            {
+                return Err(format!(
+                    "{role_name} path symlink target must resolve to a regular file or directory: {}",
+                    path.display()
+                ));
             }
             Err(format!(
                 "{role_name} path must be a regular file or directory: {}",

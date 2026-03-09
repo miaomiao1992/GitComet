@@ -22,6 +22,8 @@ jobs:
   coverage:
     name: Coverage (llvm-cov + Codecov)
     runs-on: ubuntu-latest
+    env:
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
     steps:
       - uses: actions/checkout@v4
       - name: Install Rust toolchain
@@ -41,7 +43,7 @@ jobs:
             --lcov \
             --output-path target/llvm-cov/lcov.info
       - name: Upload coverage to Codecov (tokenless)
-        if: ${{ secrets.CODECOV_TOKEN == '' }}
+        if: ${{ env.CODECOV_TOKEN == '' }}
         uses: codecov/codecov-action@v5
         with:
           files: target/llvm-cov/lcov.info
@@ -49,11 +51,11 @@ jobs:
           name: gitcomet-linux
           fail_ci_if_error: false
       - name: Upload coverage to Codecov (with token)
-        if: ${{ secrets.CODECOV_TOKEN != '' }}
+        if: ${{ env.CODECOV_TOKEN != '' }}
         uses: codecov/codecov-action@v5
         with:
           files: target/llvm-cov/lcov.info
           flags: unittests
           name: gitcomet-linux
           fail_ci_if_error: false
-          token: ${{ secrets.CODECOV_TOKEN }}
+          token: ${{ env.CODECOV_TOKEN }}

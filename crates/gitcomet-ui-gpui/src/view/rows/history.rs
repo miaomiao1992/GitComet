@@ -71,11 +71,15 @@ impl MainPaneView {
                             line,
                             &[],
                             query,
-                            language,
-                            syntax_mode,
+                            DiffSyntaxConfig {
+                                language,
+                                mode: syntax_mode,
+                            },
                             None,
-                            syntax_document,
-                            ix,
+                            PreparedDiffSyntaxLine {
+                                document: syntax_document,
+                                line_ix: ix,
+                            },
                         )
                     });
 

@@ -24,7 +24,7 @@ fn cleanup_image_diff_cache_startup_once() {
 fn maybe_cleanup_image_diff_cache_on_write() {
     let write_count =
         IMAGE_DIFF_CACHE_WRITE_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
-    if write_count % IMAGE_DIFF_CACHE_CLEANUP_WRITE_INTERVAL == 0 {
+    if write_count.is_multiple_of(IMAGE_DIFF_CACHE_CLEANUP_WRITE_INTERVAL) {
         cleanup_image_diff_cache_now();
     }
 }

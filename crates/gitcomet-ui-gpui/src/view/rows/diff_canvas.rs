@@ -641,7 +641,6 @@ impl DiffRowTextRegions {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum DiffRowRightClickBehavior {
     OpenContextMenu,
-    CopySelectionOrRegionLine,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -678,7 +677,7 @@ fn install_diff_row_mouse_handlers(
         right_click,
         mouse_up,
     } = handlers;
-    let row_bounds_for_down = row_bounds.clone();
+    let row_bounds_for_down = row_bounds;
     let regions = regions.clone();
     window.on_mouse_event({
         let view = view.clone();
@@ -720,14 +719,6 @@ fn install_diff_row_mouse_handlers(
                                 event.position,
                                 window,
                                 cx,
-                            );
-                            cx.notify();
-                        });
-                    }
-                    DiffRowRightClickBehavior::CopySelectionOrRegionLine => {
-                        view.update(cx, |this, cx| {
-                            this.copy_diff_text_selection_or_region_line_to_clipboard(
-                                visible_ix, region, cx,
                             );
                             cx.notify();
                         });

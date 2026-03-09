@@ -137,35 +137,29 @@ where
 }
 
 /// Reconstruct one side's sequence for a base range by applying hunks.
-pub(crate) fn reconstruct_side_with<'a, H, T, FStart, FEnd, FBase, FHunk>(
+pub(crate) fn reconstruct_side_with<'a, T, FBase>(
     base_lines: &'a [&'a str],
-    range_start: usize,
-    range_end: usize,
-    hunks: &[H],
+    range: std::ops::Range<usize>,
+    hunks: &[DiffHunk<T>],
     output: &mut Vec<T>,
-    mut hunk_base_start: FStart,
-    mut hunk_base_end: FEnd,
     mut map_base_line: FBase,
-    mut extend_hunk_lines: FHunk,
 ) where
-    FStart: FnMut(&H) -> usize,
-    FEnd: FnMut(&H) -> usize,
+    T: Clone,
     FBase: FnMut(&'a str) -> T,
-    FHunk: FnMut(&H, &mut Vec<T>),
 {
-    let mut pos = range_start;
+    let range_end = range.end.min(base_lines.len());
+    let mut pos = range.start.min(range_end);
 
     for hunk in hunks {
-        let base_limit = hunk_base_start(hunk).min(range_end).min(base_lines.len());
+        let base_limit = hunk.base_start.min(range_end).max(pos);
         for &line in &base_lines[pos..base_limit] {
             output.push(map_base_line(line));
         }
-        extend_hunk_lines(hunk, output);
-        pos = hunk_base_end(hunk);
+        output.extend(hunk.new_lines.iter().cloned());
+        pos = hunk.base_end.min(range_end).max(pos);
     }
 
-    let tail_limit = range_end.min(base_lines.len());
-    for &line in &base_lines[pos..tail_limit] {
+    for &line in &base_lines[pos..range_end] {
         output.push(map_base_line(line));
     }
 }
@@ -1187,17 +1181,9 @@ mod tests {
         ];
         let mut output: Vec<String> = Vec::new();
 
-        reconstruct_side_with(
-            &base_lines,
-            0,
-            3,
-            &hunks,
-            &mut output,
-            |h| h.base_start,
-            |h| h.base_end,
-            |line| line.to_string(),
-            |h, out| out.extend(h.new_lines.iter().cloned()),
-        );
+        reconstruct_side_with(&base_lines, 0..3, &hunks, &mut output, |line| {
+            line.to_string()
+        });
 
         assert_eq!(
             output,

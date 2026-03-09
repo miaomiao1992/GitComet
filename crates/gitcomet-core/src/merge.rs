@@ -410,14 +410,10 @@ fn reconstruct_side<'a>(
     let mut lines = Vec::new();
     reconstruct_side_with(
         base_lines,
-        range_start,
-        range_end,
+        range_start..range_end,
         hunks,
         &mut lines,
-        |h| h.base_start,
-        |h| h.base_end,
         Cow::Borrowed,
-        |h, out| out.extend(h.new_lines.iter().cloned()),
     );
     lines
 }

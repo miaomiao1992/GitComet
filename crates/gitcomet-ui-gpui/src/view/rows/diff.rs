@@ -103,11 +103,15 @@ impl MainPaneView {
                             diff_content_text(line),
                             word_ranges,
                             &query,
-                            language,
-                            syntax_mode,
+                            DiffSyntaxConfig {
+                                language,
+                                mode: syntax_mode,
+                            },
                             word_color,
-                            syntax_document,
-                            inline_ix,
+                            PreparedDiffSyntaxLine {
+                                document: syntax_document,
+                                line_ix: inline_ix,
+                            },
                         );
                         this.diff_text_segments_cache_set(inline_ix, computed);
                     }
@@ -362,11 +366,15 @@ impl MainPaneView {
                                 text,
                                 word_ranges,
                                 &query,
-                                language,
-                                syntax_mode,
+                                DiffSyntaxConfig {
+                                    language,
+                                    mode: syntax_mode,
+                                },
                                 word_color,
-                                syntax_document,
-                                row_ix,
+                                PreparedDiffSyntaxLine {
+                                    document: syntax_document,
+                                    line_ix: row_ix,
+                                },
                             );
                             this.diff_text_segments_cache_set(key, computed);
                         }
@@ -667,11 +675,15 @@ impl MainPaneView {
                                 text,
                                 word_ranges,
                                 &query,
-                                language,
-                                syntax_mode,
+                                DiffSyntaxConfig {
+                                    language,
+                                    mode: syntax_mode,
+                                },
                                 word_color,
-                                syntax_document,
-                                row_ix,
+                                PreparedDiffSyntaxLine {
+                                    document: syntax_document,
+                                    line_ix: row_ix,
+                                },
                             );
                             this.diff_text_segments_cache_set(key, computed);
                         }

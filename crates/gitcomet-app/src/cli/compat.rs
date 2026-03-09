@@ -34,9 +34,7 @@ fn parse_attached_numbered_label(token: &str) -> Option<(CompatLabelSlot, String
     }
     if let Some(rest) = token.strip_prefix("-L") {
         let mut chars = rest.chars();
-        let Some(number) = chars.next() else {
-            return None;
-        };
+        let number = chars.next()?;
         let slot = match number {
             '1' => CompatLabelSlot::L1,
             '2' => CompatLabelSlot::L2,

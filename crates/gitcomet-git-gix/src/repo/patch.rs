@@ -65,7 +65,7 @@ impl GixRepo {
         if reverse {
             cmd.arg("--reverse");
         }
-        cmd.arg(&tmp_path);
+        cmd.arg(tmp_path);
 
         let label = if reverse {
             format!("git apply --cached --reverse {}", tmp_path.display())
@@ -96,7 +96,7 @@ impl GixRepo {
         if reverse {
             cmd.arg("--reverse");
         }
-        cmd.arg(&tmp_path);
+        cmd.arg(tmp_path);
 
         let label = if reverse {
             format!("git apply --reverse {}", tmp_path.display())
