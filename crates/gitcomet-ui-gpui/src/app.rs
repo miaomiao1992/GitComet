@@ -113,8 +113,8 @@ fn focused_mergetool_launch_config(
 fn focused_mergetool_window_title(conflicted_file_path: &Path) -> String {
     let display = conflicted_file_path
         .file_name()
-        .map(|name| name.to_string_lossy().into_owned())
-        .unwrap_or_else(|| conflicted_file_path.display().to_string());
+        .and_then(|name| name.to_str().map(ToOwned::to_owned))
+        .unwrap_or_else(|| format!("{conflicted_file_path:?}"));
     format!("GitComet - Mergetool ({display})")
 }
 

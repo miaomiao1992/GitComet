@@ -11,6 +11,10 @@ use std::process::{Command, Stdio};
 use std::sync::Mutex;
 #[cfg(windows)]
 use std::sync::OnceLock;
+#[cfg(windows)]
+use std::thread;
+#[cfg(windows)]
+use std::time::{Duration, Instant};
 #[cfg(unix)]
 use std::{fs::Permissions, os::unix::fs::PermissionsExt};
 
@@ -18,6 +22,16 @@ use std::{fs::Permissions, os::unix::fs::PermissionsExt};
 const NULL_DEVICE: &str = "NUL";
 #[cfg(not(windows))]
 const NULL_DEVICE: &str = "/dev/null";
+
+fn git_path_arg(path: &Path) -> String {
+    path.to_str()
+        .expect("test path should be unicode")
+        .to_string()
+}
+
+fn git_remote_url(path: &Path) -> String {
+    git_path_arg(path)
+}
 
 fn fnv1a_64(bytes: &[u8]) -> u64 {
     let mut hash = 0xcbf29ce484222325u64;
@@ -30,13 +44,40 @@ fn fnv1a_64(bytes: &[u8]) -> u64 {
 
 fn repo_local_mergetool_consent_key(repo: &Path, tool_name: &str) -> String {
     let repo_path = fs::canonicalize(repo).unwrap_or_else(|_| repo.to_path_buf());
-    let mut bytes = repo_path.to_string_lossy().into_owned().into_bytes();
+    let mut bytes = stable_path_bytes(&repo_path);
     bytes.push(0);
     bytes.extend_from_slice(tool_name.as_bytes());
     format!(
         "gitcomet.mergetool.allowrepolocalcmd-{:016x}",
         fnv1a_64(&bytes)
     )
+}
+
+fn stable_path_bytes(path: &Path) -> Vec<u8> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt as _;
+
+        return path.as_os_str().as_bytes().to_vec();
+    }
+
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt as _;
+
+        let mut bytes = Vec::new();
+        for unit in path.as_os_str().encode_wide() {
+            bytes.extend_from_slice(&unit.to_le_bytes());
+        }
+        return bytes;
+    }
+
+    #[cfg(not(any(unix, windows)))]
+    {
+        path.to_str()
+            .map(|text| text.as_bytes().to_vec())
+            .unwrap_or_else(|| format!("{path:?}").into_bytes())
+    }
 }
 
 fn allow_repo_local_mergetool_cmd(repo: &Path, tool_name: &str) {
@@ -72,15 +113,42 @@ fn is_git_shell_startup_failure(text: &str) -> bool {
 }
 
 #[cfg(windows)]
+const GIT_PROBE_TIMEOUT: Duration = Duration::from_secs(8);
+#[cfg(windows)]
+const GIT_PROBE_WAIT_POLL: Duration = Duration::from_millis(50);
+
+#[cfg(windows)]
+fn run_command_with_timeout(mut cmd: Command) -> Option<std::process::Output> {
+    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let mut child = cmd.spawn().ok()?;
+    let start = Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => return child.wait_with_output().ok(),
+            Ok(None) => {
+                if start.elapsed() >= GIT_PROBE_TIMEOUT {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return None;
+                }
+                thread::sleep(GIT_PROBE_WAIT_POLL);
+            }
+            Err(_) => return None,
+        }
+    }
+}
+
+#[cfg(windows)]
 fn git_shell_available_for_status_integration_tests() -> bool {
     static AVAILABLE: OnceLock<bool> = OnceLock::new();
     *AVAILABLE.get_or_init(|| {
-        let output = match Command::new("git")
-            .args(["difftool", "--tool-help"])
-            .output()
-        {
-            Ok(output) => output,
-            Err(_) => return true,
+        let output = match run_command_with_timeout({
+            let mut cmd = Command::new("git");
+            cmd.args(["difftool", "--tool-help"]);
+            cmd
+        }) {
+            Some(output) => output,
+            None => return false,
         };
         if output.status.success() {
             return true;
@@ -89,6 +157,123 @@ fn git_shell_available_for_status_integration_tests() -> bool {
             "{}{}",
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
+        );
+        !is_git_shell_startup_failure(&text)
+    })
+}
+
+#[cfg(windows)]
+fn git_local_push_available_for_status_integration_tests() -> bool {
+    static AVAILABLE: OnceLock<bool> = OnceLock::new();
+    *AVAILABLE.get_or_init(|| {
+        let dir = match tempfile::tempdir() {
+            Ok(dir) => dir,
+            Err(_) => return true,
+        };
+        let remote_repo = dir.path().join("probe-remote.git");
+        let work_repo = dir.path().join("probe-work");
+        if fs::create_dir_all(&remote_repo).is_err() || fs::create_dir_all(&work_repo).is_err() {
+            return true;
+        }
+
+        let init_remote = match run_command_with_timeout({
+            let mut cmd = git_command();
+            cmd.arg("-C").arg(&remote_repo).args(["init", "--bare"]);
+            cmd
+        }) {
+            Some(output) => output.status.success(),
+            None => false,
+        };
+        if !init_remote {
+            return true;
+        }
+
+        let init_work = match run_command_with_timeout({
+            let mut cmd = git_command();
+            cmd.arg("-C").arg(&work_repo).args(["init"]);
+            cmd
+        }) {
+            Some(output) => output.status.success(),
+            None => false,
+        };
+        if !init_work {
+            return true;
+        }
+
+        for args in [
+            ["config", "user.email", "you@example.com"].as_slice(),
+            ["config", "user.name", "You"].as_slice(),
+            ["config", "commit.gpgsign", "false"].as_slice(),
+            ["config", "core.autocrlf", "false"].as_slice(),
+            ["config", "core.eol", "lf"].as_slice(),
+        ] {
+            let output = match run_command_with_timeout({
+                let mut cmd = git_command();
+                cmd.arg("-C").arg(&work_repo).args(args);
+                cmd
+            }) {
+                Some(output) => output,
+                None => return false,
+            };
+            if !output.status.success() {
+                return true;
+            }
+        }
+
+        if fs::write(work_repo.join("probe.txt"), "probe\n").is_err() {
+            return true;
+        }
+
+        for args in [
+            ["add", "probe.txt"].as_slice(),
+            ["-c", "commit.gpgsign=false", "commit", "-m", "probe"].as_slice(),
+        ] {
+            let output = match run_command_with_timeout({
+                let mut cmd = git_command();
+                cmd.arg("-C").arg(&work_repo).args(args);
+                cmd
+            }) {
+                Some(output) => output,
+                None => return false,
+            };
+            if !output.status.success() {
+                return true;
+            }
+        }
+
+        let remote_url = git_remote_url(&remote_repo);
+        let add_remote = match run_command_with_timeout({
+            let mut cmd = git_command();
+            cmd.arg("-C")
+                .arg(&work_repo)
+                .args(["remote", "add", "origin", remote_url.as_str()]);
+            cmd
+        }) {
+            Some(output) => output.status.success(),
+            None => false,
+        };
+        if !add_remote {
+            return true;
+        }
+
+        let push_output = match run_command_with_timeout({
+            let mut cmd = git_command();
+            cmd.arg("-C")
+                .arg(&work_repo)
+                .args(["push", "-u", "origin", "HEAD"]);
+            cmd
+        }) {
+            Some(output) => output,
+            None => return false,
+        };
+        if push_output.status.success() {
+            return true;
+        }
+
+        let text = format!(
+            "{}{}",
+            String::from_utf8_lossy(&push_output.stdout),
+            String::from_utf8_lossy(&push_output.stderr)
         );
         !is_git_shell_startup_failure(&text)
     })
@@ -103,6 +288,12 @@ fn require_git_shell_for_status_integration_tests() -> bool {
             );
             return false;
         }
+        if !git_local_push_available_for_status_integration_tests() {
+            eprintln!(
+                "skipping status integration test: Git-for-Windows local push shell startup failed in this environment"
+            );
+            return false;
+        }
     }
     true
 }
@@ -111,6 +302,8 @@ fn git_command() -> Command {
     // Keep integration tests deterministic by isolating from host git config.
     cmd.env("GIT_CONFIG_NOSYSTEM", "1");
     cmd.env("GIT_CONFIG_GLOBAL", NULL_DEVICE);
+    cmd.env("GIT_TERMINAL_PROMPT", "0");
+    cmd.env("GCM_INTERACTIVE", "Never");
     // Some scenarios clone local file:// remotes (submodules, temp-origin repos).
     cmd.env("GIT_ALLOW_PROTOCOL", "file");
     cmd
@@ -130,6 +323,11 @@ fn run_git(repo: &Path, args: &[&str]) {
         // of host/user git defaults.
         run_git(repo, &["config", "core.autocrlf", "false"]);
         run_git(repo, &["config", "core.eol", "lf"]);
+        // Avoid host credential manager prompts/retries in backend commands.
+        run_git(repo, &["config", "credential.helper", ""]);
+        run_git(repo, &["config", "credential.interactive", "never"]);
+        // Ensure local file:// remotes are always usable in this test repo.
+        run_git(repo, &["config", "protocol.file.allow", "always"]);
     }
 }
 
@@ -2594,7 +2792,7 @@ fn launch_mergetool_uses_tool_path_override_without_custom_cmd() {
         &[
             "config",
             "mergetool.fake.path",
-            script_path.to_string_lossy().as_ref(),
+            git_path_arg(&script_path).as_str(),
         ],
     );
     run_git(repo, &["config", "mergetool.fake.trustExitCode", "true"]);
@@ -2635,7 +2833,7 @@ fn launch_mergetool_prefers_custom_cmd_over_tool_path_override() {
         &[
             "config",
             "mergetool.fake.path",
-            script_path.to_string_lossy().as_ref(),
+            git_path_arg(&script_path).as_str(),
         ],
     );
     set_repo_local_mergetool_cmd_with_consent(repo, "fake", cmd_write_cmd_to_merged());
@@ -4448,20 +4646,15 @@ fn list_remote_tags_collects_sorted_results_and_skips_unavailable_remote() {
     run_git(&backup, &["init", "--bare", "-b", "main"]);
     run_git(
         &repo,
-        &["remote", "add", "origin", origin.to_string_lossy().as_ref()],
+        &["remote", "add", "origin", git_remote_url(&origin).as_str()],
     );
     run_git(
         &repo,
-        &["remote", "add", "backup", backup.to_string_lossy().as_ref()],
+        &["remote", "add", "backup", git_remote_url(&backup).as_str()],
     );
     run_git(
         &repo,
-        &[
-            "remote",
-            "add",
-            "broken",
-            missing.to_string_lossy().as_ref(),
-        ],
+        &["remote", "add", "broken", git_remote_url(&missing).as_str()],
     );
 
     run_git(&repo, &["tag", "origin-tag"]);
@@ -4521,7 +4714,7 @@ fn push_and_delete_remote_tag() {
     run_git(&origin, &["init", "--bare", "-b", "main"]);
     run_git(
         &repo,
-        &["remote", "add", "origin", origin.to_string_lossy().as_ref()],
+        &["remote", "add", "origin", git_remote_url(&origin).as_str()],
     );
 
     let backend = GixBackend;
@@ -4572,7 +4765,7 @@ fn prune_merged_branches_deletes_local_branches_missing_on_remote() {
     run_git(&origin, &["init", "--bare", "-b", "main"]);
     run_git(
         &repo,
-        &["remote", "add", "origin", origin.to_string_lossy().as_ref()],
+        &["remote", "add", "origin", git_remote_url(&origin).as_str()],
     );
     run_git(&repo, &["push", "-u", "origin", "main"]);
 
@@ -4648,7 +4841,7 @@ fn prune_local_tags_deletes_tags_missing_from_remotes() {
     run_git(&origin, &["init", "--bare", "-b", "main"]);
     run_git(
         &repo,
-        &["remote", "add", "origin", origin.to_string_lossy().as_ref()],
+        &["remote", "add", "origin", git_remote_url(&origin).as_str()],
     );
     run_git(&repo, &["push", "-u", "origin", "main"]);
 
@@ -4744,7 +4937,7 @@ fn prune_local_tags_with_output_reports_noop_when_all_tags_exist_remotely() {
     run_git(&origin, &["init", "--bare", "-b", "main"]);
     run_git(
         &repo,
-        &["remote", "add", "origin", origin.to_string_lossy().as_ref()],
+        &["remote", "add", "origin", git_remote_url(&origin).as_str()],
     );
     run_git(&repo, &["push", "-u", "origin", "main"]);
     run_git(&repo, &["tag", "v1.0.0"]);
@@ -4792,7 +4985,7 @@ fn list_remote_branches_includes_fetched_remote_tracking_refs() {
     run_git(&origin, &["init", "--bare", "-b", "main"]);
     run_git(
         &repo,
-        &["remote", "add", "origin", origin.to_string_lossy().as_ref()],
+        &["remote", "add", "origin", git_remote_url(&origin).as_str()],
     );
     run_git(&repo, &["push", "-u", "origin", "main"]);
 
@@ -4849,7 +5042,7 @@ fn checkout_remote_branch_creates_tracking_branch_when_missing_locally() {
     );
     run_git(
         &seed,
-        &["remote", "add", "origin", origin.to_string_lossy().as_ref()],
+        &["remote", "add", "origin", git_remote_url(&origin).as_str()],
     );
     run_git(&seed, &["push", "-u", "origin", "main"]);
 
@@ -4866,8 +5059,8 @@ fn checkout_remote_branch_creates_tracking_branch_when_missing_locally() {
         dir.path(),
         &[
             "clone",
-            origin.to_string_lossy().as_ref(),
-            clone.to_string_lossy().as_ref(),
+            git_remote_url(&origin).as_str(),
+            git_path_arg(&clone).as_str(),
         ],
     );
 
@@ -4918,7 +5111,7 @@ fn checkout_remote_branch_existing_local_branch_updates_upstream_and_checks_out(
     );
     run_git(
         &seed,
-        &["remote", "add", "origin", origin.to_string_lossy().as_ref()],
+        &["remote", "add", "origin", git_remote_url(&origin).as_str()],
     );
     run_git(&seed, &["push", "-u", "origin", "main"]);
 
@@ -4935,8 +5128,8 @@ fn checkout_remote_branch_existing_local_branch_updates_upstream_and_checks_out(
         dir.path(),
         &[
             "clone",
-            origin.to_string_lossy().as_ref(),
-            clone.to_string_lossy().as_ref(),
+            git_remote_url(&origin).as_str(),
+            git_path_arg(&clone).as_str(),
         ],
     );
     run_git(&clone, &["checkout", "-b", "topic"]);
@@ -5003,7 +5196,7 @@ fn checkout_remote_branch_returns_backend_error_for_missing_remote_branch() {
     );
     run_git(
         &repo,
-        &["remote", "add", "origin", origin.to_string_lossy().as_ref()],
+        &["remote", "add", "origin", git_remote_url(&origin).as_str()],
     );
     run_git(&repo, &["push", "-u", "origin", "main"]);
     run_git(&repo, &["fetch", "origin"]);
@@ -5050,7 +5243,7 @@ fn push_with_output_updates_remote_head() {
     run_git(&origin, &["init", "--bare", "-b", "main"]);
     run_git(
         &repo,
-        &["remote", "add", "origin", origin.to_string_lossy().as_ref()],
+        &["remote", "add", "origin", git_remote_url(&origin).as_str()],
     );
     run_git(&repo, &["push", "-u", "origin", "main"]);
 
@@ -5116,7 +5309,7 @@ fn force_push_with_output_updates_remote_head_after_rewrite() {
     run_git(&origin, &["init", "--bare", "-b", "main"]);
     run_git(
         &repo,
-        &["remote", "add", "origin", origin.to_string_lossy().as_ref()],
+        &["remote", "add", "origin", git_remote_url(&origin).as_str()],
     );
     run_git(&repo, &["push", "-u", "origin", "main"]);
 
@@ -5199,7 +5392,7 @@ fn pull_with_output_fast_forwards_from_remote() {
     );
     run_git(
         &repo_a,
-        &["remote", "add", "origin", origin.to_string_lossy().as_ref()],
+        &["remote", "add", "origin", git_remote_url(&origin).as_str()],
     );
     run_git(&repo_a, &["push", "-u", "origin", "main"]);
 
@@ -5207,8 +5400,8 @@ fn pull_with_output_fast_forwards_from_remote() {
         dir.path(),
         &[
             "clone",
-            origin.to_string_lossy().as_ref(),
-            repo_b.to_string_lossy().as_ref(),
+            git_remote_url(&origin).as_str(),
+            git_path_arg(&repo_b).as_str(),
         ],
     );
 
@@ -5275,7 +5468,7 @@ fn pull_with_output_fast_forwards_when_possible_even_if_pull_ff_is_disabled() {
     );
     run_git(
         &repo_a,
-        &["remote", "add", "origin", origin.to_string_lossy().as_ref()],
+        &["remote", "add", "origin", git_remote_url(&origin).as_str()],
     );
     run_git(&repo_a, &["push", "-u", "origin", "main"]);
 
@@ -5283,8 +5476,8 @@ fn pull_with_output_fast_forwards_when_possible_even_if_pull_ff_is_disabled() {
         dir.path(),
         &[
             "clone",
-            origin.to_string_lossy().as_ref(),
-            repo_b.to_string_lossy().as_ref(),
+            git_remote_url(&origin).as_str(),
+            git_path_arg(&repo_b).as_str(),
         ],
     );
 

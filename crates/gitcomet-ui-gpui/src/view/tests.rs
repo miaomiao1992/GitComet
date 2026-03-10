@@ -391,9 +391,9 @@ fn focused_mergetool_bootstrap_selects_worktree_diff_target() {
     let bootstrap = focused_bootstrap(repo.clone(), repo.join("src/conflict.txt"));
     let mut state = AppState::default();
     state.active_repo = Some(RepoId(1));
-    state
-        .repos
-        .push(open_repo_state_with_workdir(&repo.to_string_lossy()));
+    state.repos.push(open_repo_state_with_workdir(
+        repo.to_str().expect("test path should be unicode"),
+    ));
 
     assert_eq!(
         focused_mergetool_bootstrap_action(&state, &bootstrap),
@@ -413,7 +413,8 @@ fn focused_mergetool_bootstrap_loads_conflict_file_after_diff_target() {
     let bootstrap = focused_bootstrap(repo.clone(), repo.join("src/conflict.txt"));
     let mut state = AppState::default();
     state.active_repo = Some(RepoId(1));
-    let mut repo_state = open_repo_state_with_workdir(&repo.to_string_lossy());
+    let mut repo_state =
+        open_repo_state_with_workdir(repo.to_str().expect("test path should be unicode"));
     repo_state.diff_state.diff_target = Some(DiffTarget::WorkingTree {
         area: DiffArea::Unstaged,
         path: PathBuf::from("src/conflict.txt"),
@@ -435,7 +436,8 @@ fn focused_mergetool_bootstrap_completes_after_conflict_file_target_set() {
     let bootstrap = focused_bootstrap(repo.clone(), repo.join("src/conflict.txt"));
     let mut state = AppState::default();
     state.active_repo = Some(RepoId(1));
-    let mut repo_state = open_repo_state_with_workdir(&repo.to_string_lossy());
+    let mut repo_state =
+        open_repo_state_with_workdir(repo.to_str().expect("test path should be unicode"));
     repo_state.diff_state.diff_target = Some(DiffTarget::WorkingTree {
         area: DiffArea::Unstaged,
         path: PathBuf::from("src/conflict.txt"),

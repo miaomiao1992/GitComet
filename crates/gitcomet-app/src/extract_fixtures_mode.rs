@@ -86,7 +86,7 @@ mod tests {
             output.status.success(),
             "git {:?} failed: {}",
             args,
-            String::from_utf8_lossy(&output.stderr)
+            String::from_utf8(output.stderr).unwrap_or_else(|_| "<non-utf8 stderr>".to_string())
         );
     }
 

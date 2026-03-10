@@ -16,7 +16,7 @@ pub(super) fn open_path(path: &Path) -> Result<(), io::Error> {
     {
         // Normalize to an absolute path to avoid ambiguous explorer.exe argument parsing.
         let path = std::fs::canonicalize(path)?;
-        return open_with_default_os_str(path.as_os_str());
+        open_with_default_os_str(path.as_os_str())
     }
 
     #[cfg(not(target_os = "windows"))]
@@ -47,7 +47,7 @@ pub(super) fn open_file_location(path: &Path) -> Result<(), io::Error> {
         let _ = std::process::Command::new("explorer.exe")
             .arg(arg)
             .spawn()?;
-        return Ok(());
+        Ok(())
     }
 
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
@@ -87,7 +87,7 @@ fn open_with_default(arg: &str) -> Result<(), io::Error> {
         let _ = std::process::Command::new("explorer.exe")
             .arg(arg)
             .spawn()?;
-        return Ok(());
+        Ok(())
     }
 
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
@@ -132,7 +132,7 @@ fn open_with_default_os_str(arg: &std::ffi::OsStr) -> Result<(), io::Error> {
         let _ = std::process::Command::new("explorer.exe")
             .arg(arg)
             .spawn()?;
-        return Ok(());
+        Ok(())
     }
 
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]

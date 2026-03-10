@@ -683,8 +683,7 @@ impl MainPaneView {
                 binary,
             )
         };
-        let conflict_syntax_language =
-            rows::diff_syntax_language_for_path(path.to_string_lossy().as_ref());
+        let conflict_syntax_language = rows::diff_syntax_language_for_path(&path);
 
         // For binary conflicts, populate minimal state and return early.
         if is_binary {
@@ -1071,10 +1070,11 @@ impl MainPaneView {
         self.conflict_resolver.diff_visible_row_indices = diff_visible_row_indices;
         self.conflict_resolver.inline_visible_row_indices = inline_visible_row_indices;
         self.conflict_resolver.active_conflict = active_conflict;
-        self.conflict_resolver.conflict_syntax_language =
-            self.conflict_resolver.path.as_ref().and_then(|path| {
-                rows::diff_syntax_language_for_path(path.to_string_lossy().as_ref())
-            });
+        self.conflict_resolver.conflict_syntax_language = self
+            .conflict_resolver
+            .path
+            .as_ref()
+            .and_then(rows::diff_syntax_language_for_path);
         if self
             .conflict_resolver
             .hovered_conflict

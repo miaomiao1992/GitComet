@@ -195,7 +195,13 @@ fn write_pending_report_path(marker: &Path, crash_log_path: &Path) -> std::io::R
 
     #[cfg(not(any(unix, windows)))]
     {
-        std::fs::write(marker, crash_log_path.to_string_lossy().as_ref())
+        let Some(path_text) = crash_log_path.to_str() else {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "crash log path is not valid Unicode on this platform",
+            ));
+        };
+        std::fs::write(marker, path_text)
     }
 }
 
@@ -259,7 +265,7 @@ fn hex_encode(bytes: &[u8]) -> String {
 
 #[cfg(windows)]
 fn hex_decode(hex: &str) -> Option<Vec<u8>> {
-    if hex.len() % 2 != 0 {
+    if !hex.len().is_multiple_of(2) {
         return None;
     }
     let mut out = Vec::with_capacity(hex.len() / 2);
@@ -645,11 +651,8 @@ frame 1
 frame 2
 "#;
         std::fs::write(&crash_log_path, crash_log).expect("write crash log");
-        std::fs::write(
-            pending_report_path(dir.path()),
-            crash_log_path.to_string_lossy().as_ref(),
-        )
-        .expect("write pending marker");
+        write_pending_report_path(&pending_report_path(dir.path()), &crash_log_path)
+            .expect("write pending marker");
 
         let report =
             take_startup_report_from_dir(dir.path()).expect("startup report should be available");
@@ -666,11 +669,8 @@ frame 2
     fn take_startup_report_from_dir_missing_log_clears_pending_marker() {
         let dir = tempdir().expect("temp dir");
         let missing_log_path = dir.path().join("missing.log");
-        std::fs::write(
-            pending_report_path(dir.path()),
-            missing_log_path.to_string_lossy().as_ref(),
-        )
-        .expect("write pending marker");
+        write_pending_report_path(&pending_report_path(dir.path()), &missing_log_path)
+            .expect("write pending marker");
 
         assert!(take_startup_report_from_dir(dir.path()).is_none());
         assert!(

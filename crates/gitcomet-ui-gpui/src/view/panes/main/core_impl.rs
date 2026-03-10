@@ -458,7 +458,7 @@ impl MainPaneView {
     ) {
         let _perf_scope = perf::span(ConflictPerfSpan::RecomputeResolvedOutline);
         self.conflict_resolved_preview_syntax_language =
-            path.and_then(|p| rows::diff_syntax_language_for_path(p.to_string_lossy().as_ref()));
+            path.and_then(rows::diff_syntax_language_for_path);
         let output_text = self
             .conflict_resolver_input
             .read_with(cx, |input, _| input.text().to_string());

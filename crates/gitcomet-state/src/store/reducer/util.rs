@@ -354,7 +354,12 @@ pub(super) fn conflict_autosolve_telemetry_command(
     let mut command = format!("telemetry.conflict_autosolve.{}", mode.as_str());
     if let Some(path) = path {
         command.push(' ');
-        command.push_str(path.to_string_lossy().as_ref());
+        command.push_str(
+            &path
+                .to_str()
+                .map(ToOwned::to_owned)
+                .unwrap_or_else(|| format!("{path:?}")),
+        );
     }
     command
 }

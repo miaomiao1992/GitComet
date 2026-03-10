@@ -26,13 +26,29 @@ fn canonicalize_path(path: PathBuf) -> PathBuf {
 
 #[cfg(windows)]
 fn strip_windows_verbatim_prefix(path: PathBuf) -> PathBuf {
-    if let Ok(stripped) = path.strip_prefix(std::path::Path::new(r"\\?\UNC\")) {
-        return std::path::Path::new(r"\\").join(stripped);
+    use std::path::{Component, Prefix};
+
+    let mut components = path.components();
+    let Some(Component::Prefix(prefix)) = components.next() else {
+        return path;
+    };
+
+    let mut out = match prefix.kind() {
+        Prefix::VerbatimDisk(letter) => PathBuf::from(format!("{}:", char::from(letter))),
+        Prefix::VerbatimUNC(server, share) => {
+            let mut out = PathBuf::from(r"\\");
+            out.push(server);
+            out.push(share);
+            out
+        }
+        Prefix::Verbatim(raw) => PathBuf::from(raw),
+        _ => return path,
+    };
+
+    for component in components {
+        out.push(component.as_os_str());
     }
-    if let Ok(stripped) = path.strip_prefix(std::path::Path::new(r"\\?\")) {
-        return stripped.to_path_buf();
-    }
-    path
+    out
 }
 
 #[cfg(not(windows))]
@@ -203,8 +219,20 @@ mod path_tests {
 
         #[cfg(windows)]
         {
+            use std::path::{Component, Prefix};
+
             assert_eq!(actual.file_name(), root.file_name());
-            assert!(!actual.to_string_lossy().starts_with(r"\\?\"));
+            let has_verbatim_prefix = matches!(
+                actual.components().next(),
+                Some(Component::Prefix(prefix))
+                    if matches!(
+                        prefix.kind(),
+                        Prefix::Verbatim(_)
+                            | Prefix::VerbatimDisk(_)
+                            | Prefix::VerbatimUNC(_, _)
+                    )
+            );
+            assert!(!has_verbatim_prefix);
         }
 
         let _ = fs::remove_dir_all(&root);

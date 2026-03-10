@@ -124,8 +124,8 @@ fn merged_display_name(config: &MergetoolConfig) -> String {
     config
         .merged
         .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_else(|| config.merged.display().to_string())
+        .and_then(|n| n.to_str().map(ToOwned::to_owned))
+        .unwrap_or_else(|| format!("{:?}", config.merged))
 }
 
 fn derive_effective_labels(config: &MergetoolConfig) -> MergeLabels {
@@ -152,8 +152,8 @@ fn derive_effective_labels(config: &MergetoolConfig) -> MergeLabels {
 
 fn default_path_label(path: &Path) -> String {
     path.file_name()
-        .map(|name| name.to_string_lossy().into_owned())
-        .unwrap_or_else(|| path.display().to_string())
+        .and_then(|name| name.to_str().map(ToOwned::to_owned))
+        .unwrap_or_else(|| format!("{path:?}"))
 }
 
 /// Handle binary files with conservative 3-way heuristics:

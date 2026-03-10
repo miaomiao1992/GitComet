@@ -31,8 +31,7 @@ impl MainPaneView {
         };
         if should_clear_cache {
             this.worktree_preview_segments_cache_path = Some(path.clone());
-            this.worktree_preview_syntax_language =
-                diff_syntax_language_for_path(path.to_string_lossy().as_ref());
+            this.worktree_preview_syntax_language = diff_syntax_language_for_path(path);
             this.worktree_preview_segments_cache.clear();
         }
 

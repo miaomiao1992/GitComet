@@ -134,15 +134,15 @@ where
     })
 }
 
-fn parse_object_ids_from_lines(lines: &str) -> Vec<gix::ObjectId> {
+fn parse_object_ids_from_bytes(lines: &[u8]) -> Vec<gix::ObjectId> {
     let mut tips = Vec::new();
     let mut seen = HashSet::default();
-    for line in lines.lines() {
-        let hex = line.trim();
+    for raw_line in lines.split(|b| *b == b'\n') {
+        let hex = raw_line.trim_ascii();
         if hex.is_empty() {
             continue;
         }
-        if let Ok(id) = gix::ObjectId::from_hex(hex.as_bytes())
+        if let Ok(id) = gix::ObjectId::from_hex(hex)
             && seen.insert(id)
         {
             tips.push(id);
@@ -172,7 +172,7 @@ fn stash_reflog_tips(workdir: &Path) -> Vec<gix::ObjectId> {
         return Vec::new();
     }
 
-    parse_object_ids_from_lines(&String::from_utf8_lossy(&output.stdout))
+    parse_object_ids_from_bytes(&output.stdout)
 }
 
 impl GixRepo {
@@ -421,7 +421,7 @@ bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n\
 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n\
 not-a-sha\n\
 \n";
-        let ids = parse_object_ids_from_lines(input);
+        let ids = parse_object_ids_from_bytes(input.as_bytes());
         assert_eq!(ids.len(), 2);
         assert_eq!(
             ids[0].to_string(),

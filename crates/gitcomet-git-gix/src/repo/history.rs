@@ -6,6 +6,41 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::str;
 
+fn path_from_git_stdout(stdout: &[u8]) -> Option<PathBuf> {
+    let raw = stdout.trim_ascii_end();
+    if raw.is_empty() {
+        return None;
+    }
+
+    #[cfg(unix)]
+    {
+        use std::ffi::OsString;
+        use std::os::unix::ffi::OsStringExt as _;
+
+        Some(PathBuf::from(OsString::from_vec(raw.to_vec())))
+    }
+
+    #[cfg(windows)]
+    {
+        let text = std::str::from_utf8(raw).ok()?;
+        if text.is_empty() {
+            None
+        } else {
+            Some(PathBuf::from(text))
+        }
+    }
+
+    #[cfg(not(any(unix, windows)))]
+    {
+        let text = std::str::from_utf8(raw).ok()?;
+        if text.is_empty() {
+            None
+        } else {
+            Some(PathBuf::from(text))
+        }
+    }
+}
+
 impl GixRepo {
     pub(super) fn reset_with_output_impl(
         &self,
@@ -109,13 +144,9 @@ impl GixRepo {
             return Ok(false);
         }
 
-        let applying_path = String::from_utf8_lossy(&applying_path.stdout);
-        let applying_path = applying_path.trim();
-        if applying_path.is_empty() {
+        let Some(applying_path) = path_from_git_stdout(&applying_path.stdout) else {
             return Ok(false);
-        }
-
-        let applying_path = PathBuf::from(applying_path);
+        };
         let applying_path = if applying_path.is_absolute() {
             applying_path
         } else {
@@ -156,13 +187,9 @@ impl GixRepo {
             ))));
         }
 
-        let merge_msg_path = String::from_utf8_lossy(&merge_msg_path.stdout);
-        let merge_msg_path = merge_msg_path.trim();
-        if merge_msg_path.is_empty() {
+        let Some(merge_msg_path) = path_from_git_stdout(&merge_msg_path.stdout) else {
             return Ok(None);
-        }
-
-        let merge_msg_path = std::path::PathBuf::from(merge_msg_path);
+        };
         let merge_msg_path = if merge_msg_path.is_absolute() {
             merge_msg_path
         } else {

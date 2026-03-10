@@ -16,7 +16,8 @@ pub(super) fn model(
         .as_ref()
         .and_then(|p| {
             p.file_name()
-                .map(|name| name.to_string_lossy().to_string().into())
+                .and_then(|name| name.to_str().map(ToOwned::to_owned))
+                .map(Into::into)
         })
         .unwrap_or_else(|| "Diff".into());
 

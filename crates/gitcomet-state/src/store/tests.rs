@@ -155,11 +155,11 @@ fn git_shell_available_for_store_tests() -> bool {
         if output.status.success() {
             return true;
         }
-        let text = format!(
-            "{}{}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        );
+        let stdout =
+            String::from_utf8(output.stdout).unwrap_or_else(|_| "<non-utf8 stdout>".to_string());
+        let stderr =
+            String::from_utf8(output.stderr).unwrap_or_else(|_| "<non-utf8 stderr>".to_string());
+        let text = format!("{}{}", stdout, stderr);
         !is_git_shell_startup_failure(&text)
     })
 }
@@ -239,7 +239,7 @@ fn app_store_open_repo_effect_propagates_open_error_into_state() {
             .as_nanos()
     ));
     std::fs::create_dir_all(&base).expect("temporary repo path should be creatable");
-    let expected_workdir = base.canonicalize().unwrap_or(base.clone());
+    let expected_workdir = canonicalize_path(base.clone());
 
     store.dispatch(Msg::OpenRepo(base));
 

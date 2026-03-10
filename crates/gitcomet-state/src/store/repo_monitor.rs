@@ -4,7 +4,6 @@ use notify::event::{AccessKind, AccessMode};
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 use std::any::Any;
-use std::ffi::OsString;
 use std::fs;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
@@ -546,7 +545,8 @@ fn run_git_check_ignore_batch(workdir: &Path, rels: &[PathBuf]) -> Option<HashSe
             }
             #[cfg(not(unix))]
             {
-                stdin.write_all(rel.to_string_lossy().as_bytes()).ok()?;
+                let rel_text = rel.to_str()?;
+                stdin.write_all(rel_text.as_bytes()).ok()?;
             }
             stdin.write_all(&[0]).ok()?;
         }
@@ -571,7 +571,8 @@ fn run_git_check_ignore_batch(workdir: &Path, rels: &[PathBuf]) -> Option<HashSe
         }
         #[cfg(not(unix))]
         {
-            ignored.insert(PathBuf::from(String::from_utf8_lossy(raw).into_owned()));
+            let path_text = String::from_utf8(raw.to_vec()).ok()?;
+            ignored.insert(PathBuf::from(path_text));
         }
     }
     Some(ignored)
@@ -941,8 +942,8 @@ mod tests {
             output.status.success(),
             "git {:?} failed: stdout={} stderr={}",
             args,
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
+            String::from_utf8(output.stdout).unwrap_or_else(|_| "<non-utf8 stdout>".to_string()),
+            String::from_utf8(output.stderr).unwrap_or_else(|_| "<non-utf8 stderr>".to_string())
         );
     }
 

@@ -2,8 +2,12 @@ use super::*;
 
 const ICON_SIZES: &[u32] = &[32, 48, 128, 256, 512];
 
-fn desktop_entry_exec_path_arg(exe: &std::path::Path) -> String {
-    let exe = exe.as_os_str().to_string_lossy();
+fn desktop_entry_exec_path_arg(exe: &std::path::Path) -> Result<String, String> {
+    let Some(exe) = exe.to_str() else {
+        return Err(format!(
+            "Desktop install failed: executable path is not valid Unicode: {exe:?}"
+        ));
+    };
     let mut escaped = String::with_capacity(exe.len() + 16);
     escaped.push('"');
     for ch in exe.chars() {
@@ -19,7 +23,7 @@ fn desktop_entry_exec_path_arg(exe: &std::path::Path) -> String {
         }
     }
     escaped.push('"');
-    escaped
+    Ok(escaped)
 }
 
 fn should_auto_install_linux_desktop_integration(
@@ -141,7 +145,7 @@ impl GitCometView {
                                 let _ = writeln!(
                                     &mut desktop_out,
                                     "{}",
-                                    desktop_entry_exec_path_arg(&exe)
+                                    desktop_entry_exec_path_arg(&exe)?
                                 );
                             } else {
                                 desktop_out.push_str(line);
@@ -200,19 +204,20 @@ mod tests {
 
     #[test]
     fn desktop_exec_path_is_quoted() {
-        let escaped = desktop_entry_exec_path_arg(Path::new("/usr/local/bin/gitcomet"));
+        let escaped =
+            desktop_entry_exec_path_arg(Path::new("/usr/local/bin/gitcomet")).expect("path");
         assert_eq!(escaped, "\"/usr/local/bin/gitcomet\"");
     }
 
     #[test]
     fn desktop_exec_path_escapes_percent_and_spaces() {
-        let escaped = desktop_entry_exec_path_arg(Path::new("/opt/Git Comet/git%f"));
+        let escaped = desktop_entry_exec_path_arg(Path::new("/opt/Git Comet/git%f")).expect("path");
         assert_eq!(escaped, "\"/opt/Git Comet/git%%f\"");
     }
 
     #[test]
     fn desktop_exec_path_escapes_special_exec_chars() {
-        let escaped = desktop_entry_exec_path_arg(Path::new("/tmp/a\"b\\c$d`e"));
+        let escaped = desktop_entry_exec_path_arg(Path::new("/tmp/a\"b\\c$d`e")).expect("path");
         assert_eq!(escaped, "\"/tmp/a\\\"b\\\\\\\\c\\\\$d\\`e\"");
     }
 

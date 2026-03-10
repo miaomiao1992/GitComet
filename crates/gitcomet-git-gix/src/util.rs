@@ -44,8 +44,10 @@ fn configure_non_interactive_git(cmd: &mut Command) {
 fn command_may_require_auth(cmd: &Command) -> bool {
     let mut args = cmd.get_args();
     while let Some(arg) = args.next() {
-        let arg = arg.to_string_lossy();
-        match arg.as_ref() {
+        let Some(arg) = arg.to_str() else {
+            return false;
+        };
+        match arg {
             "-C" | "-c" => {
                 let _ = args.next();
             }
@@ -397,12 +399,47 @@ pub(crate) fn run_git_simple_with_paths(
     Ok(())
 }
 
+fn bytes_to_text_preserving_utf8(bytes: &[u8]) -> String {
+    use std::fmt::Write as _;
+
+    let mut out = String::with_capacity(bytes.len());
+    let mut cursor = 0usize;
+    while cursor < bytes.len() {
+        match std::str::from_utf8(&bytes[cursor..]) {
+            Ok(valid) => {
+                out.push_str(valid);
+                break;
+            }
+            Err(err) => {
+                let valid_len = err.valid_up_to();
+                if valid_len > 0 {
+                    let valid = &bytes[cursor..cursor + valid_len];
+                    out.push_str(
+                        std::str::from_utf8(valid)
+                            .expect("slice identified by valid_up_to must be valid UTF-8"),
+                    );
+                    cursor += valid_len;
+                }
+
+                let invalid_len = err.error_len().unwrap_or(1);
+                let invalid_end = cursor.saturating_add(invalid_len).min(bytes.len());
+                for byte in &bytes[cursor..invalid_end] {
+                    let _ = write!(out, "\\x{byte:02x}");
+                }
+                cursor = invalid_end;
+            }
+        }
+    }
+
+    out
+}
+
 pub(crate) fn run_git_with_output(cmd: Command, label: &str) -> Result<CommandOutput> {
     let output = run_git_output_with_timeout(cmd, label)?;
 
     let exit_code = output.status.code();
-    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    let stdout = bytes_to_text_preserving_utf8(&output.stdout);
+    let stderr = bytes_to_text_preserving_utf8(&output.stderr);
 
     if !output.status.success() {
         let stderr_trimmed = stderr.trim();
@@ -434,7 +471,7 @@ pub(crate) fn run_git_capture(cmd: Command, label: &str) -> Result<String> {
         ))));
     }
 
-    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+    Ok(bytes_to_text_preserving_utf8(&output.stdout))
 }
 
 pub(crate) fn parse_git_log_pretty_records(output: &str) -> LogPage {
@@ -653,7 +690,11 @@ mod tests {
     #[test]
     fn git_stage_blob_spec_normalizes_windows_separators() {
         let rev = git_stage_blob_spec(3, Path::new(r"nested\file.bin")).expect("stage spec");
-        assert_eq!(rev.to_string_lossy(), ":3:nested/file.bin");
+        assert_eq!(
+            rev.to_str()
+                .expect("ascii revision should be valid unicode"),
+            ":3:nested/file.bin"
+        );
     }
 
     #[cfg(windows)]
@@ -661,7 +702,11 @@ mod tests {
     fn git_stash_untracked_blob_spec_normalizes_windows_separators() {
         let rev =
             git_stash_untracked_blob_spec(4, Path::new(r"nested\file.bin")).expect("stash spec");
-        assert_eq!(rev.to_string_lossy(), "stash@{4}^3:nested/file.bin");
+        assert_eq!(
+            rev.to_str()
+                .expect("ascii revision should be valid unicode"),
+            "stash@{4}^3:nested/file.bin"
+        );
     }
 
     fn gitpython_raw_to_name_status_line(raw: &str) -> String {
@@ -682,7 +727,7 @@ mod tests {
     }
 
     fn gitpython_patch_b_paths(patch_bytes: &[u8]) -> Vec<String> {
-        let text = String::from_utf8_lossy(patch_bytes);
+        let text = std::str::from_utf8(patch_bytes).expect("test patch bytes should be utf-8");
         let mut out = Vec::new();
         for line in text.lines() {
             let Some(rest) = line.strip_prefix("+++ ") else {
@@ -904,7 +949,7 @@ mod tests {
 
     #[test]
     fn parse_name_status_line_handles_colon_paths_from_gitpython_fixture() {
-        let raw = String::from_utf8_lossy(GITPY_DIFF_FILE_WITH_COLON);
+        let raw = std::str::from_utf8(GITPY_DIFF_FILE_WITH_COLON).expect("fixture should be utf-8");
         let colon_path = raw
             .split('\0')
             .find(|segment| segment.contains("file with : colon.txt"))
@@ -942,7 +987,7 @@ mod tests {
         assert_eq!(parsed.kind, FileStatusKind::Modified);
 
         #[cfg(windows)]
-        assert_eq!(parsed.path.to_string_lossy(), r"nested\file.txt");
+        assert_eq!(parsed.path.to_str(), Some(r"nested\file.txt"));
     }
 
     #[test]
@@ -1088,7 +1133,7 @@ mod tests {
 
         cmd.get_envs().find_map(|(k, v)| {
             if k == OsStr::new(key) {
-                v.map(|value| value.to_string_lossy().into_owned())
+                v.and_then(|value| value.to_str().map(ToOwned::to_owned))
             } else {
                 None
             }
@@ -1114,7 +1159,11 @@ mod tests {
 
         configure_git_auth_prompt(&mut cmd, &auth, &askpass);
 
-        let askpass_path = askpass.path.to_string_lossy().to_string();
+        let askpass_path = askpass
+            .path
+            .to_str()
+            .expect("temporary askpass path should be unicode")
+            .to_string();
         assert_eq!(
             command_env_value(&cmd, "GIT_ASKPASS").as_deref(),
             Some(askpass_path.as_str())

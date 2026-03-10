@@ -78,6 +78,7 @@ struct UiSessionFileV2 {
 const SESSION_FILE_VERSION_V1: u32 = 1;
 const SESSION_FILE_VERSION_V2: u32 = 2;
 const CURRENT_SESSION_FILE_VERSION: u32 = SESSION_FILE_VERSION_V2;
+#[cfg(unix)]
 const SESSION_PATH_BYTES_PREFIX: &str = "gitcomet-path-bytes:";
 #[cfg(windows)]
 const SESSION_PATH_WIDE_PREFIX: &str = "gitcomet-path-utf16le:";
@@ -442,7 +443,7 @@ pub(crate) fn path_storage_key(path: &Path) -> String {
         let mut out = String::with_capacity(SESSION_PATH_WIDE_PREFIX.len() + raw.len() * 2);
         out.push_str(SESSION_PATH_WIDE_PREFIX);
         out.push_str(&hex_encode(&raw));
-        return out;
+        out
     }
 
     #[cfg(not(any(unix, windows)))]
@@ -601,7 +602,7 @@ fn app_state_dir() -> Option<PathBuf> {
     #[cfg(target_os = "windows")]
     {
         let appdata = env::var_os("LOCALAPPDATA").or_else(|| env::var_os("APPDATA"))?;
-        return Some(PathBuf::from(appdata).join("gitcomet"));
+        Some(PathBuf::from(appdata).join("gitcomet"))
     }
 
     #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
@@ -792,11 +793,8 @@ mod tests {
             &path,
             &UiSessionFileV1 {
                 version: SESSION_FILE_VERSION_V1,
-                open_repos: vec![
-                    repo_a.to_string_lossy().to_string(),
-                    repo_b.to_string_lossy().to_string(),
-                ],
-                active_repo: Some(repo_b.to_string_lossy().to_string()),
+                open_repos: vec![path_storage_key(&repo_a), path_storage_key(&repo_b)],
+                active_repo: Some(path_storage_key(&repo_b)),
             },
         )
         .expect("persist succeeds");

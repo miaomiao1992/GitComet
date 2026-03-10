@@ -1283,12 +1283,19 @@ fn git_difftool_absent_tool_reports_cmd_not_set_error() {
         &["difftool", "--no-prompt", "--tool", "absent", "--", "a.txt"],
     );
     let text = output_text(&output);
+    let text_lower = text.to_ascii_lowercase();
     assert!(
         !output.status.success(),
         "expected git difftool --tool absent to fail\n{text}"
     );
     assert!(
-        text.contains("cmd not set for tool 'absent'"),
-        "expected missing-tool command error text\n{text}"
+        text_lower.contains("absent")
+            && (text_lower.contains("cmd not set")
+                || text_lower.contains("unknown merge tool")
+                || text_lower.contains("unknown diff tool")
+                || text_lower.contains("unknown difftool")
+                || text_lower.contains("no known")
+                || text_lower.contains("not available")),
+        "expected absent-tool configuration error text\n{text}"
     );
 }

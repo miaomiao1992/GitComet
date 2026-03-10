@@ -143,8 +143,9 @@ impl CliOps<'_> {
             .map_err(|e| Error::new(ErrorKind::Io(e.kind())))?;
 
         if symbolic_output.status.success() {
-            let branch = String::from_utf8_lossy(&symbolic_output.stdout)
-                .trim()
+            let branch = std::str::from_utf8(&symbolic_output.stdout)
+                .map(|s| s.trim())
+                .unwrap_or_default()
                 .to_string();
             if !branch.is_empty() {
                 return Ok(branch);
@@ -165,10 +166,12 @@ impl CliOps<'_> {
             return Ok("HEAD".to_string());
         }
 
-        let symbolic_stderr = String::from_utf8_lossy(&symbolic_output.stderr)
+        let symbolic_stderr = String::from_utf8(symbolic_output.stderr)
+            .unwrap_or_else(|_| "<non-utf8 stderr>".to_string())
             .trim()
             .to_string();
-        let verify_stderr = String::from_utf8_lossy(&verify_output.stderr)
+        let verify_stderr = String::from_utf8(verify_output.stderr)
+            .unwrap_or_else(|_| "<non-utf8 stderr>".to_string())
             .trim()
             .to_string();
         let reason = [symbolic_stderr, verify_stderr]
@@ -240,9 +243,9 @@ impl CliOps<'_> {
             return Ok(None);
         }
 
-        Ok(parse_rev_list_counts(&String::from_utf8_lossy(
-            &output.stdout,
-        )))
+        Ok(std::str::from_utf8(&output.stdout)
+            .ok()
+            .and_then(parse_rev_list_counts))
     }
 }
 

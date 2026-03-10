@@ -86,6 +86,50 @@ fn assign_next_compat_label(
     Err("Invalid external invocation: too many label flags; expected at most 3 labels across --L1/--L2/--L3 and -L/--label.".to_string())
 }
 
+fn hex_encode(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for &byte in bytes {
+        out.push(HEX[(byte >> 4) as usize] as char);
+        out.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    out
+}
+
+fn compat_log_arg_text(arg: &std::ffi::OsStr) -> String {
+    if let Some(text) = arg.to_str() {
+        return text.to_string();
+    }
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt as _;
+        return format!("gitcomet-argv-bytes:{}", hex_encode(arg.as_bytes()));
+    }
+
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt as _;
+        let mut bytes = Vec::new();
+        for unit in arg.encode_wide() {
+            bytes.extend_from_slice(&unit.to_le_bytes());
+        }
+        format!("gitcomet-argv-utf16le:{}", hex_encode(&bytes))
+    }
+
+    #[cfg(not(any(unix, windows)))]
+    {
+        format!("{arg:?}")
+    }
+}
+
+fn compat_label_arg_text(value: &OsString, flag: &str) -> Result<String, String> {
+    value
+        .to_str()
+        .map(ToOwned::to_owned)
+        .ok_or_else(|| format!("Invalid external invocation: {flag} value is not valid UTF-8 text"))
+}
+
 fn compat_argv_log_dir() -> PathBuf {
     std::env::temp_dir().join("gitcomet-compat-argv")
 }
@@ -113,7 +157,7 @@ fn maybe_record_compat_argv(raw_args: &[OsString], env: &dyn EnvLookup) {
 
     let mut dump = String::new();
     for arg in raw_args {
-        dump.push_str(&arg.to_string_lossy());
+        dump.push_str(&compat_log_arg_text(arg.as_os_str()));
         dump.push('\n');
     }
 
@@ -140,128 +184,134 @@ pub(super) fn parse_compat_external_mode_with_config(
     let mut idx = 0usize;
     while idx < raw_args.len() {
         let arg = &raw_args[idx];
-        let token = arg.to_string_lossy();
+        if let Some(token) = arg.to_str() {
+            if token == "--auto" {
+                has_auto = true;
+                idx += 1;
+                continue;
+            }
 
-        if token == "--auto" {
-            has_auto = true;
-            idx += 1;
-            continue;
-        }
+            if token == "--auto-merge" {
+                has_auto_merge = true;
+                idx += 1;
+                continue;
+            }
 
-        if token == "--auto-merge" {
-            has_auto_merge = true;
-            idx += 1;
-            continue;
-        }
+            if let Some(slot) = parse_numbered_label_flag(token) {
+                let next_idx = idx + 1;
+                let value = raw_args.get(next_idx).ok_or_else(|| {
+                    format!("Missing value for compatibility flag {token} in external tool mode")
+                })?;
+                assign_numbered_compat_label(
+                    &mut label_l1,
+                    &mut label_l2,
+                    &mut label_l3,
+                    slot,
+                    compat_label_arg_text(value, token)?,
+                );
+                has_kdiff3_label_flags = true;
+                idx += 2;
+                continue;
+            }
 
-        if let Some(slot) = parse_numbered_label_flag(token.as_ref()) {
-            let next_idx = idx + 1;
-            let value = raw_args.get(next_idx).ok_or_else(|| {
-                format!("Missing value for compatibility flag {token} in external tool mode")
-            })?;
-            assign_numbered_compat_label(
-                &mut label_l1,
-                &mut label_l2,
-                &mut label_l3,
-                slot,
-                value.to_string_lossy().into_owned(),
-            );
-            has_kdiff3_label_flags = true;
-            idx += 2;
-            continue;
-        }
+            if token == "-L" || token == "--label" {
+                let next_idx = idx + 1;
+                let value = raw_args.get(next_idx).ok_or_else(|| {
+                    format!("Missing value for compatibility flag {token} in external tool mode")
+                })?;
+                assign_next_compat_label(
+                    &mut label_l1,
+                    &mut label_l2,
+                    &mut label_l3,
+                    compat_label_arg_text(value, token)?,
+                )?;
+                idx += 2;
+                continue;
+            }
 
-        if token == "-L" || token == "--label" {
-            let next_idx = idx + 1;
-            let value = raw_args.get(next_idx).ok_or_else(|| {
-                format!("Missing value for compatibility flag {token} in external tool mode")
-            })?;
-            assign_next_compat_label(
-                &mut label_l1,
-                &mut label_l2,
-                &mut label_l3,
-                value.to_string_lossy().into_owned(),
-            )?;
-            idx += 2;
-            continue;
-        }
+            if let Some((slot, value)) = parse_attached_numbered_label(token) {
+                assign_numbered_compat_label(
+                    &mut label_l1,
+                    &mut label_l2,
+                    &mut label_l3,
+                    slot,
+                    value,
+                );
+                has_kdiff3_label_flags = true;
+                idx += 1;
+                continue;
+            }
+            if let Some(value) = token.strip_prefix("--label=") {
+                assign_next_compat_label(
+                    &mut label_l1,
+                    &mut label_l2,
+                    &mut label_l3,
+                    value.to_string(),
+                )?;
+                idx += 1;
+                continue;
+            }
 
-        if let Some((slot, value)) = parse_attached_numbered_label(token.as_ref()) {
-            assign_numbered_compat_label(&mut label_l1, &mut label_l2, &mut label_l3, slot, value);
-            has_kdiff3_label_flags = true;
-            idx += 1;
-            continue;
-        }
-        if let Some(value) = token.strip_prefix("--label=") {
-            assign_next_compat_label(
-                &mut label_l1,
-                &mut label_l2,
-                &mut label_l3,
-                value.to_string(),
-            )?;
-            idx += 1;
-            continue;
-        }
+            if token == "-o" || token == "--output" || token == "--out" {
+                let next_idx = idx + 1;
+                let value = raw_args.get(next_idx).ok_or_else(|| {
+                    format!("Missing value for compatibility flag {token} in external tool mode")
+                })?;
+                merged_output = Some(PathBuf::from(value));
+                idx += 2;
+                continue;
+            }
 
-        if token == "-o" || token == "--output" || token == "--out" {
-            let next_idx = idx + 1;
-            let value = raw_args.get(next_idx).ok_or_else(|| {
-                format!("Missing value for compatibility flag {token} in external tool mode")
-            })?;
-            merged_output = Some(PathBuf::from(value));
-            idx += 2;
-            continue;
-        }
+            if token == "--base" {
+                let next_idx = idx + 1;
+                let value = raw_args.get(next_idx).ok_or_else(|| {
+                    "Missing value for compatibility flag --base in external tool mode".to_string()
+                })?;
+                base_flag = Some(PathBuf::from(value));
+                idx += 2;
+                continue;
+            }
 
-        if token == "--base" {
-            let next_idx = idx + 1;
-            let value = raw_args.get(next_idx).ok_or_else(|| {
-                "Missing value for compatibility flag --base in external tool mode".to_string()
-            })?;
-            base_flag = Some(PathBuf::from(value));
-            idx += 2;
-            continue;
-        }
+            if let Some(value) = token.strip_prefix("--output=") {
+                merged_output = Some(PathBuf::from(value));
+                idx += 1;
+                continue;
+            }
+            if let Some(value) = token.strip_prefix("--out=") {
+                merged_output = Some(PathBuf::from(value));
+                idx += 1;
+                continue;
+            }
+            if let Some(value) = token.strip_prefix("--base=") {
+                base_flag = Some(PathBuf::from(value));
+                idx += 1;
+                continue;
+            }
+            if token.starts_with("-o") && token.len() > 2 {
+                merged_output = Some(PathBuf::from(token[2..].to_string()));
+                idx += 1;
+                continue;
+            }
+            if token.starts_with("-L") && token.len() > 2 {
+                assign_next_compat_label(
+                    &mut label_l1,
+                    &mut label_l2,
+                    &mut label_l3,
+                    token[2..].to_string(),
+                )?;
+                idx += 1;
+                continue;
+            }
 
-        if let Some(value) = token.strip_prefix("--output=") {
-            merged_output = Some(PathBuf::from(value));
-            idx += 1;
-            continue;
-        }
-        if let Some(value) = token.strip_prefix("--out=") {
-            merged_output = Some(PathBuf::from(value));
-            idx += 1;
-            continue;
-        }
-        if let Some(value) = token.strip_prefix("--base=") {
-            base_flag = Some(PathBuf::from(value));
-            idx += 1;
-            continue;
-        }
-        if token.starts_with("-o") && token.len() > 2 {
-            merged_output = Some(PathBuf::from(token[2..].to_string()));
-            idx += 1;
-            continue;
-        }
-        if token.starts_with("-L") && token.len() > 2 {
-            assign_next_compat_label(
-                &mut label_l1,
-                &mut label_l2,
-                &mut label_l3,
-                token[2..].to_string(),
-            )?;
-            idx += 1;
-            continue;
-        }
+            if token == "--" {
+                positionals.extend(raw_args[idx + 1..].iter().map(PathBuf::from));
+                idx = raw_args.len();
+                continue;
+            }
 
-        if token == "--" {
-            positionals.extend(raw_args[idx + 1..].iter().map(PathBuf::from));
-            idx = raw_args.len();
-            continue;
-        }
-
-        if token.starts_with('-') {
-            return Ok(None);
+            if token.starts_with('-') {
+                return Ok(None);
+            }
         }
 
         positionals.push(PathBuf::from(arg));
@@ -423,9 +473,9 @@ pub(super) fn normalize_empty_mergetool_base_arg(args: &[OsString]) -> Vec<OsStr
     let mut idx = 0usize;
 
     while idx < args.len() {
-        let token = args[idx].to_string_lossy();
+        let token = args[idx].to_str();
 
-        if !in_mergetool_subcommand && token == "mergetool" {
+        if !in_mergetool_subcommand && token == Some("mergetool") {
             in_mergetool_subcommand = true;
             normalized.push(args[idx].clone());
             idx += 1;
@@ -433,7 +483,7 @@ pub(super) fn normalize_empty_mergetool_base_arg(args: &[OsString]) -> Vec<OsStr
         }
 
         if in_mergetool_subcommand
-            && token == "--base"
+            && token == Some("--base")
             && let Some(next) = args.get(idx + 1)
             && next.is_empty()
         {
@@ -443,7 +493,7 @@ pub(super) fn normalize_empty_mergetool_base_arg(args: &[OsString]) -> Vec<OsStr
             continue;
         }
 
-        if in_mergetool_subcommand && token == "--base=" {
+        if in_mergetool_subcommand && token == Some("--base=") {
             // Treat explicit empty attached form (`--base=`) as omitted.
             idx += 1;
             continue;

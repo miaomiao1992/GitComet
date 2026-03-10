@@ -329,8 +329,8 @@ fn build_backend() -> std::sync::Arc<dyn gitcomet_core::services::GitBackend> {
 #[cfg(feature = "ui-gpui")]
 fn path_label(path: &std::path::Path) -> String {
     path.file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_else(|| path.display().to_string())
+        .and_then(|n| n.to_str().map(ToOwned::to_owned))
+        .unwrap_or_else(|| format!("{path:?}"))
 }
 
 #[cfg(feature = "ui-gpui")]

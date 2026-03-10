@@ -12,6 +12,41 @@ use std::fs;
 use std::path::Path;
 use std::process::Command;
 
+fn bytes_to_text_preserving_utf8(bytes: &[u8]) -> String {
+    use std::fmt::Write as _;
+
+    let mut out = String::with_capacity(bytes.len());
+    let mut cursor = 0usize;
+    while cursor < bytes.len() {
+        match std::str::from_utf8(&bytes[cursor..]) {
+            Ok(valid) => {
+                out.push_str(valid);
+                break;
+            }
+            Err(err) => {
+                let valid_len = err.valid_up_to();
+                if valid_len > 0 {
+                    let valid = &bytes[cursor..cursor + valid_len];
+                    out.push_str(
+                        std::str::from_utf8(valid)
+                            .expect("slice identified by valid_up_to must be valid UTF-8"),
+                    );
+                    cursor += valid_len;
+                }
+
+                let invalid_len = err.error_len().unwrap_or(1);
+                let invalid_end = cursor.saturating_add(invalid_len).min(bytes.len());
+                for byte in &bytes[cursor..invalid_end] {
+                    let _ = write!(out, "\\x{byte:02x}");
+                }
+                cursor = invalid_end;
+            }
+        }
+    }
+
+    out
+}
+
 impl GixRepo {
     pub(super) fn create_branch_impl(&self, name: &str, target: &CommitId) -> Result<()> {
         validate_ref_like_arg(name, "branch name")?;
@@ -91,7 +126,7 @@ impl GixRepo {
             return Ok(());
         }
 
-        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stderr = bytes_to_text_preserving_utf8(&output.stderr);
         let already_exists =
             stderr.contains("already exists") || stderr.contains("fatal: a branch named");
 
@@ -228,8 +263,8 @@ impl GixRepo {
             return Ok(());
         }
 
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = bytes_to_text_preserving_utf8(&output.stdout);
+        let stderr = bytes_to_text_preserving_utf8(&output.stderr);
         if stash_apply_reports_untracked_restore_failure(&stdout, &stderr)
             && !stash_apply_blocked_before_merge(&stdout, &stderr)
         {
@@ -324,7 +359,7 @@ impl GixRepo {
             return Ok(output.stdout);
         }
 
-        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stderr = bytes_to_text_preserving_utf8(&output.stderr);
         Err(Error::new(ErrorKind::Backend(format!(
             "git stash apply failed: could not read stashed untracked file {}: {}",
             path.display(),

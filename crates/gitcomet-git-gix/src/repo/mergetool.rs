@@ -74,8 +74,8 @@ impl GixRepo {
                 })?
         };
 
-        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        let stdout = bytes_to_text_preserving_utf8(&output.stdout);
+        let stderr = bytes_to_text_preserving_utf8(&output.stderr);
         let exit_code = output.status.code();
 
         let cmd_output = CommandOutput {
@@ -134,7 +134,7 @@ impl GixRepo {
                     .map_err(|e| Error::new(ErrorKind::Io(e.kind())))?;
 
                 if !add_output.status.success() {
-                    let add_stderr = String::from_utf8_lossy(&add_output.stderr);
+                    let add_stderr = bytes_to_text_preserving_utf8(&add_output.stderr);
                     return Err(Error::new(ErrorKind::Backend(format!(
                         "git add failed after mergetool: {}",
                         add_stderr.trim()
@@ -150,7 +150,7 @@ impl GixRepo {
                     .output()
                     .map_err(|e| Error::new(ErrorKind::Io(e.kind())))?;
                 if !rm_output.status.success() {
-                    let rm_stderr = String::from_utf8_lossy(&rm_output.stderr);
+                    let rm_stderr = bytes_to_text_preserving_utf8(&rm_output.stderr);
                     return Err(Error::new(ErrorKind::Backend(format!(
                         "git rm failed after mergetool: {}",
                         rm_stderr.trim()
@@ -384,9 +384,36 @@ fn repo_local_mergetool_command_consent_key(workdir: &Path, tool_name: &str) -> 
     format!("gitcomet.mergetool.allowrepolocalcmd-{repo_tool_fingerprint}")
 }
 
+fn stable_path_bytes(path: &Path) -> Vec<u8> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt as _;
+
+        return path.as_os_str().as_bytes().to_vec();
+    }
+
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt as _;
+
+        let mut bytes = Vec::new();
+        for unit in path.as_os_str().encode_wide() {
+            bytes.extend_from_slice(&unit.to_le_bytes());
+        }
+        bytes
+    }
+
+    #[cfg(not(any(unix, windows)))]
+    {
+        path.to_str()
+            .map(|text| text.as_bytes().to_vec())
+            .unwrap_or_else(|| format!("{path:?}").into_bytes())
+    }
+}
+
 fn stable_repo_tool_fingerprint(workdir: &Path, tool_name: &str) -> String {
     let repo_path = std::fs::canonicalize(workdir).unwrap_or_else(|_| workdir.to_path_buf());
-    let mut bytes = repo_path.to_string_lossy().into_owned().into_bytes();
+    let mut bytes = stable_path_bytes(&repo_path);
     bytes.push(0);
     bytes.extend_from_slice(tool_name.as_bytes());
     format!("{:016x}", fnv1a_64(&bytes))
@@ -399,6 +426,41 @@ fn fnv1a_64(bytes: &[u8]) -> u64 {
         hash = hash.wrapping_mul(0x100000001b3);
     }
     hash
+}
+
+fn bytes_to_text_preserving_utf8(bytes: &[u8]) -> String {
+    use std::fmt::Write as _;
+
+    let mut out = String::with_capacity(bytes.len());
+    let mut cursor = 0usize;
+    while cursor < bytes.len() {
+        match std::str::from_utf8(&bytes[cursor..]) {
+            Ok(valid) => {
+                out.push_str(valid);
+                break;
+            }
+            Err(err) => {
+                let valid_len = err.valid_up_to();
+                if valid_len > 0 {
+                    let valid = &bytes[cursor..cursor + valid_len];
+                    out.push_str(
+                        std::str::from_utf8(valid)
+                            .expect("slice identified by valid_up_to must be valid UTF-8"),
+                    );
+                    cursor += valid_len;
+                }
+
+                let invalid_len = err.error_len().unwrap_or(1);
+                let invalid_end = cursor.saturating_add(invalid_len).min(bytes.len());
+                for byte in &bytes[cursor..invalid_end] {
+                    let _ = write!(out, "\\x{byte:02x}");
+                }
+                cursor = invalid_end;
+            }
+        }
+    }
+
+    out
 }
 
 #[derive(Debug)]
@@ -606,7 +668,9 @@ fn git_config_get_with_scope(
         .map_err(|e| Error::new(ErrorKind::Io(e.kind())))?;
 
     if output.status.success() {
-        let value = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let value = bytes_to_text_preserving_utf8(&output.stdout)
+            .trim()
+            .to_string();
         if value.is_empty() {
             Ok(None)
         } else {
@@ -618,7 +682,7 @@ fn git_config_get_with_scope(
         if code == 1 {
             Ok(None)
         } else {
-            let stderr = String::from_utf8_lossy(&output.stderr);
+            let stderr = bytes_to_text_preserving_utf8(&output.stderr);
             let scope_args = git_config_scope_args(scope);
             Err(Error::new(ErrorKind::Backend(format!(
                 "git config {scope_args} --get {key} failed: {}",
@@ -650,7 +714,9 @@ fn git_config_get_bool_with_scope(
     if output.status.success() {
         // In git config files, a bare boolean key (no explicit value) is
         // treated as `true`; `git config --get` returns an empty line for it.
-        let value = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let value = bytes_to_text_preserving_utf8(&output.stdout)
+            .trim()
+            .to_string();
         if value.is_empty() {
             return Ok(Some(true));
         }
@@ -665,7 +731,7 @@ fn git_config_get_bool_with_scope(
         if code == 1 {
             Ok(None)
         } else {
-            let stderr = String::from_utf8_lossy(&output.stderr);
+            let stderr = bytes_to_text_preserving_utf8(&output.stderr);
             let scope_args = git_config_scope_args(scope);
             Err(Error::new(ErrorKind::Backend(format!(
                 "git config {scope_args} --get {key} failed: {}",
@@ -723,8 +789,7 @@ fn git_show_stage_bytes(workdir: &Path, stage: u8, path: &Path) -> Result<Option
     if output.status.success() {
         Ok(Some(output.stdout))
     } else {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let stderr = stderr.to_string();
+        let stderr = bytes_to_text_preserving_utf8(&output.stderr);
         // Stage might not exist (e.g. add/add conflict has no base)
         if stderr.contains("does not exist")
             || stderr.contains("not at stage")
@@ -831,20 +896,20 @@ mod tests {
         let base_name = paths
             .base
             .file_name()
-            .unwrap()
-            .to_string_lossy()
+            .and_then(|name| name.to_str())
+            .expect("generated stage filename should be valid unicode")
             .to_string();
         let local_name = paths
             .local
             .file_name()
-            .unwrap()
-            .to_string_lossy()
+            .and_then(|name| name.to_str())
+            .expect("generated stage filename should be valid unicode")
             .to_string();
         let remote_name = paths
             .remote
             .file_name()
-            .unwrap()
-            .to_string_lossy()
+            .and_then(|name| name.to_str())
+            .expect("generated stage filename should be valid unicode")
             .to_string();
         assert!(base_name.starts_with("a_BASE_"), "{base_name}");
         assert!(local_name.starts_with("a_LOCAL_"), "{local_name}");
@@ -868,20 +933,20 @@ mod tests {
         let base_name = paths
             .base
             .file_name()
-            .unwrap()
-            .to_string_lossy()
+            .and_then(|name| name.to_str())
+            .expect("generated stage filename should be valid unicode")
             .to_string();
         let local_name = paths
             .local
             .file_name()
-            .unwrap()
-            .to_string_lossy()
+            .and_then(|name| name.to_str())
+            .expect("generated stage filename should be valid unicode")
             .to_string();
         let remote_name = paths
             .remote
             .file_name()
-            .unwrap()
-            .to_string_lossy()
+            .and_then(|name| name.to_str())
+            .expect("generated stage filename should be valid unicode")
             .to_string();
         assert!(base_name.starts_with("a_BASE_"), "{base_name}");
         assert!(local_name.starts_with("a_LOCAL_"), "{local_name}");
@@ -894,7 +959,13 @@ mod tests {
         let normalized = normalize_path_for_platform(Path::new("docs/nested/file.txt"));
         let components: Vec<String> = normalized
             .components()
-            .map(|component| component.as_os_str().to_string_lossy().to_string())
+            .map(|component| {
+                component
+                    .as_os_str()
+                    .to_str()
+                    .expect("test path components should be unicode")
+                    .to_string()
+            })
             .collect();
         assert_eq!(
             components,
@@ -912,9 +983,9 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let paths =
             build_stage_paths(tmp.path(), Path::new("docs/a space.txt"), false, false).unwrap();
-        let base = paths.base.to_string_lossy();
-        let local = paths.local.to_string_lossy();
-        let remote = paths.remote.to_string_lossy();
+        let base = paths.base.to_str().expect("path should be unicode");
+        let local = paths.local.to_str().expect("path should be unicode");
+        let remote = paths.remote.to_str().expect("path should be unicode");
         assert!(
             !base.contains('/'),
             "stage path should avoid mixed separators on Windows: {base}"
@@ -951,11 +1022,13 @@ mod tests {
         assert!(
             output.status.success(),
             "stderr={}",
-            String::from_utf8_lossy(&output.stderr)
+            String::from_utf8(output.stderr.clone())
+                .unwrap_or_else(|_| "<non-utf8 stderr>".to_string())
         );
         assert_eq!(std::fs::read(&merged).unwrap(), b"theirs\n");
+        let stdout = String::from_utf8(output.stdout).expect("stdout should be utf-8");
         assert!(
-            !String::from_utf8_lossy(&output.stdout).contains("[System.IO.File]"),
+            !stdout.contains("[System.IO.File]"),
             "powershell payload should execute, not be echoed as a string expression"
         );
     }
@@ -982,8 +1055,9 @@ mod tests {
             .output()
             .unwrap();
         assert!(output.status.success());
+        let stdout = String::from_utf8(output.stdout).expect("stdout should be utf-8");
         assert!(
-            String::from_utf8_lossy(&output.stdout).contains("from-cmd"),
+            stdout.contains("from-cmd"),
             "expected cmd percent expansion in stdout"
         );
     }
@@ -996,8 +1070,9 @@ mod tests {
             .output()
             .unwrap();
         assert!(output.status.success());
+        let stdout = String::from_utf8(output.stdout).expect("stdout should be utf-8");
         assert!(
-            String::from_utf8_lossy(&output.stdout).contains("from-sh"),
+            stdout.contains("from-sh"),
             "expected sh dollar expansion in stdout"
         );
     }

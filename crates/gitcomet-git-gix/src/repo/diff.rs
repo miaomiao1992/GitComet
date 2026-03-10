@@ -39,7 +39,11 @@ impl GixRepo {
                     ))));
                 }
 
-                Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+                String::from_utf8(output.stdout).map_err(|_| {
+                    Error::new(ErrorKind::Backend(
+                        "git diff produced non-UTF-8 output".to_string(),
+                    ))
+                })
             }
             DiffTarget::Commit { commit_id, path } => {
                 let mut cmd = Command::new("git");

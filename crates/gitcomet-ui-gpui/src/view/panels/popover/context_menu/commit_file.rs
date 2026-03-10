@@ -13,8 +13,8 @@ pub(super) fn model(
 
     let mut items = vec![ContextMenuItem::Header(
         path.file_name()
-            .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_else(|| path.display().to_string())
+            .and_then(|p| p.to_str().map(ToOwned::to_owned))
+            .unwrap_or_else(|| format!("{path:?}"))
             .into(),
     )];
     items.push(ContextMenuItem::Label(path.display().to_string().into()));

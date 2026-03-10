@@ -1,5 +1,42 @@
 use super::*;
 
+fn trim_git_stdout_bytes(bytes: &[u8]) -> &[u8] {
+    bytes.trim_ascii_end()
+}
+
+fn decode_git_text_stdout(bytes: &[u8]) -> Option<String> {
+    let text = String::from_utf8(trim_git_stdout_bytes(bytes).to_vec()).ok()?;
+    if text.is_empty() { None } else { Some(text) }
+}
+
+fn decode_git_path_stdout(bytes: &[u8]) -> Option<PathBuf> {
+    let raw = trim_git_stdout_bytes(bytes);
+    if raw.is_empty() {
+        return None;
+    }
+
+    #[cfg(unix)]
+    {
+        use std::ffi::OsString;
+        use std::os::unix::ffi::OsStringExt as _;
+
+        Some(PathBuf::from(OsString::from_vec(raw.to_vec())))
+    }
+    #[cfg(windows)]
+    {
+        let path_text = std::str::from_utf8(raw).ok()?;
+        if path_text.is_empty() {
+            None
+        } else {
+            Some(PathBuf::from(path_text))
+        }
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        decode_git_text_stdout(raw).map(PathBuf::from)
+    }
+}
+
 /// Read a single git config value from an explicit repository root.
 /// Returns `None` if the key is not set or git is not available.
 fn read_git_config_at_repo(repo_root: &Path, key: &str) -> Option<String> {
@@ -10,8 +47,7 @@ fn read_git_config_at_repo(repo_root: &Path, key: &str) -> Option<String> {
         .output()
         .ok()
         .filter(|o| o.status.success())
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-        .filter(|s| !s.is_empty())
+        .and_then(|o| decode_git_text_stdout(&o.stdout))
 }
 
 fn git_repo_toplevel_from_probe_dir(probe_dir: &Path) -> Option<PathBuf> {
@@ -22,9 +58,7 @@ fn git_repo_toplevel_from_probe_dir(probe_dir: &Path) -> Option<PathBuf> {
         .output()
         .ok()
         .filter(|o| o.status.success())
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-        .filter(|s| !s.is_empty())
-        .map(PathBuf::from)
+        .and_then(|o| decode_git_path_stdout(&o.stdout))
 }
 
 fn resolve_git_repo_root_from_path(path: &Path) -> Option<PathBuf> {

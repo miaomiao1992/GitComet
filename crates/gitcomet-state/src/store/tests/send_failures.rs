@@ -42,11 +42,12 @@ fn executor_increments_failure_counter_when_worker_queue_disconnects() {
         .recv_timeout(Duration::from_secs(1))
         .expect("worker task did not start");
 
-    std::thread::sleep(Duration::from_millis(50));
-    executor.spawn(|| {});
-
     let deadline = Instant::now() + Duration::from_secs(1);
     loop {
+        // The worker panic may race with this test thread; keep attempting to enqueue
+        // until the sender observes the disconnected queue and diagnostics increment.
+        executor.spawn(|| {});
+
         let after = super::send_diagnostics::send_failure_count(
             super::send_diagnostics::SendFailureKind::ExecutorQueue,
         );

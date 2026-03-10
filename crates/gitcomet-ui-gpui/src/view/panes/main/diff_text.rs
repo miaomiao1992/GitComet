@@ -555,7 +555,7 @@ impl MainPaneView {
                 let rel = abs.strip_prefix(&workdir).unwrap_or(abs);
                 let file_rel = rel.to_path_buf();
                 // Git diffs use forward slashes even on Windows.
-                let rel_str = file_rel.to_string_lossy().replace('\\', "/");
+                let rel_str = file_rel.to_str().map(|text| text.replace('\\', "/"));
 
                 let approx_map_len = match self.diff_view {
                     DiffViewMode::Inline => self.file_diff_inline_cache.len(),
@@ -570,7 +570,7 @@ impl MainPaneView {
 
                 for (ix, line) in self.diff_cache.iter().enumerate() {
                     if self.diff_file_for_src_ix.get(ix).and_then(|p| p.as_deref())
-                        != Some(rel_str.as_str())
+                        != rel_str.as_deref()
                     {
                         continue;
                     }

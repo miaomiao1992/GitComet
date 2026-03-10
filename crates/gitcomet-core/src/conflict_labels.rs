@@ -61,7 +61,30 @@ fn short_commit_id(commit_id: &str) -> String {
 }
 
 fn format_git_path(path: &std::path::Path) -> String {
-    path.to_string_lossy().replace('\\', "/")
+    #[cfg(unix)]
+    {
+        use std::fmt::Write as _;
+        use std::os::unix::ffi::OsStrExt as _;
+
+        let mut out = String::new();
+        for &byte in path.as_os_str().as_bytes() {
+            match byte {
+                b'\\' => out.push('/'),
+                b' '..=b'~' => out.push(byte as char),
+                _ => {
+                    let _ = write!(out, "\\x{byte:02x}");
+                }
+            }
+        }
+        out
+    }
+
+    #[cfg(not(unix))]
+    {
+        path.to_str()
+            .map(|s| s.replace('\\', "/"))
+            .unwrap_or_else(|| format!("{path:?}"))
+    }
 }
 
 #[cfg(test)]

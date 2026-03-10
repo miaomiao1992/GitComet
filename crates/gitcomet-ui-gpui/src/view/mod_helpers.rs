@@ -865,14 +865,31 @@ pub(super) fn canonicalize_path(path: std::path::PathBuf) -> std::path::PathBuf 
 
 #[cfg(windows)]
 pub(super) fn strip_windows_verbatim_prefix(path: std::path::PathBuf) -> std::path::PathBuf {
-    let path_text = path.to_string_lossy();
-    if let Some(stripped) = path_text.strip_prefix(r"\\?\UNC\") {
-        return std::path::PathBuf::from(format!(r"\\{stripped}"));
+    use std::path::{Component, Prefix};
+
+    let mut components = path.components();
+    let Some(Component::Prefix(prefix)) = components.next() else {
+        return path;
+    };
+
+    let mut out = match prefix.kind() {
+        Prefix::VerbatimDisk(letter) => {
+            std::path::PathBuf::from(format!("{}:", char::from(letter)))
+        }
+        Prefix::VerbatimUNC(server, share) => {
+            let mut out = std::path::PathBuf::from(r"\\");
+            out.push(server);
+            out.push(share);
+            out
+        }
+        Prefix::Verbatim(raw) => std::path::PathBuf::from(raw),
+        _ => return path,
+    };
+
+    for component in components {
+        out.push(component.as_os_str());
     }
-    if let Some(stripped) = path_text.strip_prefix(r"\\?\") {
-        return std::path::PathBuf::from(stripped);
-    }
-    path
+    out
 }
 
 #[cfg(not(windows))]

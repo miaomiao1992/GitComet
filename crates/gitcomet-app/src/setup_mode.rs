@@ -94,8 +94,13 @@ fn current_exe_path() -> Result<PathBuf, String> {
         .map_err(|e| format!("Cannot determine gitcomet-app binary path: {e}"))
 }
 
-fn executable_path_for_shell(bin_path: &Path) -> String {
-    bin_path.to_string_lossy().into_owned()
+fn executable_path_for_shell(bin_path: &Path) -> Result<String, String> {
+    let Some(path_text) = bin_path.to_str() else {
+        return Err(format!(
+            "Cannot configure gitcomet setup for non-Unicode executable path: {bin_path:?}"
+        ));
+    };
+    Ok(path_text.to_string())
 }
 
 fn quoted_env_var(name: &str) -> String {
@@ -398,11 +403,13 @@ fn collect_uninstall_snapshot_keys(entries: &[UninstallEntry]) -> Vec<&'static s
     keys
 }
 
-fn parse_git_config_values(output: &[u8]) -> Vec<String> {
-    String::from_utf8_lossy(output)
+fn parse_git_config_values(output: &[u8]) -> Result<Vec<String>, String> {
+    let text = String::from_utf8(output.to_vec())
+        .map_err(|_| "git config returned non-UTF-8 output".to_string())?;
+    Ok(text
         .lines()
         .map(|line| line.trim_end_matches('\r').to_string())
-        .collect()
+        .collect())
 }
 
 fn read_git_config_values(scope: &str, key: &str) -> Result<Vec<String>, String> {
@@ -412,7 +419,7 @@ fn read_git_config_values(scope: &str, key: &str) -> Result<Vec<String>, String>
         .map_err(|e| format!("Failed to run git config --get-all for {key}: {e}"))?;
 
     if output.status.success() {
-        return Ok(parse_git_config_values(&output.stdout));
+        return parse_git_config_values(&output.stdout);
     }
 
     // Missing key: git exits non-zero; treat as absent config.
@@ -420,7 +427,8 @@ fn read_git_config_values(scope: &str, key: &str) -> Result<Vec<String>, String>
         return Ok(Vec::new());
     }
 
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stderr =
+        String::from_utf8(output.stderr).unwrap_or_else(|_| "<non-utf8 stderr>".to_string());
     Err(format!(
         "git config {scope} --get-all {key} failed: {}",
         stderr.trim()
@@ -441,7 +449,8 @@ fn unset_all_config_values(scope: &str, key: &str) -> Result<(), String> {
         return Ok(());
     }
 
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stderr =
+        String::from_utf8(output.stderr).unwrap_or_else(|_| "<non-utf8 stderr>".to_string());
     Err(format!(
         "git config {scope} --unset-all {key} failed: {}",
         stderr.trim()
@@ -458,7 +467,8 @@ fn set_single_config_value(scope: &str, key: &str, value: &str) -> Result<(), St
         return Ok(());
     }
 
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stderr =
+        String::from_utf8(output.stderr).unwrap_or_else(|_| "<non-utf8 stderr>".to_string());
     Err(format!(
         "git config {scope} {key} failed: {}",
         stderr.trim()
@@ -475,7 +485,8 @@ fn add_config_value(scope: &str, key: &str, value: &str) -> Result<(), String> {
         return Ok(());
     }
 
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stderr =
+        String::from_utf8(output.stderr).unwrap_or_else(|_| "<non-utf8 stderr>".to_string());
     Err(format!(
         "git config {scope} --add {key} failed: {}",
         stderr.trim()
@@ -705,7 +716,8 @@ fn apply_uninstall_plan(plan: &[UninstallPlanItem], scope: &str) -> Result<usize
             .map_err(|e| format!("Failed to run git config --unset-all for {}: {e}", item.key))?;
 
         if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
+            let stderr = String::from_utf8(output.stderr)
+                .unwrap_or_else(|_| "<non-utf8 stderr>".to_string());
             return Err(format!(
                 "git config {scope} --unset-all {} failed: {}",
                 item.key,
@@ -739,7 +751,8 @@ fn apply_config(entries: &[ConfigEntry], scope: &str) -> Result<(), String> {
             .map_err(|e| format!("Failed to run git config: {e}"))?;
 
         if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
+            let stderr = String::from_utf8(output.stderr)
+                .unwrap_or_else(|_| "<non-utf8 stderr>".to_string());
             return Err(format!(
                 "git config {} {} failed: {}",
                 entry.key,
@@ -766,7 +779,7 @@ pub struct UninstallResult {
 /// Execute the setup command.
 pub fn run_setup(dry_run: bool, local: bool) -> Result<SetupResult, String> {
     let bin_path = current_exe_path()?;
-    let bin_str = executable_path_for_shell(&bin_path);
+    let bin_str = executable_path_for_shell(&bin_path)?;
 
     let entries = build_config_entries(&bin_str);
     let backup_entries = build_backup_entries();
@@ -885,7 +898,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn executable_path_for_shell_handles_non_utf8_unix_paths() {
+    fn executable_path_for_shell_rejects_non_utf8_unix_paths() {
         use std::ffi::OsString;
         use std::os::unix::ffi::OsStringExt;
 
@@ -893,17 +906,8 @@ mod tests {
             b'/', b't', b'm', b'p', b'/', b'g', b'i', b't', b'c', b'o', b'm', b'e', b't', b'-',
             0xff,
         ]));
-        let bin_str = executable_path_for_shell(&path);
-        let entries = build_config_entries(&bin_str);
-        let merge_cmd = entries
-            .iter()
-            .find(|e| e.key == "mergetool.gitcomet.cmd")
-            .unwrap();
-
-        assert!(bin_str.starts_with("/tmp/gitcomet-"));
-        assert!(bin_str.contains('\u{fffd}'));
-        assert!(merge_cmd.value.starts_with("'/tmp/gitcomet-"));
-        assert!(merge_cmd.value.contains(" mergetool --base"));
+        let error = executable_path_for_shell(&path).expect_err("non-utf8 path should error");
+        assert!(error.contains("non-Unicode executable path"), "{error}");
     }
 
     #[test]
@@ -1137,14 +1141,16 @@ mod tests {
 
         // Initialize a git repo.
         let init = std::process::Command::new("git")
-            .args(["init", dir.path().to_str().unwrap()])
+            .arg("init")
+            .arg(dir.path())
             .output()
             .unwrap();
         assert!(init.status.success());
 
         let entries = build_config_entries("/test/gitcomet-app");
         let result = std::process::Command::new("git")
-            .args(["-C", dir.path().to_str().unwrap()])
+            .arg("-C")
+            .arg(dir.path())
             .args(["config", "--local", entries[0].key, &entries[0].value])
             .output()
             .unwrap();
@@ -1152,12 +1158,13 @@ mod tests {
 
         // Verify the value was written.
         let check = std::process::Command::new("git")
-            .args(["-C", dir.path().to_str().unwrap()])
+            .arg("-C")
+            .arg(dir.path())
             .args(["config", "--get", entries[0].key])
             .output()
             .unwrap();
         assert!(check.status.success());
-        let value = String::from_utf8_lossy(&check.stdout);
+        let value = String::from_utf8(check.stdout).expect("utf-8 git config output");
         assert_eq!(value.trim(), entries[0].value);
     }
 

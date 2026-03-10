@@ -7,6 +7,41 @@ use std::fs;
 use std::path::Path;
 use std::process::Command;
 
+fn bytes_to_text_preserving_utf8(bytes: &[u8]) -> String {
+    use std::fmt::Write as _;
+
+    let mut out = String::with_capacity(bytes.len());
+    let mut cursor = 0usize;
+    while cursor < bytes.len() {
+        match std::str::from_utf8(&bytes[cursor..]) {
+            Ok(valid) => {
+                out.push_str(valid);
+                break;
+            }
+            Err(err) => {
+                let valid_len = err.valid_up_to();
+                if valid_len > 0 {
+                    let valid = &bytes[cursor..cursor + valid_len];
+                    out.push_str(
+                        std::str::from_utf8(valid)
+                            .expect("slice identified by valid_up_to must be valid UTF-8"),
+                    );
+                    cursor += valid_len;
+                }
+
+                let invalid_len = err.error_len().unwrap_or(1);
+                let invalid_end = cursor.saturating_add(invalid_len).min(bytes.len());
+                for byte in &bytes[cursor..invalid_end] {
+                    let _ = write!(out, "\\x{byte:02x}");
+                }
+                cursor = invalid_end;
+            }
+        }
+    }
+
+    out
+}
+
 impl GixRepo {
     pub(super) fn blame_file_impl(&self, path: &Path, rev: Option<&str>) -> Result<Vec<BlameLine>> {
         let mut cmd = Command::new("git");
@@ -137,14 +172,14 @@ fn unmerged_stage_exists(workdir: &Path, path: &Path, desired_stage: u8) -> Resu
         .map_err(|e| Error::new(ErrorKind::Io(e.kind())))?;
 
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stderr = bytes_to_text_preserving_utf8(&output.stderr);
         return Err(Error::new(ErrorKind::Backend(format!(
             "git ls-files -u failed: {}",
             stderr.trim()
         ))));
     }
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stdout = bytes_to_text_preserving_utf8(&output.stdout);
     Ok(stdout.lines().any(|line| {
         let mut parts = line.split_whitespace();
         let _mode = parts.next();
@@ -175,7 +210,7 @@ fn read_unmerged_stage_bytes(workdir: &Path, path: &Path, stage: u8) -> Result<V
         return Ok(output.stdout);
     }
 
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stderr = bytes_to_text_preserving_utf8(&output.stderr);
     Err(Error::new(ErrorKind::Backend(format!(
         "git show :{stage}:{} failed: {}",
         path.display(),
@@ -312,7 +347,7 @@ mod tests {
 
     #[test]
     fn parse_git_blame_porcelain_handles_gitpython_binary_fixture() {
-        let raw = String::from_utf8_lossy(GITPY_BLAME_BINARY);
+        let raw = bytes_to_text_preserving_utf8(GITPY_BLAME_BINARY);
         let parsed = parse_git_blame_porcelain(&raw);
         assert_eq!(parsed.len(), 9);
 

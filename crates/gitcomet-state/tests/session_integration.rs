@@ -196,15 +196,14 @@ fn load_from_path_parses_encoded_paths_and_filters_invalid_active_repo() {
     );
 
     let loaded = session::load_from_path(&session_file);
-    assert_eq!(
-        loaded.open_repos,
-        vec![
-            PathBuf::from("/tmp/alpha"),
-            PathBuf::from("/tmp/J"),
-            PathBuf::from("gitcomet-path-bytes:abc"),
-            PathBuf::from("gitcomet-path-bytes:zz"),
-        ]
-    );
+    let mut expected_open_repos = vec![PathBuf::from("/tmp/alpha")];
+    #[cfg(unix)]
+    expected_open_repos.push(PathBuf::from("/tmp/J"));
+    #[cfg(not(unix))]
+    expected_open_repos.push(PathBuf::from("gitcomet-path-bytes:2F746D702F4A"));
+    expected_open_repos.push(PathBuf::from("gitcomet-path-bytes:abc"));
+    expected_open_repos.push(PathBuf::from("gitcomet-path-bytes:zz"));
+    assert_eq!(loaded.open_repos, expected_open_repos);
     assert_eq!(loaded.active_repo, None);
 
     write_session_json(

@@ -197,7 +197,9 @@ impl GixRepo {
             return Ok(None);
         }
 
-        let stdout = String::from_utf8_lossy(&output.stdout);
+        let Ok(stdout) = std::str::from_utf8(&output.stdout) else {
+            return Ok(None);
+        };
         let mut parts = stdout.split_whitespace();
         let behind = parts.next().and_then(|s| s.parse::<usize>().ok());
         let ahead = parts.next().and_then(|s| s.parse::<usize>().ok());

@@ -57,10 +57,10 @@ fn cleanup_image_diff_cache_dir(
         };
 
         let file_name = entry.file_name();
-        if !file_name
-            .to_string_lossy()
-            .starts_with(IMAGE_DIFF_CACHE_FILE_PREFIX)
-        {
+        let Some(file_name_text) = file_name.to_str() else {
+            continue;
+        };
+        if !file_name_text.starts_with(IMAGE_DIFF_CACHE_FILE_PREFIX) {
             continue;
         }
 
@@ -251,9 +251,9 @@ impl MainPaneView {
                     } else {
                         workdir.join(&file.path)
                     });
-                    let language = file_path.as_ref().and_then(|p| {
-                        rows::diff_syntax_language_for_path(p.to_string_lossy().as_ref())
-                    });
+                    let language = file_path
+                        .as_ref()
+                        .and_then(rows::diff_syntax_language_for_path);
 
                     // Precompute word highlights and inline rows.
                     let mut split_word_highlights_old: Vec<Option<Vec<Range<usize>>>> =

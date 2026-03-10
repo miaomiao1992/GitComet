@@ -6,6 +6,41 @@ const GITHUB_URL: &str = "https://github.com/Auto-Explore/GitComet";
 const LICENSE_URL: &str = "https://github.com/Auto-Explore/GitComet/blob/main/LICENSE-AGPL-3.0";
 const LICENSE_NAME: &str = "AGPL-3.0";
 
+fn bytes_to_text_preserving_utf8(bytes: &[u8]) -> String {
+    use std::fmt::Write as _;
+
+    let mut out = String::with_capacity(bytes.len());
+    let mut cursor = 0usize;
+    while cursor < bytes.len() {
+        match std::str::from_utf8(&bytes[cursor..]) {
+            Ok(valid) => {
+                out.push_str(valid);
+                break;
+            }
+            Err(err) => {
+                let valid_len = err.valid_up_to();
+                if valid_len > 0 {
+                    let valid = &bytes[cursor..cursor + valid_len];
+                    out.push_str(
+                        std::str::from_utf8(valid)
+                            .expect("slice identified by valid_up_to must be valid UTF-8"),
+                    );
+                    cursor += valid_len;
+                }
+
+                let invalid_len = err.error_len().unwrap_or(1);
+                let invalid_end = cursor.saturating_add(invalid_len).min(bytes.len());
+                for byte in &bytes[cursor..invalid_end] {
+                    let _ = write!(out, "\\x{byte:02x}");
+                }
+                cursor = invalid_end;
+            }
+        }
+    }
+
+    out
+}
+
 #[derive(Clone, Debug)]
 pub(super) struct SettingsRuntimeInfo {
     pub(super) git: GitRuntimeInfo,
@@ -61,9 +96,13 @@ fn detect_git_runtime_info() -> GitRuntimeInfo {
     match std::process::Command::new("git").arg("--version").output() {
         Ok(output) if output.status.success() => {
             let version_output = if !output.stdout.is_empty() {
-                String::from_utf8_lossy(&output.stdout).trim().to_string()
+                bytes_to_text_preserving_utf8(&output.stdout)
+                    .trim()
+                    .to_string()
             } else {
-                String::from_utf8_lossy(&output.stderr).trim().to_string()
+                bytes_to_text_preserving_utf8(&output.stderr)
+                    .trim()
+                    .to_string()
             };
 
             if version_output.is_empty() {
@@ -94,7 +133,9 @@ fn detect_git_runtime_info() -> GitRuntimeInfo {
             }
         }
         Ok(output) => {
-            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            let stderr = bytes_to_text_preserving_utf8(&output.stderr)
+                .trim()
+                .to_string();
             let display = if stderr.is_empty() {
                 format!("Unavailable (exit code: {})", output.status)
             } else {

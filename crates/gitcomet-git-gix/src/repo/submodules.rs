@@ -18,7 +18,11 @@ impl GixRepo {
             .output()
             .map_err(|e| Error::new(ErrorKind::Io(e.kind())))?;
 
-        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+        let stdout = String::from_utf8(output.stdout).map_err(|_| {
+            Error::new(ErrorKind::Backend(
+                "git submodule status --recursive produced non-UTF-8 stdout".to_string(),
+            ))
+        })?;
         let parsed = parse_git_submodule_status(&stdout);
         if output.status.success() || !parsed.is_empty() {
             return Ok(parsed);

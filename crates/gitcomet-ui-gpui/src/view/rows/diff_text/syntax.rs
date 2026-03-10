@@ -73,8 +73,10 @@ struct TreesitterDocumentCache {
     line_tokens: Vec<Vec<SyntaxToken>>,
 }
 
-pub(in crate::view) fn diff_syntax_language_for_path(path: &str) -> Option<DiffSyntaxLanguage> {
-    let p = std::path::Path::new(path);
+pub(in crate::view) fn diff_syntax_language_for_path(
+    path: impl AsRef<std::path::Path>,
+) -> Option<DiffSyntaxLanguage> {
+    let p = path.as_ref();
     let ext = p.extension().and_then(|s| s.to_str()).unwrap_or("");
     let ext = ascii_lowercase_for_match(ext);
 
