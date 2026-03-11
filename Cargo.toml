@@ -75,3 +75,4 @@ strip = "symbols"
 [profile.release-with-debug]
 inherits = "release"
 debug = 2
+strip = "none"
