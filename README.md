@@ -17,6 +17,15 @@ Available for Linux, Windows, and macOS.
 
 Download the latest prebuilt binaries/installers from [GitHub Releases](https://github.com/Auto-Explore/GitComet/releases).
 
+#### Homebrew
+
+install from tap:
+
+```bash
+brew tap auto-explore/gitcomet
+brew install gitcomet
+```
+
 ### Fast, Free, Familiar
 
 - **Fast**: Built end-to-end in Rust for speed and efficiency using [smol](https://github.com/smol-rs/smol), [gix](https://github.com/GitoxideLabs/gitoxide), and [gpui](https://www.gpui.rs/).

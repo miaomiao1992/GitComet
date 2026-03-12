@@ -69,3 +69,40 @@ This writes:
 
 - `target/llvm-cov/lcov.info` (used by CI upload)
 - `target/llvm-cov/html/index.html` (local detailed report)
+
+### Release packaging
+
+macOS packaging is handled by:
+
+```bash
+scripts/package-macos.sh --version 0.2.0 --arch arm64 --release
+scripts/package-macos.sh --version 0.2.0 --arch x86_64 --release
+```
+
+Use `--skip-dmg` when running in restricted/sandboxed environments where `hdiutil create` is unavailable.
+
+The release workflow `.github/workflows/build-release-artifacts.yml` builds and publishes:
+
+- Windows: portable ZIP + MSI
+- Linux: tar.gz + AppImage + .deb
+- macOS: DMG + tar.gz for `arm64` and `x86_64`
+- Homebrew formula asset: `gitcomet.rb` (generated from macOS + Linux x86_64 tarballs and their SHA256 values)
+
+### Homebrew deployment
+
+To push `Formula/gitcomet.rb` into a Homebrew tap repo automatically on release:
+
+1. Create a tap repository (default expected name: `OWNER/homebrew-gitcomet`).
+2. In this repo, configure:
+   - secret `HOMEBREW_TAP_TOKEN`: GitHub token with `contents:write` access to the tap repository.
+   - variable `HOMEBREW_TAP_REPO`: tap repository in `OWNER/REPO` form.
+   - optional variable `HOMEBREW_TAP_BRANCH`: target branch (default `main`).
+3. Run `.github/workflows/release-manual-main.yml` with `draft=false`.
+
+This release flow will:
+
+- build and upload release artifacts
+- publish the GitHub release
+- call `.github/workflows/deploy-homebrew-tap.yml` to update `Formula/gitcomet.rb` in the tap repo
+
+You can also run `.github/workflows/deploy-homebrew-tap.yml` manually for backfills or dry-runs.
