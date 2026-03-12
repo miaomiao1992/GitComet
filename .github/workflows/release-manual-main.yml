@@ -168,6 +168,19 @@ jobs:
           gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --draft=false
           gh release view "$tag" --repo "$GITHUB_REPOSITORY"
 
+  deploy_homebrew_tap:
+    name: Deploy Homebrew tap formula
+    needs: [validate, build_and_upload, publish_release]
+    if: ${{ fromJSON(needs.validate.outputs.draft) == false && needs.build_and_upload.result == 'success' }}
+    uses: ./.github/workflows/deploy-homebrew-tap.yml
+    with:
+      tag: ${{ needs.validate.outputs.tag }}
+      version: ${{ needs.validate.outputs.version }}
+      tap_repo: ${{ vars.HOMEBREW_TAP_REPO }}
+      tap_branch: ${{ vars.HOMEBREW_TAP_BRANCH }}
+      dry_run: false
+    secrets: inherit
+
   cleanup_failed_release:
     name: Cleanup failed draft/tag
     runs-on: ubuntu-latest

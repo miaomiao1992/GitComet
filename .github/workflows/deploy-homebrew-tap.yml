@@ -1,0 +1,217 @@
+name: Deploy Homebrew Tap
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        required: true
+        type: string
+      version:
+        required: true
+        type: string
+      tap_repo:
+        required: false
+        type: string
+        default: ""
+      tap_branch:
+        required: false
+        type: string
+        default: "main"
+      dry_run:
+        required: false
+        type: boolean
+        default: false
+    secrets:
+      HOMEBREW_TAP_TOKEN:
+        required: false
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version (e.g. 0.2.0 or v0.2.0)"
+        required: true
+        type: string
+      tag:
+        description: "Optional tag override (e.g. v0.2.0). Defaults to v<version>."
+        required: false
+        type: string
+      tap_repo:
+        description: "Target tap repository in OWNER/REPO form (e.g. Auto-Explore/homebrew-gitcomet)"
+        required: false
+        default: ""
+        type: string
+      tap_branch:
+        description: "Target branch in tap repo"
+        required: false
+        default: "main"
+        type: string
+      dry_run:
+        description: "Validate and print formula without pushing to tap"
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-homebrew-tap-${{ inputs.tag || github.event.inputs.tag || inputs.version || github.event.inputs.version || github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Publish formula to Homebrew tap
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Normalize inputs
+        id: norm
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+          DISPATCH_TAG: ${{ github.event.inputs.tag }}
+          INPUT_VERSION: ${{ inputs.version }}
+          DISPATCH_VERSION: ${{ github.event.inputs.version }}
+          INPUT_TAP_REPO: ${{ inputs.tap_repo }}
+          DISPATCH_TAP_REPO: ${{ github.event.inputs.tap_repo }}
+          INPUT_TAP_BRANCH: ${{ inputs.tap_branch }}
+          DISPATCH_TAP_BRANCH: ${{ github.event.inputs.tap_branch }}
+          INPUT_DRY_RUN: ${{ inputs.dry_run }}
+          DISPATCH_DRY_RUN: ${{ github.event.inputs.dry_run }}
+          REPO_OWNER: ${{ github.repository_owner }}
+        run: |
+          set -euo pipefail
+
+          tag="${INPUT_TAG:-${DISPATCH_TAG:-}}"
+          version="${INPUT_VERSION:-${DISPATCH_VERSION:-}}"
+          tap_repo="${INPUT_TAP_REPO:-${DISPATCH_TAP_REPO:-}}"
+          tap_branch="${INPUT_TAP_BRANCH:-${DISPATCH_TAP_BRANCH:-main}}"
+          dry_run="${INPUT_DRY_RUN:-${DISPATCH_DRY_RUN:-false}}"
+
+          tag="$(echo "$tag" | tr -d '[:space:]')"
+          version="$(echo "$version" | tr -d '[:space:]')"
+          tap_repo="$(echo "$tap_repo" | tr -d '[:space:]')"
+          tap_branch="$(echo "$tap_branch" | tr -d '[:space:]')"
+          dry_run="$(echo "$dry_run" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')"
+
+          if [ -z "$version" ]; then
+            echo "::error title=Missing version::Version is required."
+            exit 1
+          fi
+
+          version="${version#v}"
+          if [ -z "$tag" ]; then
+            tag="v${version}"
+          fi
+
+          if [[ "$tag" != v* ]]; then
+            tag="v${tag}"
+          fi
+
+          if [ "$tag" != "v${version}" ]; then
+            echo "::error title=Tag/version mismatch::Tag '$tag' does not match version '$version'."
+            exit 1
+          fi
+
+          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$ ]]; then
+            echo "::error title=Invalid version::Expected semver like 1.2.3 or 1.2.3-rc.1."
+            exit 1
+          fi
+
+          if [ -z "$tap_repo" ]; then
+            tap_repo="${REPO_OWNER}/homebrew-gitcomet"
+          fi
+
+          if ! [[ "$tap_repo" =~ ^[^/]+/[^/]+$ ]]; then
+            echo "::error title=Invalid tap repo::tap_repo must be OWNER/REPO."
+            exit 1
+          fi
+
+          if [[ "$dry_run" != "true" && "$dry_run" != "false" ]]; then
+            echo "::error title=Invalid dry_run::dry_run must be true or false."
+            exit 1
+          fi
+
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tap_repo=$tap_repo" >> "$GITHUB_OUTPUT"
+          echo "tap_branch=$tap_branch" >> "$GITHUB_OUTPUT"
+          echo "dry_run=$dry_run" >> "$GITHUB_OUTPUT"
+
+      - name: Download formula from release assets
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          gh release view "${{ steps.norm.outputs.tag }}" --repo "$GITHUB_REPOSITORY" >/dev/null
+          gh release download "${{ steps.norm.outputs.tag }}" \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern "gitcomet.rb" \
+            --dir dist \
+            --clobber
+          test -f dist/gitcomet.rb
+
+      - name: Validate formula syntax
+        run: ruby -c dist/gitcomet.rb
+
+      - name: Emit dry-run summary
+        if: ${{ steps.norm.outputs.dry_run == 'true' }}
+        run: |
+          set -euo pipefail
+          {
+            echo "### Homebrew tap deployment dry run"
+            echo ""
+            echo "- Source release: \`${{ steps.norm.outputs.tag }}\`"
+            echo "- Target tap: \`${{ steps.norm.outputs.tap_repo }}\`"
+            echo "- Target branch: \`${{ steps.norm.outputs.tap_branch }}\`"
+            echo ""
+            echo "Formula preview:"
+            echo '```ruby'
+            cat dist/gitcomet.rb
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Publish formula to tap repository
+        if: ${{ steps.norm.outputs.dry_run != 'true' }}
+        env:
+          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          TAG: ${{ steps.norm.outputs.tag }}
+          TAP_REPO: ${{ steps.norm.outputs.tap_repo }}
+          TAP_BRANCH: ${{ steps.norm.outputs.tap_branch }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${TAP_TOKEN:-}" ]; then
+            echo "::error title=Missing secret::Set HOMEBREW_TAP_TOKEN to push to tap repository ${TAP_REPO}."
+            exit 1
+          fi
+
+          rm -rf tap-repo
+          git clone "https://x-access-token:${TAP_TOKEN}@github.com/${TAP_REPO}.git" tap-repo
+          mkdir -p tap-repo/Formula
+          cp dist/gitcomet.rb tap-repo/Formula/gitcomet.rb
+
+          pushd tap-repo >/dev/null
+          if git diff --quiet -- Formula/gitcomet.rb; then
+            echo "No formula changes detected; tap already up to date."
+            popd >/dev/null
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/gitcomet.rb
+          git commit -m "gitcomet ${TAG}"
+          git push origin "HEAD:${TAP_BRANCH}"
+          popd >/dev/null
+
+      - name: Emit deployment summary
+        run: |
+          set -euo pipefail
+          {
+            echo "### Homebrew tap deployment"
+            echo ""
+            echo "- Release: \`${{ steps.norm.outputs.tag }}\`"
+            echo "- Tap repo: \`${{ steps.norm.outputs.tap_repo }}\`"
+            echo "- Tap branch: \`${{ steps.norm.outputs.tap_branch }}\`"
+            echo "- Dry run: \`${{ steps.norm.outputs.dry_run }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"

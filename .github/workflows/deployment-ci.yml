@@ -1,0 +1,113 @@
+name: Deployment CI
+
+on:
+  pull_request:
+    branches: ["main"]
+    paths:
+      - ".github/workflows/build-release-artifacts.yml"
+      - ".github/workflows/deploy-homebrew-tap.yml"
+      - "scripts/package-macos.sh"
+      - "scripts/generate-homebrew-formula.sh"
+  push:
+    branches: ["main"]
+    paths:
+      - ".github/workflows/build-release-artifacts.yml"
+      - ".github/workflows/deploy-homebrew-tap.yml"
+      - "scripts/package-macos.sh"
+      - "scripts/generate-homebrew-formula.sh"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  formula-script-validation:
+    name: Validate Homebrew formula generation script
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Validate shell scripts syntax
+        run: |
+          bash -n scripts/package-macos.sh
+          bash -n scripts/generate-homebrew-formula.sh
+
+      - name: Generate formula from synthetic artifacts
+        run: |
+          set -euo pipefail
+          mkdir -p dist/deployment-ci
+          printf 'arm64-test' > dist/deployment-ci/gitcomet-v0.0.0-ci-macos-arm64.tar.gz
+          printf 'intel-test' > dist/deployment-ci/gitcomet-v0.0.0-ci-macos-x86_64.tar.gz
+          printf 'linux-test' > dist/deployment-ci/gitcomet-v0.0.0-ci-linux-x86_64.tar.gz
+
+          scripts/generate-homebrew-formula.sh \
+            --version "0.0.0-ci" \
+            --github-repo "Auto-Explore/GitComet" \
+            --arm-tar "dist/deployment-ci/gitcomet-v0.0.0-ci-macos-arm64.tar.gz" \
+            --intel-tar "dist/deployment-ci/gitcomet-v0.0.0-ci-macos-x86_64.tar.gz" \
+            --linux-tar "dist/deployment-ci/gitcomet-v0.0.0-ci-linux-x86_64.tar.gz" \
+            --output "dist/deployment-ci/gitcomet.rb"
+
+          ruby -c dist/deployment-ci/gitcomet.rb
+          grep -q "on_linux do" dist/deployment-ci/gitcomet.rb
+          grep -q "gitcomet-v0.0.0-ci-linux-x86_64.tar.gz" dist/deployment-ci/gitcomet.rb
+
+  macos-packaging-smoke:
+    name: macOS packaging smoke (${{ matrix.arch }})
+    runs-on: ${{ matrix.runs_on }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runs_on: macos-latest
+          - arch: x86_64
+            runs_on: macos-15-intel
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build release binary
+        run: cargo build -p gitcomet-app --release --locked --features ui-gpui,gix --bins
+
+      - name: Package macOS artifacts
+        run: |
+          set -euo pipefail
+          scripts/package-macos.sh \
+            --version 0.0.0-ci \
+            --arch "${{ matrix.arch }}" \
+            --release \
+            --no-build \
+            --out-dir dist
+
+      - name: Verify tarball contents
+        run: |
+          set -euo pipefail
+          tarball="dist/gitcomet-v0.0.0-ci-macos-${{ matrix.arch }}.tar.gz"
+          test -f "$tarball"
+          tar -tzf "$tarball" | grep -q "GitComet.app/Contents/MacOS/gitcomet-app$"
+
+      - name: Verify DMG launches binary
+        run: |
+          set -euo pipefail
+          dmg="dist/gitcomet-v0.0.0-ci-macos-${{ matrix.arch }}.dmg"
+          test -f "$dmg"
+
+          mount_point="$(hdiutil attach "$dmg" | awk '/\/Volumes\// {print $3; exit}')"
+          if [ -z "$mount_point" ]; then
+            echo "Failed to determine DMG mount point." >&2
+            exit 1
+          fi
+
+          "${mount_point}/GitComet.app/Contents/MacOS/gitcomet-app" --help >/dev/null
+          hdiutil detach "$mount_point"

@@ -275,11 +275,59 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  build_macos:
+    name: Build macOS artifacts (${{ matrix.arch }})
+    runs-on: ${{ matrix.runs_on }}
+    timeout-minutes: 120
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runs_on: macos-latest
+          - arch: x86_64
+            runs_on: macos-15-intel
+    env:
+      TAG: ${{ needs.prepare.outputs.tag }}
+      VERSION: ${{ needs.prepare.outputs.version }}
+      ARCH: ${{ matrix.arch }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
+          fetch-depth: 0
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Package macOS release assets
+        run: |
+          set -euo pipefail
+          scripts/package-macos.sh \
+            --version "${VERSION}" \
+            --arch "${ARCH}" \
+            --release \
+            --out-dir dist
+
+      - name: Upload macOS artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-release-artifacts-${{ matrix.arch }}
+          path: |
+            dist/*.tar.gz
+            dist/*.dmg
+          if-no-files-found: error
+          retention-days: 7
+
   publish_release_assets:
     name: Attach assets and checksums to GitHub release
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    needs: [prepare, build_windows, build_linux]
+    needs: [prepare, build_windows, build_linux, build_macos]
     env:
       TAG: ${{ needs.prepare.outputs.tag }}
       VERSION: ${{ needs.prepare.outputs.version }}
@@ -296,18 +344,48 @@ jobs:
           name: linux-release-artifacts
           path: dist/linux
 
+      - uses: actions/download-artifact@v5
+        with:
+          pattern: macos-release-artifacts-*
+          path: dist/macos
+          merge-multiple: true
+
       - name: Assemble release payload
         run: |
           set -euo pipefail
           mkdir -p dist/release
           find dist/windows -maxdepth 1 -type f -exec cp -f {} dist/release/ \;
           find dist/linux -maxdepth 1 -type f -exec cp -f {} dist/release/ \;
+          find dist/macos -maxdepth 1 -type f -exec cp -f {} dist/release/ \;
           file_count="$(find dist/release -maxdepth 1 -type f | wc -l | tr -d '[:space:]')"
           if [ "${file_count}" = "0" ]; then
             echo "::error title=No release artifacts::No files were assembled into dist/release."
             exit 1
           fi
           ls -lah dist/release
+
+      - name: Generate Homebrew formula
+        run: |
+          set -euo pipefail
+          arm_tar="gitcomet-v${VERSION}-macos-arm64.tar.gz"
+          intel_tar="gitcomet-v${VERSION}-macos-x86_64.tar.gz"
+          linux_tar="gitcomet-v${VERSION}-linux-x86_64.tar.gz"
+          arm_path="dist/release/${arm_tar}"
+          intel_path="dist/release/${intel_tar}"
+          linux_path="dist/release/${linux_tar}"
+
+          if [ ! -f "${arm_path}" ] || [ ! -f "${intel_path}" ] || [ ! -f "${linux_path}" ]; then
+            echo "::error title=Missing release tarballs::Expected ${arm_tar}, ${intel_tar}, and ${linux_tar} in dist/release."
+            exit 1
+          fi
+
+          scripts/generate-homebrew-formula.sh \
+            --version "${VERSION}" \
+            --github-repo "${GITHUB_REPOSITORY}" \
+            --arm-tar "${arm_path}" \
+            --intel-tar "${intel_path}" \
+            --linux-tar "${linux_path}" \
+            --output "dist/release/gitcomet.rb"
 
       - name: Generate checksums
         run: |
