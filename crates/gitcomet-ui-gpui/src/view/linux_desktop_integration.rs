@@ -1,5 +1,6 @@
 use super::*;
 
+#[cfg(any(test, target_os = "linux", target_os = "freebsd"))]
 fn desktop_entry_exec_path_arg(exe: &std::path::Path) -> Result<String, String> {
     let Some(exe) = exe.to_str() else {
         return Err(format!(
@@ -24,6 +25,7 @@ fn desktop_entry_exec_path_arg(exe: &std::path::Path) -> Result<String, String> 
     Ok(escaped)
 }
 
+#[cfg(any(test, target_os = "linux", target_os = "freebsd"))]
 fn should_auto_install_linux_desktop_integration(
     no_desktop_install_flag_present: bool,
     _xdg_current_desktop: Option<&str>,

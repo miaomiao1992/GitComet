@@ -448,15 +448,15 @@ impl Render for TitleBarView {
 
         let free_badge_bg = with_alpha(
             theme.colors.text_muted,
-            if theme.is_dark { 0.38 } else { 0.26 },
+            if theme.is_dark { 0.22 } else { 0.16 },
         );
         let free_badge_border = with_alpha(
             theme.colors.text_muted,
-            if theme.is_dark { 0.62 } else { 0.48 },
+            if theme.is_dark { 0.34 } else { 0.28 },
         );
         let free_badge_text = with_alpha(
-            gpui::rgba(0xFFFFFFFF),
-            if theme.is_dark { 0.86 } else { 0.78 },
+            theme.colors.text,
+            if theme.is_dark { 0.72 } else { 0.62 },
         );
         let free_badge = div()
             .id("free_badge")
@@ -498,9 +498,9 @@ impl Render for TitleBarView {
                     .flex()
                     .items_center()
                     .gap_1()
+                    .child(free_badge)
                     .when(!is_macos, |d| d.child(min).child(max).child(close))
-                    .pr_2()
-                    .child(free_badge),
+                    .pr_2(),
             )
             .into_any_element()
     }
