@@ -44,6 +44,31 @@ pub(super) fn path_text_for_copy(path: &std::path::Path) -> String {
         .to_string()
 }
 
+fn context_menu_entry_debug_selector(label: &str) -> String {
+    let mut slug = String::with_capacity(label.len());
+    let mut previous_was_separator = true;
+
+    for ch in label.chars() {
+        if ch.is_ascii_alphanumeric() {
+            slug.push(ch.to_ascii_lowercase());
+            previous_was_separator = false;
+        } else if !previous_was_separator {
+            slug.push('_');
+            previous_was_separator = true;
+        }
+    }
+
+    while slug.ends_with('_') {
+        slug.pop();
+    }
+
+    if slug.is_empty() {
+        "context_menu_entry".to_string()
+    } else {
+        format!("context_menu_{slug}")
+    }
+}
+
 fn settings_theme_model(host: &PopoverHost) -> ContextMenuModel {
     let selected = host.theme_mode;
     let check = |enabled: bool| enabled.then_some("✓".into());
@@ -1052,6 +1077,9 @@ impl PopoverHost {
                             action,
                         } => {
                             let selected = selected_for_render == Some(ix);
+                            let debug_selector = context_menu_entry_debug_selector(label.as_ref());
+                            let activate_on_click = action.as_ref().clone();
+                            let activate_on_right_release = activate_on_click.clone();
                             let row = components::context_menu_entry(
                                 ("context_menu_entry", ix),
                                 theme,
@@ -1060,7 +1088,8 @@ impl PopoverHost {
                                 icon,
                                 label,
                                 shortcut,
-                            );
+                            )
+                            .debug_selector(move || debug_selector.clone());
 
                             row.on_hover(cx.listener(move |this, hovering: &bool, _w, cx| {
                                 if *hovering {
@@ -1069,10 +1098,23 @@ impl PopoverHost {
                                 }
                             }))
                             .when(!disabled, |row| {
-                                row.on_click(cx.listener(
-                                    move |this, _e: &ClickEvent, window, cx| {
+                                row.on_mouse_up(
+                                    MouseButton::Right,
+                                    cx.listener(move |this, _e: &MouseUpEvent, window, cx| {
                                         this.context_menu_activate_action(
-                                            action.as_ref().clone(),
+                                            activate_on_right_release.clone(),
+                                            window,
+                                            cx,
+                                        );
+                                    }),
+                                )
+                                .on_click(cx.listener(
+                                    move |this, e: &ClickEvent, window, cx| {
+                                        if e.is_right_click() {
+                                            return;
+                                        }
+                                        this.context_menu_activate_action(
+                                            activate_on_click.clone(),
                                             window,
                                             cx,
                                         );

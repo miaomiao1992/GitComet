@@ -425,6 +425,190 @@ fn commit_file_menu_copy_path_uses_os_native_separators(cx: &mut gpui::TestAppCo
 }
 
 #[gpui::test]
+fn commit_file_menu_copy_path_supports_right_button_release(cx: &mut gpui::TestAppContext) {
+    let (store, events) = AppStore::new(Arc::new(TestBackend));
+    let (view, cx) =
+        cx.add_window_view(|window, cx| GitCometView::new(store, events, None, window, cx));
+
+    let repo_id = RepoId(35);
+    let commit_id = CommitId("feedfacefeedface".to_string());
+    let workdir = std::env::temp_dir().join(format!(
+        "gitcomet_ui_test_{}_commit_menu_copy_path_right_release",
+        std::process::id()
+    ));
+    let path = std::path::PathBuf::from("crates/gitcomet-ui-gpui/src/smoke_tests.rs");
+
+    cx.update(|_window, app| {
+        view.update(app, |this, cx| {
+            let repo = RepoState::new_opening(
+                repo_id,
+                gitcomet_core::domain::RepoSpec {
+                    workdir: workdir.clone(),
+                },
+            );
+
+            let state = Arc::new(AppState {
+                repos: vec![repo],
+                active_repo: Some(repo_id),
+                ..Default::default()
+            });
+            this.state = Arc::clone(&state);
+            this._ui_model
+                .update(cx, |model, cx| model.set_state(state, cx));
+            cx.notify();
+        });
+    });
+
+    cx.write_to_clipboard(gpui::ClipboardItem::new_string("initial".to_string()));
+
+    cx.update(|window, app| {
+        view.update(app, |this, cx| {
+            this.popover_host.update(cx, |host, cx| {
+                host.open_popover_at(
+                    PopoverKind::CommitFileMenu {
+                        repo_id,
+                        commit_id: commit_id.clone(),
+                        path: path.clone(),
+                    },
+                    gpui::point(gpui::px(120.0), gpui::px(72.0)),
+                    window,
+                    cx,
+                );
+            });
+        });
+    });
+
+    cx.update(|window, app| {
+        let _ = window.draw(app);
+    });
+
+    let copy_bounds = cx
+        .debug_bounds("context_menu_copy_path")
+        .expect("expected Copy path context menu row");
+    let copy_center = copy_bounds.center();
+
+    cx.simulate_mouse_move(
+        copy_center,
+        Some(gpui::MouseButton::Right),
+        gpui::Modifiers::default(),
+    );
+    cx.simulate_event(gpui::MouseUpEvent {
+        position: copy_center,
+        modifiers: gpui::Modifiers::default(),
+        button: gpui::MouseButton::Right,
+        click_count: 1,
+    });
+
+    let mut expected = workdir.clone();
+    expected.push("crates");
+    expected.push("gitcomet-ui-gpui");
+    expected.push("src");
+    expected.push("smoke_tests.rs");
+
+    assert_eq!(
+        cx.read_from_clipboard().and_then(|item| item.text()),
+        Some(expected.display().to_string().into())
+    );
+}
+
+#[gpui::test]
+fn status_file_menu_copy_path_supports_right_button_release(cx: &mut gpui::TestAppContext) {
+    let (store, events) = AppStore::new(Arc::new(TestBackend));
+    let (view, cx) =
+        cx.add_window_view(|window, cx| GitCometView::new(store, events, None, window, cx));
+
+    let repo_id = RepoId(36);
+    let workdir = std::env::temp_dir().join(format!(
+        "gitcomet_ui_test_{}_status_menu_copy_path_right_release",
+        std::process::id()
+    ));
+    let path = std::path::PathBuf::from("crates/gitcomet-ui-gpui/src/smoke_tests.rs");
+
+    cx.update(|_window, app| {
+        view.update(app, |this, cx| {
+            let mut repo = RepoState::new_opening(
+                repo_id,
+                gitcomet_core::domain::RepoSpec {
+                    workdir: workdir.clone(),
+                },
+            );
+            repo.status = Loadable::Ready(
+                gitcomet_core::domain::RepoStatus {
+                    staged: vec![],
+                    unstaged: vec![gitcomet_core::domain::FileStatus {
+                        path: path.clone(),
+                        kind: gitcomet_core::domain::FileStatusKind::Modified,
+                        conflict: None,
+                    }],
+                }
+                .into(),
+            );
+
+            let state = Arc::new(AppState {
+                repos: vec![repo],
+                active_repo: Some(repo_id),
+                ..Default::default()
+            });
+            this.state = Arc::clone(&state);
+            this._ui_model
+                .update(cx, |model, cx| model.set_state(state, cx));
+            cx.notify();
+        });
+    });
+
+    cx.write_to_clipboard(gpui::ClipboardItem::new_string("initial".to_string()));
+
+    cx.update(|window, app| {
+        view.update(app, |this, cx| {
+            this.popover_host.update(cx, |host, cx| {
+                host.open_popover_at(
+                    PopoverKind::StatusFileMenu {
+                        repo_id,
+                        area: DiffArea::Unstaged,
+                        path: path.clone(),
+                    },
+                    gpui::point(gpui::px(120.0), gpui::px(72.0)),
+                    window,
+                    cx,
+                );
+            });
+        });
+    });
+
+    cx.update(|window, app| {
+        let _ = window.draw(app);
+    });
+
+    let copy_bounds = cx
+        .debug_bounds("context_menu_copy_path")
+        .expect("expected Copy path context menu row");
+    let copy_center = copy_bounds.center();
+
+    cx.simulate_mouse_move(
+        copy_center,
+        Some(gpui::MouseButton::Right),
+        gpui::Modifiers::default(),
+    );
+    cx.simulate_event(gpui::MouseUpEvent {
+        position: copy_center,
+        modifiers: gpui::Modifiers::default(),
+        button: gpui::MouseButton::Right,
+        click_count: 1,
+    });
+
+    let mut expected = workdir.clone();
+    expected.push("crates");
+    expected.push("gitcomet-ui-gpui");
+    expected.push("src");
+    expected.push("smoke_tests.rs");
+
+    assert_eq!(
+        cx.read_from_clipboard().and_then(|item| item.text()),
+        Some(expected.display().to_string().into())
+    );
+}
+
+#[gpui::test]
 fn diff_editor_menu_has_open_file_entries(cx: &mut gpui::TestAppContext) {
     let (store, events) = AppStore::new(Arc::new(TestBackend));
     let (view, cx) =
