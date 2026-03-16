@@ -313,7 +313,7 @@ impl MainPaneView {
         } else if !is_file_preview {
             controls = controls.when_some(prev_file_btn, |d, btn| d.child(btn));
 
-            if !is_image_diff_view && !is_markdown_preview_view {
+            if !is_image_diff_view {
                 let nav_entries = self.diff_nav_entries();
                 let current_nav_ix = self.diff_selection_anchor.unwrap_or(0);
                 let can_nav_prev =
@@ -2600,7 +2600,7 @@ impl MainPaneView {
                                 if !conflict_preview_active {
                                     this.conflict_resolver_set_mode(conflict_mode, cx);
                                 }
-                            } else if !markdown_preview_active {
+                            } else if !this.is_file_preview_active() {
                                 this.diff_view = diff_mode;
                                 this.clear_diff_text_style_caches();
                             }
@@ -2622,11 +2622,11 @@ impl MainPaneView {
                             this.toggle_show_whitespace();
                             handled = true;
                         }
-                        "up" if !markdown_preview_active => {
+                        "up" if !this.is_file_preview_active() => {
                             this.diff_jump_prev();
                             handled = true;
                         }
-                        "down" if !markdown_preview_active => {
+                        "down" if !this.is_file_preview_active() => {
                             this.diff_jump_next();
                             handled = true;
                         }
@@ -2655,7 +2655,7 @@ impl MainPaneView {
                                     }
                                 }
                             }
-                        } else if !markdown_preview_active {
+                        } else if !this.is_file_preview_active() {
                             match direction {
                                 conflict_resolver::ConflictNavDirection::Prev => {
                                     this.diff_jump_prev()

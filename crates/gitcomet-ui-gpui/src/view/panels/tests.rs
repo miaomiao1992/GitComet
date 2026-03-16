@@ -177,7 +177,7 @@ fn assert_file_preview_ctrl_a_ctrl_c_copies_all(
             });
 
             this._ui_model.update(cx, |model, cx| {
-                model.set_state(Arc::clone(&next_state), cx);
+                model.set_state(next_state, cx);
             });
         });
     });
@@ -1282,7 +1282,7 @@ fn ctrl_f_from_markdown_file_preview_switches_back_to_text_search(cx: &mut gpui:
             });
 
             this._ui_model.update(cx, |model, cx| {
-                model.set_state(next_state, cx);
+                model.set_state(Arc::clone(&next_state), cx);
             });
         });
     });
@@ -2007,12 +2007,15 @@ fn markdown_diff_preview_row_limit_shows_fallback_instead_of_rendering(
 }
 
 #[gpui::test]
-fn markdown_diff_preview_hides_text_controls_and_ignores_text_hotkeys(
+fn markdown_diff_preview_shows_diff_controls_and_honors_navigation_hotkeys(
     cx: &mut gpui::TestAppContext,
 ) {
     let (store, events) = AppStore::new(Arc::new(TestBackend));
     let (view, cx) = cx.add_window_view(|window, cx| {
         super::super::GitCometView::new(store, events, None, window, cx)
+    });
+    cx.update(|_window, app| {
+        view.update(app, |this, _cx| this.disable_poller_for_tests());
     });
 
     let repo_id = gitcomet_state::model::RepoId(49);
@@ -2023,23 +2026,25 @@ fn markdown_diff_preview_hides_text_controls_and_ignores_text_hotkeys(
     let path = std::path::PathBuf::from("docs/preview.md");
     let old_text = concat!(
         "# Preview\n",
-        "one\n",
+        "\n",
+        "keep one\n",
+        "\n",
         "two before\n",
-        "three\n",
-        "four\n",
-        "five\n",
+        "\n",
+        "keep two\n",
+        "\n",
         "six before\n",
-        "seven\n",
     );
     let new_text = concat!(
         "# Preview\n",
-        "one\n",
+        "\n",
+        "keep one\n",
+        "\n",
         "two after\n",
-        "three\n",
-        "four\n",
-        "five\n",
+        "\n",
+        "keep two\n",
+        "\n",
         "six after\n",
-        "seven\n",
     );
 
     cx.update(|_window, app| {
@@ -2098,22 +2103,57 @@ fn markdown_diff_preview_hides_text_controls_and_ignores_text_hotkeys(
     });
     focus_diff_panel(cx, &view);
 
+    wait_for_main_pane_condition(
+        cx,
+        &view,
+        "markdown diff preview ready for navigation controls",
+        |pane| {
+            pane.file_markdown_preview_inflight.is_none()
+                && matches!(
+                    pane.file_markdown_preview,
+                    gitcomet_state::model::Loadable::Ready(_)
+                )
+        },
+        |pane| {
+            (
+                pane.file_markdown_preview_seq,
+                pane.file_markdown_preview_inflight,
+                pane.file_markdown_preview_cache_repo_id,
+                pane.file_markdown_preview_cache_rev,
+                pane.file_markdown_preview_cache_target.clone(),
+                matches!(
+                    pane.file_markdown_preview,
+                    gitcomet_state::model::Loadable::Ready(_)
+                ),
+            )
+        },
+    );
+
+    cx.update(|_window, app| {
+        view.update(app, |this, cx| {
+            let next = Arc::clone(&this._ui_model.read(cx).state);
+            this.apply_state_snapshot(Arc::clone(&next), cx);
+            this.main_pane.update(cx, |pane, cx| {
+                pane.apply_state_snapshot_for_tests(next, cx);
+            });
+        });
+    });
+    cx.update(|window, app| {
+        let _ = window.draw(app);
+    });
+
     cx.update(|_window, app| {
         let pane = view.read(app).main_pane.read(app);
-        assert!(pane.is_markdown_preview_active());
+        assert_eq!(
+            pane.rendered_preview_modes
+                .get(RenderedPreviewKind::Markdown),
+            RenderedPreviewMode::Rendered
+        );
+        assert!(
+            pane.diff_nav_entries().len() >= 2,
+            "fixture should expose multiple markdown preview change targets"
+        );
     });
-    assert!(
-        cx.debug_bounds("diff_prev_hunk").is_none(),
-        "markdown diff preview should hide previous-change control"
-    );
-    assert!(
-        cx.debug_bounds("diff_next_hunk").is_none(),
-        "markdown diff preview should hide next-change control"
-    );
-    assert!(
-        cx.debug_bounds("diff_view_toggle").is_none(),
-        "markdown diff preview should hide inline/split toggle"
-    );
 
     cx.simulate_keystrokes("alt-i alt-w");
 
@@ -2123,7 +2163,7 @@ fn markdown_diff_preview_hides_text_controls_and_ignores_text_hotkeys(
 
     cx.update(|_window, app| {
         let pane = view.read(app).main_pane.read(app);
-        assert_eq!(pane.diff_view, DiffViewMode::Split);
+        assert_eq!(pane.diff_view, DiffViewMode::Inline);
         assert!(!pane.show_whitespace);
         assert_eq!(
             pane.rendered_preview_modes
@@ -2135,14 +2175,18 @@ fn markdown_diff_preview_hides_text_controls_and_ignores_text_hotkeys(
     cx.update(|_window, app| {
         view.update(app, |this, cx| {
             this.main_pane.update(cx, |pane, cx| {
-                pane.diff_view = DiffViewMode::Inline;
+                let entries = pane.diff_nav_entries();
+                assert!(entries.len() >= 2);
+                let first = entries[0];
+                pane.diff_selection_anchor = Some(first);
+                pane.diff_selection_range = Some((first, first));
                 cx.notify();
             });
         });
     });
     focus_diff_panel(cx, &view);
 
-    cx.simulate_keystrokes("alt-s");
+    cx.simulate_keystrokes("f3");
 
     cx.update(|window, app| {
         let _ = window.draw(app);
@@ -2150,7 +2194,29 @@ fn markdown_diff_preview_hides_text_controls_and_ignores_text_hotkeys(
 
     cx.update(|_window, app| {
         let pane = view.read(app).main_pane.read(app);
-        assert_eq!(pane.diff_view, DiffViewMode::Inline);
+        let entries = pane.diff_nav_entries();
+        assert!(entries.len() >= 2);
+        assert_eq!(pane.diff_selection_anchor, Some(entries[1]));
+        assert!(!pane.show_whitespace);
+        assert_eq!(
+            pane.rendered_preview_modes
+                .get(RenderedPreviewKind::Markdown),
+            RenderedPreviewMode::Rendered
+        );
+    });
+
+    cx.simulate_keystrokes("f2 alt-s");
+
+    cx.update(|window, app| {
+        let _ = window.draw(app);
+    });
+
+    cx.update(|_window, app| {
+        let pane = view.read(app).main_pane.read(app);
+        let entries = pane.diff_nav_entries();
+        assert!(!entries.is_empty());
+        assert_eq!(pane.diff_selection_anchor, Some(entries[0]));
+        assert_eq!(pane.diff_view, DiffViewMode::Split);
         assert!(!pane.show_whitespace);
         assert_eq!(
             pane.rendered_preview_modes

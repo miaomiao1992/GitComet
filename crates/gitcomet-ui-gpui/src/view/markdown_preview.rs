@@ -25,6 +25,7 @@ pub(super) struct MarkdownPreviewDocument {
 pub(super) struct MarkdownPreviewDiff {
     pub(super) old: MarkdownPreviewDocument,
     pub(super) new: MarkdownPreviewDocument,
+    pub(super) inline: MarkdownPreviewDocument,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -263,13 +264,20 @@ pub(super) fn build_markdown_diff_preview(
         old_source.lines().count(),
         new_source.lines().count(),
     )?;
-    Some(MarkdownPreviewDiff { old, new })
+    let inline = build_inline_markdown_diff_document(&old, &new);
+    Some(MarkdownPreviewDiff { old, new, inline })
 }
 
 pub(super) fn scrollbar_markers_for_diff_preview(
     preview: &MarkdownPreviewDiff,
 ) -> Vec<crate::view::components::ScrollbarMarker> {
     scrollbar_markers_for_documents(&[&preview.old, &preview.new])
+}
+
+pub(super) fn scrollbar_markers_for_document(
+    document: &MarkdownPreviewDocument,
+) -> Vec<crate::view::components::ScrollbarMarker> {
+    scrollbar_markers_for_documents(&[document])
 }
 
 /// Annotate change hints on a pair of preview documents using diff row data.
@@ -461,6 +469,68 @@ fn markdown_preview_spacer_row() -> MarkdownPreviewRow {
         starts_alert: false,
         measured_width_px: MarkdownPreviewRowWidthCache::default(),
     }
+}
+
+fn build_inline_markdown_diff_document(
+    old_doc: &MarkdownPreviewDocument,
+    new_doc: &MarkdownPreviewDocument,
+) -> MarkdownPreviewDocument {
+    let row_count = old_doc.rows.len().max(new_doc.rows.len());
+    let mut rows = Vec::with_capacity(row_count);
+
+    for row_ix in 0..row_count {
+        let old_row = old_doc.rows.get(row_ix);
+        let new_row = new_doc.rows.get(row_ix);
+
+        match (old_row, new_row) {
+            (Some(old_row), Some(new_row))
+                if markdown_inline_diff_rows_can_merge(old_row, new_row) =>
+            {
+                rows.push(old_row.clone());
+            }
+            (Some(old_row), Some(new_row)) => {
+                if !matches!(old_row.kind, MarkdownPreviewRowKind::Spacer) {
+                    rows.push(old_row.clone());
+                }
+                if !matches!(new_row.kind, MarkdownPreviewRowKind::Spacer) {
+                    rows.push(new_row.clone());
+                }
+            }
+            (Some(old_row), None) => {
+                if !matches!(old_row.kind, MarkdownPreviewRowKind::Spacer) {
+                    rows.push(old_row.clone());
+                }
+            }
+            (None, Some(new_row)) => {
+                if !matches!(new_row.kind, MarkdownPreviewRowKind::Spacer) {
+                    rows.push(new_row.clone());
+                }
+            }
+            (None, None) => {}
+        }
+    }
+
+    MarkdownPreviewDocument { rows }
+}
+
+fn markdown_inline_diff_rows_can_merge(
+    old_row: &MarkdownPreviewRow,
+    new_row: &MarkdownPreviewRow,
+) -> bool {
+    old_row.change_hint == MarkdownChangeHint::None
+        && new_row.change_hint == MarkdownChangeHint::None
+        && !matches!(old_row.kind, MarkdownPreviewRowKind::Spacer)
+        && !matches!(new_row.kind, MarkdownPreviewRowKind::Spacer)
+        && old_row.kind == new_row.kind
+        && old_row.text == new_row.text
+        && old_row.inline_spans == new_row.inline_spans
+        && old_row.code_language == new_row.code_language
+        && old_row.code_block_horizontal_scroll_hint == new_row.code_block_horizontal_scroll_hint
+        && old_row.indent_level == new_row.indent_level
+        && old_row.blockquote_level == new_row.blockquote_level
+        && old_row.footnote_label == new_row.footnote_label
+        && old_row.alert_kind == new_row.alert_kind
+        && old_row.starts_alert == new_row.starts_alert
 }
 
 // ── Internal helpers ────────────────────────────────────────────────────
@@ -2517,6 +2587,40 @@ mod tests {
         assert_eq!(preview.old.rows[1].change_hint, MarkdownChangeHint::Removed);
         assert_eq!(preview.new.rows[1].kind, MarkdownPreviewRowKind::Spacer);
         assert_eq!(preview.new.rows[1].change_hint, MarkdownChangeHint::None);
+    }
+
+    #[test]
+    fn diff_preview_builds_inline_document_for_changed_rows() {
+        let preview =
+            build_markdown_diff_preview("keep\n\nremove me\n", "keep\n\nadd me\n").unwrap();
+
+        assert_eq!(preview.inline.rows.len(), 3);
+        assert_eq!(preview.inline.rows[0].text.as_ref(), "keep");
+        assert_eq!(preview.inline.rows[0].change_hint, MarkdownChangeHint::None);
+        assert_eq!(preview.inline.rows[1].text.as_ref(), "remove me");
+        assert_eq!(
+            preview.inline.rows[1].change_hint,
+            MarkdownChangeHint::Removed
+        );
+        assert_eq!(preview.inline.rows[2].text.as_ref(), "add me");
+        assert_eq!(
+            preview.inline.rows[2].change_hint,
+            MarkdownChangeHint::Added
+        );
+    }
+
+    #[test]
+    fn diff_preview_inline_document_merges_unchanged_rows_after_insertions() {
+        let preview = build_markdown_diff_preview("- keep\n", "- add\n- keep\n").unwrap();
+
+        assert_eq!(preview.inline.rows.len(), 2);
+        assert_eq!(preview.inline.rows[0].text.as_ref(), "add");
+        assert_eq!(
+            preview.inline.rows[0].change_hint,
+            MarkdownChangeHint::Added
+        );
+        assert_eq!(preview.inline.rows[1].text.as_ref(), "keep");
+        assert_eq!(preview.inline.rows[1].change_hint, MarkdownChangeHint::None);
     }
 
     #[test]

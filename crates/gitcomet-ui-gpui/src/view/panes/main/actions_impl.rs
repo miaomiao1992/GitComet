@@ -169,6 +169,43 @@ impl MainPaneView {
         }
     }
 
+    fn markdown_preview_visible_len(&self) -> usize {
+        let Loadable::Ready(preview) = &self.file_markdown_preview else {
+            return 0;
+        };
+
+        match self.diff_view {
+            DiffViewMode::Inline => preview.inline.rows.len(),
+            DiffViewMode::Split => preview.old.rows.len().max(preview.new.rows.len()),
+        }
+    }
+
+    fn markdown_preview_change_visible_indices(&self) -> Vec<usize> {
+        let Loadable::Ready(preview) = &self.file_markdown_preview else {
+            return Vec::new();
+        };
+
+        match self.diff_view {
+            DiffViewMode::Inline => {
+                diff_navigation::change_block_entries(preview.inline.rows.len(), |visible_ix| {
+                    preview.inline.rows.get(visible_ix).is_some_and(|row| {
+                        row.change_hint != crate::view::markdown_preview::MarkdownChangeHint::None
+                    })
+                })
+            }
+            DiffViewMode::Split => {
+                let visible_len = preview.old.rows.len().max(preview.new.rows.len());
+                diff_navigation::change_block_entries(visible_len, |visible_ix| {
+                    preview.old.rows.get(visible_ix).is_some_and(|row| {
+                        row.change_hint != crate::view::markdown_preview::MarkdownChangeHint::None
+                    }) || preview.new.rows.get(visible_ix).is_some_and(|row| {
+                        row.change_hint != crate::view::markdown_preview::MarkdownChangeHint::None
+                    })
+                })
+            }
+        }
+    }
+
     pub(super) fn patch_hunk_entries(&self) -> Vec<(usize, usize)> {
         let mut out = Vec::new();
         for visible_ix in 0..self.diff_visible_len() {
@@ -202,6 +239,9 @@ impl MainPaneView {
     }
 
     pub(in crate::view) fn diff_nav_entries(&self) -> Vec<usize> {
+        if self.is_markdown_preview_active() && !self.is_file_preview_active() {
+            return self.markdown_preview_change_visible_indices();
+        }
         if self.is_file_diff_view_active() {
             return self.file_change_visible_indices();
         }
@@ -564,7 +604,12 @@ impl MainPaneView {
             self.diff_autoscroll_pending = false;
             return;
         }
-        if self.diff_visible_len() == 0 {
+        let visible_len = if self.is_markdown_preview_active() && !self.is_file_preview_active() {
+            self.markdown_preview_visible_len()
+        } else {
+            self.diff_visible_len()
+        };
+        if visible_len == 0 {
             return;
         }
 

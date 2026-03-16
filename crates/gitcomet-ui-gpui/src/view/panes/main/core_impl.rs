@@ -1603,6 +1603,15 @@ impl MainPaneView {
         // History caches are now managed by HistoryView.
     }
 
+    #[cfg(test)]
+    pub(in crate::view) fn apply_state_snapshot_for_tests(
+        &mut self,
+        next: Arc<AppState>,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        self.apply_state_snapshot(next, cx);
+    }
+
     pub(in crate::view) fn cached_path_display(&self, path: &std::path::PathBuf) -> SharedString {
         let mut cache = self.path_display_cache.borrow_mut();
         path_display::cached_path_display(&mut cache, path)

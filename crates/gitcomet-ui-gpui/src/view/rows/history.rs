@@ -156,6 +156,36 @@ impl MainPaneView {
         )
     }
 
+    pub(in super::super) fn render_markdown_diff_inline_rows(
+        this: &mut Self,
+        range: Range<usize>,
+        window: &mut Window,
+        cx: &mut gpui::Context<Self>,
+    ) -> Vec<AnyElement> {
+        let theme = this.theme;
+        let Loadable::Ready(preview) = &this.file_markdown_preview else {
+            return Vec::new();
+        };
+        let preview = Arc::clone(preview);
+        let horizontal_scroll_handle = this.diff_scroll.0.borrow().base_handle.clone();
+        this.update_markdown_preview_horizontal_min_width(
+            &preview.inline,
+            range.clone(),
+            None,
+            window,
+            cx,
+        );
+        render_markdown_preview_document_rows(
+            theme,
+            &preview.inline,
+            range,
+            None,
+            this.diff_horizontal_min_width,
+            "diff_markdown_preview_inline",
+            Some(horizontal_scroll_handle),
+        )
+    }
+
     pub(in super::super) fn render_markdown_diff_right_rows(
         this: &mut Self,
         range: Range<usize>,
@@ -258,6 +288,7 @@ pub(super) fn render_markdown_preview_document_rows(
             Some(markdown_preview_row_element(
                 theme,
                 row,
+                ix,
                 bar_color,
                 min_width,
                 row_id_prefix,
@@ -276,6 +307,7 @@ pub(super) fn render_markdown_preview_document_rows(
 fn markdown_preview_row_element(
     theme: AppTheme,
     row: &MarkdownPreviewRow,
+    row_ix: usize,
     bar_color: Option<gpui::Rgba>,
     min_width: Pixels,
     row_id_prefix: &'static str,
@@ -453,11 +485,7 @@ fn markdown_preview_row_element(
         && let Some(scroll_handle) = horizontal_scroll_handle
     {
         content_shell = content_shell.child(
-            components::Scrollbar::horizontal(
-                (row_id_prefix, row.source_line_range.start),
-                scroll_handle,
-            )
-            .render(theme),
+            components::Scrollbar::horizontal((row_id_prefix, row_ix), scroll_handle).render(theme),
         );
     }
 
