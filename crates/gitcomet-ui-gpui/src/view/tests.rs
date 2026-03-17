@@ -1,5 +1,5 @@
 use super::*;
-use gitcomet_core::domain::{Branch, CommitId, Remote, RemoteBranch, RepoSpec, Upstream};
+use gitcomet_core::domain::{Branch, CommitId, Remote, RemoteBranch, RepoSpec, Upstream, Worktree};
 use gitcomet_core::error::{Error, ErrorKind};
 use gitcomet_core::services::{GitBackend, GitRepository, Result};
 use gitcomet_state::store::AppStore;
@@ -80,17 +80,17 @@ fn remote_rows_groups_and_sorts() {
         RemoteBranch {
             remote: "origin".to_string(),
             name: "b".to_string(),
-            target: CommitId("b0".to_string()),
+            target: CommitId("b0".into()),
         },
         RemoteBranch {
             remote: "origin".to_string(),
             name: "a".to_string(),
-            target: CommitId("a0".to_string()),
+            target: CommitId("a0".into()),
         },
         RemoteBranch {
             remote: "upstream".to_string(),
             name: "main".to_string(),
-            target: CommitId("c0".to_string()),
+            target: CommitId("c0".into()),
         },
     ]));
 
@@ -138,7 +138,7 @@ fn remote_headers_include_remotes_with_no_branches() {
     repo.remote_branches = Loadable::Ready(Arc::new(vec![RemoteBranch {
         remote: "origin".to_string(),
         name: "main".to_string(),
-        target: CommitId("deadbeef".to_string()),
+        target: CommitId("deadbeef".into()),
     }]));
 
     let rows = GitCometView::branch_sidebar_rows(&repo);
@@ -149,7 +149,7 @@ fn remote_headers_include_remotes_with_no_branches() {
             _ => None,
         })
         .collect::<Vec<_>>();
-    headers.sort();
+    headers.sort_unstable();
     headers.dedup();
 
     assert!(
@@ -174,7 +174,7 @@ fn remote_upstream_branch_is_marked() {
     repo.head_branch = Loadable::Ready("main".to_string());
     repo.branches = Loadable::Ready(Arc::new(vec![Branch {
         name: "main".to_string(),
-        target: CommitId("deadbeef".to_string()),
+        target: CommitId("deadbeef".into()),
         upstream: Some(Upstream {
             remote: "origin".to_string(),
             branch: "main".to_string(),
@@ -184,7 +184,7 @@ fn remote_upstream_branch_is_marked() {
     repo.remote_branches = Loadable::Ready(Arc::new(vec![RemoteBranch {
         remote: "origin".to_string(),
         name: "main".to_string(),
-        target: CommitId("deadbeef".to_string()),
+        target: CommitId("deadbeef".into()),
     }]));
 
     let rows = GitCometView::branch_sidebar_rows(&repo);
@@ -217,7 +217,7 @@ fn remote_section_includes_tracked_upstream_without_remote_tracking_ref() {
     repo.head_branch = Loadable::Ready("feature".to_string());
     repo.branches = Loadable::Ready(Arc::new(vec![Branch {
         name: "feature".to_string(),
-        target: CommitId("deadbeef".to_string()),
+        target: CommitId("deadbeef".into()),
         upstream: Some(Upstream {
             remote: "origin".to_string(),
             branch: "feature".to_string(),
@@ -246,6 +246,34 @@ fn remote_section_includes_tracked_upstream_without_remote_tracking_ref() {
         tracked_row.is_some(),
         "expected tracked upstream branch to be listed under Remote section"
     );
+}
+
+#[test]
+fn worktree_tooltip_includes_branch_name() {
+    let mut repo = RepoState::new_opening(
+        RepoId(1),
+        RepoSpec {
+            workdir: PathBuf::from("main-worktree"),
+        },
+    );
+
+    repo.worktrees = Loadable::Ready(Arc::new(vec![Worktree {
+        path: PathBuf::from("linked-worktree"),
+        head: None,
+        branch: Some("feature/tooltip".to_string()),
+        detached: false,
+    }]));
+
+    let rows = GitCometView::branch_sidebar_rows(&repo);
+    let row = rows
+        .iter()
+        .find_map(|row| match row {
+            BranchSidebarRow::WorktreeItem { tooltip, .. } => Some(tooltip.as_ref().to_owned()),
+            _ => None,
+        })
+        .expect("expected worktree row");
+
+    assert_eq!(row, "feature/tooltip  linked-worktree");
 }
 
 #[test]
@@ -360,6 +388,35 @@ fn is_markdown_path_rejects_non_markdown() {
 }
 
 #[test]
+fn should_bypass_text_file_preview_for_path_detects_supported_image_types() {
+    use std::path::Path;
+
+    for path in [
+        "image.png",
+        "image.JPEG",
+        "image.gif",
+        "image.webp",
+        "image.bmp",
+        "image.ico",
+        "image.svg",
+        "image.tif",
+        "image.tiff",
+    ] {
+        assert!(
+            should_bypass_text_file_preview_for_path(Path::new(path)),
+            "expected {path} to bypass text file preview"
+        );
+    }
+
+    for path in ["image.heic", "README.md", "notes.txt", "image"] {
+        assert!(
+            !should_bypass_text_file_preview_for_path(Path::new(path)),
+            "did not expect {path} to bypass text file preview"
+        );
+    }
+}
+
+#[test]
 fn preview_path_rendered_kind_detects_supported_preview_kinds() {
     use std::path::Path;
 
@@ -386,7 +443,7 @@ fn diff_target_rendered_preview_kind_reads_diff_target_paths() {
     );
 
     let markdown_target = DiffTarget::Commit {
-        commit_id: CommitId("deadbeef".to_string()),
+        commit_id: CommitId("deadbeef".into()),
         path: Some(PathBuf::from("README.md")),
     };
     assert_eq!(
@@ -395,7 +452,7 @@ fn diff_target_rendered_preview_kind_reads_diff_target_paths() {
     );
 
     let no_path_target = DiffTarget::Commit {
-        commit_id: CommitId("deadbeef".to_string()),
+        commit_id: CommitId("deadbeef".into()),
         path: None,
     };
     assert_eq!(
@@ -511,12 +568,9 @@ fn focused_mergetool_bootstrap_selects_worktree_diff_target() {
 
     assert_eq!(
         focused_mergetool_bootstrap_action(&state, &bootstrap),
-        Some(FocusedMergetoolBootstrapAction::SelectDiff {
+        Some(FocusedMergetoolBootstrapAction::SelectConflictDiff {
             repo_id: RepoId(1),
-            target: DiffTarget::WorkingTree {
-                area: DiffArea::Unstaged,
-                path: PathBuf::from("src/conflict.txt"),
-            },
+            path: PathBuf::from("src/conflict.txt"),
         })
     );
 }

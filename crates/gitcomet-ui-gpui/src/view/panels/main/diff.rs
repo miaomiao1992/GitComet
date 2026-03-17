@@ -282,7 +282,10 @@ impl MainPaneView {
                             Loadable::Ready(preview) => {
                                 let old_len = preview.old.rows.len();
                                 let new_len = preview.new.rows.len();
-                                self.render_markdown_diff_preview(theme, old_len, new_len, cx)
+                                let inline_len = preview.inline.rows.len();
+                                self.render_markdown_diff_preview(
+                                    theme, old_len, new_len, inline_len, cx,
+                                )
                             }
                         }
                     }
@@ -303,6 +306,7 @@ impl MainPaneView {
                         self.maybe_autoscroll_diff_to_first_change();
 
                         if self.diff_word_wrap {
+                            self.ensure_file_diff_inline_text_materialized();
                             let raw = self.file_diff_inline_text.clone();
                             self.diff_raw_input.update(cx, |input, cx| {
                                 input.set_theme(theme, cx);
@@ -326,8 +330,8 @@ impl MainPaneView {
                         }
 
                         let total_len = match self.diff_view {
-                            DiffViewMode::Inline => self.file_diff_inline_cache.len(),
-                            DiffViewMode::Split => self.file_diff_cache_rows.len(),
+                            DiffViewMode::Inline => self.file_diff_inline_row_len(),
+                            DiffViewMode::Split => self.file_diff_split_row_len(),
                         };
                         if total_len == 0 {
                             components::empty_state(theme, "Diff", "Empty file.").into_any_element()
@@ -626,16 +630,26 @@ impl MainPaneView {
         theme: AppTheme,
         old_len: usize,
         new_len: usize,
+        inline_len: usize,
         cx: &mut gpui::Context<Self>,
     ) -> AnyElement {
         if old_len == 0 && new_len == 0 {
             return components::empty_state(theme, "Preview", "Empty file.").into_any_element();
         }
 
+        self.maybe_autoscroll_diff_to_first_change();
+
         let scrollbar_markers = match &self.file_markdown_preview {
-            Loadable::Ready(preview) => {
-                crate::view::markdown_preview::scrollbar_markers_for_diff_preview(preview.as_ref())
-            }
+            Loadable::Ready(preview) => match self.diff_view {
+                DiffViewMode::Inline => {
+                    crate::view::markdown_preview::scrollbar_markers_for_document(&preview.inline)
+                }
+                DiffViewMode::Split => {
+                    crate::view::markdown_preview::scrollbar_markers_for_diff_preview(
+                        preview.as_ref(),
+                    )
+                }
+            },
             _ => Vec::new(),
         };
 
@@ -684,6 +698,56 @@ impl MainPaneView {
                     )
                     .into_any_element()
             };
+        }
+
+        if self.diff_view == DiffViewMode::Inline {
+            if inline_len == 0 {
+                return components::empty_state(theme, "Preview", "Nothing to render.")
+                    .into_any_element();
+            }
+
+            let scroll_handle = self.diff_scroll.0.borrow().base_handle.clone();
+            let list = mk_list!(
+                "diff_markdown_preview_inline",
+                inline_len,
+                self.diff_scroll.clone(),
+                cx.processor(Self::render_markdown_diff_inline_rows)
+            );
+
+            return div()
+                .id("diff_markdown_preview_container")
+                .relative()
+                .h_full()
+                .min_h(px(0.0))
+                .flex()
+                .flex_col()
+                .bg(theme.colors.window_bg)
+                .child(
+                    div()
+                        .id("diff_markdown_preview_inline_container")
+                        .relative()
+                        .flex_1()
+                        .min_h(px(0.0))
+                        .child(list)
+                        .child(
+                            components::Scrollbar::horizontal(
+                                "diff_markdown_preview_inline_hscrollbar",
+                                scroll_handle.clone(),
+                            )
+                            .always_visible()
+                            .render(theme),
+                        ),
+                )
+                .child(
+                    components::Scrollbar::new(
+                        "diff_markdown_preview_scrollbar",
+                        self.diff_scroll.clone(),
+                    )
+                    .markers(scrollbar_markers)
+                    .always_visible()
+                    .render(theme),
+                )
+                .into_any_element();
         }
 
         let (left_column, right_column, vertical_scroll_handle) = if old_len == 0 {
