@@ -25,7 +25,7 @@ const HTML_HIGHLIGHTS_QUERY: &str = include_str!("queries/html_highlights.scm");
 #[cfg(feature = "syntax-web")]
 const HTML_INJECTIONS_QUERY: &str = include_str!("queries/html_injections.scm");
 #[cfg(feature = "syntax-web")]
-const CSS_HIGHLIGHTS_QUERY: &str = include_str!("queries/css_highlights.scm");
+const CSS_HIGHLIGHTS_QUERY: &str = tree_sitter_css::HIGHLIGHTS_QUERY;
 #[cfg(feature = "syntax-web")]
 const JAVASCRIPT_HIGHLIGHTS_QUERY: &str = include_str!("queries/javascript_highlights.scm");
 #[cfg(feature = "syntax-web")]
@@ -34,6 +34,8 @@ const TYPESCRIPT_HIGHLIGHTS_QUERY: &str = include_str!("queries/typescript_highl
 const TSX_HIGHLIGHTS_QUERY: &str = include_str!("queries/tsx_highlights.scm");
 #[cfg(feature = "syntax-rust")]
 const RUST_HIGHLIGHTS_QUERY: &str = include_str!("queries/rust_highlights.scm");
+#[cfg(feature = "syntax-rust")]
+const RUST_INJECTIONS_QUERY: &str = include_str!("queries/rust_injections.scm");
 #[cfg(feature = "syntax-xml")]
 const XML_HIGHLIGHTS_QUERY: &str = tree_sitter_xml::XML_HIGHLIGHT_QUERY;
 
@@ -1929,7 +1931,6 @@ impl TreesitterQueryAsset {
         }
     }
 
-    #[cfg(feature = "syntax-web")]
     const fn with_injections(highlights: &'static str, injections: &'static str) -> Self {
         Self {
             highlights,
@@ -2734,7 +2735,7 @@ fn tree_sitter_grammar(
         #[cfg(feature = "syntax-rust")]
         DiffSyntaxLanguage::Rust => Some((
             tree_sitter_rust::LANGUAGE.into(),
-            TreesitterQueryAsset::highlights(RUST_HIGHLIGHTS_QUERY),
+            TreesitterQueryAsset::with_injections(RUST_HIGHLIGHTS_QUERY, RUST_INJECTIONS_QUERY),
         )),
         #[cfg(feature = "syntax-python")]
         DiffSyntaxLanguage::Python => Some((
