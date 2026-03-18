@@ -428,14 +428,15 @@ impl GixRepo {
 
     fn push_force_with_optional_output_impl(&self, capture_output: bool) -> Result<CommandOutput> {
         if let Some(branch) = self.current_branch_name()?
-            && let Some(upstream) = self.branch_upstream(&branch)? {
-                return self.push_head_to_branch_with_optional_output_impl(
-                    &upstream.remote,
-                    &upstream.branch,
-                    true,
-                    capture_output,
-                );
-            }
+            && let Some(upstream) = self.branch_upstream(&branch)?
+        {
+            return self.push_head_to_branch_with_optional_output_impl(
+                &upstream.remote,
+                &upstream.branch,
+                true,
+                capture_output,
+            );
+        }
 
         let mut cmd = self.git_workdir_cmd();
         cmd.arg("push").arg("--force-with-lease");
