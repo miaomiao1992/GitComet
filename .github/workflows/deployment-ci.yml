@@ -214,6 +214,38 @@ jobs:
           chmod 700 "$GNUPGHOME"
           gpg --batch --no-default-keyring --keyring dist/apt-ci/repo/gitcomet-archive-keyring.gpg --verify dist/apt-ci/repo/dists/stable/InRelease >/dev/null
 
+      - name: Verify generated repo with apt-secure
+        run: |
+          set -euo pipefail
+
+          repo_root="$(pwd)/dist/apt-ci/repo"
+          source_dir="${RUNNER_TEMP}/gitcomet-apt-sources.d"
+          lists_dir="${RUNNER_TEMP}/gitcomet-apt-lists"
+
+          mkdir -p "$source_dir"
+          sudo mkdir -p "${lists_dir}/partial"
+
+          cat > "${source_dir}/gitcomet-ci.sources" <<EOF
+          Types: deb
+          URIs: file://${repo_root}
+          Suites: stable
+          Components: main
+          Architectures: amd64
+          Signed-By: ${repo_root}/gitcomet-archive-keyring.gpg
+          EOF
+
+          sudo apt-get update \
+            -o Dir::Etc::sourcelist=/dev/null \
+            -o Dir::Etc::sourceparts="${source_dir}" \
+            -o Dir::State::lists="${lists_dir}" \
+            -o APT::Get::List-Cleanup=0
+
+          apt-cache policy gitcomet \
+            -o Dir::Etc::sourcelist=/dev/null \
+            -o Dir::Etc::sourceparts="${source_dir}" \
+            -o Dir::State::lists="${lists_dir}" \
+            | grep -q '0.0.0~ci1'
+
   macos-packaging-smoke:
     name: macOS packaging smoke (${{ matrix.arch }})
     runs-on: ${{ matrix.runs_on }}

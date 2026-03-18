@@ -199,9 +199,10 @@ write_release_checksums() {
       -printf '%P\n' \
       | LC_ALL=C sort
   )
-  echo ""
 }
 
+# `Release` is parsed as a single deb822 paragraph. Blank lines would split
+# the checksum stanzas into separate paragraphs and make APT ignore them.
 {
   echo "Origin: ${origin}"
   echo "Label: ${label}"
@@ -211,7 +212,6 @@ write_release_checksums() {
   echo "Architectures: ${architecture}"
   echo "Components: ${component}"
   echo "Description: ${description}"
-  echo ""
   write_release_checksums "MD5Sum" md5sum
   write_release_checksums "SHA256" sha256sum
   write_release_checksums "SHA512" sha512sum
