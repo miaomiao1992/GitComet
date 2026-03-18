@@ -493,6 +493,9 @@ jobs:
         run: |
           set -euo pipefail
 
+          metadata_cache_control='no-cache, no-store, max-age=0, must-revalidate'
+          package_cache_control='public, max-age=31536000, immutable'
+
           mkdir -p "$AZURE_CONFIG_DIR"
           : > dist/apt-uploaded-blobs.txt
 
@@ -503,15 +506,25 @@ jobs:
               blob_name="${STORAGE_PREFIX}/${rel_path}"
             fi
 
-            az storage blob upload \
-              --account-name "$STORAGE_ACCOUNT" \
-              --container-name "$STORAGE_CONTAINER" \
-              --account-key "$AZURE_STORAGE_ACCOUNT_KEY" \
-              --name "$blob_name" \
-              --file "$file_path" \
-              --overwrite true \
-              --no-progress \
+            upload_args=(
+              az storage blob upload
+              --account-name "$STORAGE_ACCOUNT"
+              --container-name "$STORAGE_CONTAINER"
+              --account-key "$AZURE_STORAGE_ACCOUNT_KEY"
+              --name "$blob_name"
+              --file "$file_path"
+              --overwrite true
+              --no-progress
               --output none
+            )
+
+            if [[ "$rel_path" == dists/* || "$rel_path" == "gitcomet.sources" || "$rel_path" == "gitcomet.list" || "$rel_path" == "gitcomet-archive-keyring.gpg" || "$rel_path" == "gitcomet-archive-keyring.asc" || "$rel_path" == "README.txt" ]]; then
+              upload_args+=(--content-cache-control "$metadata_cache_control")
+            elif [[ "$rel_path" == pool/* ]]; then
+              upload_args+=(--content-cache-control "$package_cache_control")
+            fi
+
+            "${upload_args[@]}"
 
             printf '%s\n' "$blob_name" >> dist/apt-uploaded-blobs.txt
           done < <(find dist/apt-repo -type f -print0 | sort -z)
