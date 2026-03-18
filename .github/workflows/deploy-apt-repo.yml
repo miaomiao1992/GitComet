@@ -469,6 +469,7 @@ jobs:
             --label "${{ steps.norm.outputs.repo_label }}"
             --description "${{ steps.norm.outputs.repo_description }}"
             --signing-key "${{ steps.gpg.outputs.signing_key }}"
+            --repo-url "https://apt.gitcomet.dev"
           )
 
           if [ -n "${{ steps.norm.outputs.repo_base_url }}" ]; then
