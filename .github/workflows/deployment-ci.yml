@@ -11,6 +11,7 @@ on:
       - ".github/workflows/release-manual-main.yml"
       - "scripts/update-aur.sh"
       - "scripts/package-macos.sh"
+      - "scripts/macos-cargo-config.sh"
       - "scripts/generate-homebrew-formula.sh"
       - "scripts/generate-homebrew-cask.sh"
       - "scripts/build-apt-repo.sh"
@@ -24,6 +25,7 @@ on:
       - ".github/workflows/release-manual-main.yml"
       - "scripts/update-aur.sh"
       - "scripts/package-macos.sh"
+      - "scripts/macos-cargo-config.sh"
       - "scripts/generate-homebrew-formula.sh"
       - "scripts/generate-homebrew-cask.sh"
       - "scripts/build-apt-repo.sh"
@@ -47,6 +49,7 @@ jobs:
         run: |
           bash -n scripts/update-aur.sh
           bash -n scripts/package-macos.sh
+          bash -n scripts/macos-cargo-config.sh
           bash -n scripts/generate-homebrew-formula.sh
           bash -n scripts/generate-homebrew-cask.sh
           bash -n scripts/build-apt-repo.sh
@@ -384,7 +387,16 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Build release binary
-        run: cargo build -p gitcomet --release --locked --features ui-gpui,gix --bins
+        run: |
+          set -euo pipefail
+          cargo_config_flag=()
+          cargo_config_output="$(scripts/macos-cargo-config.sh "${{ matrix.arch }}" release)"
+          if [[ -n "$cargo_config_output" ]]; then
+            while IFS= read -r arg; do
+              cargo_config_flag+=("$arg")
+            done <<<"$cargo_config_output"
+          fi
+          cargo build "${cargo_config_flag[@]}" -p gitcomet --release --locked --features ui-gpui,gix --bins
 
       - name: Package macOS artifacts
         run: |

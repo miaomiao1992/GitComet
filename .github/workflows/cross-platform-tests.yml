@@ -200,7 +200,15 @@ jobs:
             --verbose
       - name: Gatekeeper and code-signing check (informational)
         run: |
-          cargo build -p gitcomet $APP_FEATURES --release --locked
+          set -euo pipefail
+          cargo_config_flag=()
+          cargo_config_output="$(scripts/macos-cargo-config.sh "$(uname -m)" release)"
+          if [[ -n "$cargo_config_output" ]]; then
+            while IFS= read -r arg; do
+              cargo_config_flag+=("$arg")
+            done <<<"$cargo_config_output"
+          fi
+          cargo build "${cargo_config_flag[@]}" -p gitcomet $APP_FEATURES --release --locked
           codesign --verify --verbose target/release/gitcomet || true
           spctl --assess --type execute --verbose target/release/gitcomet || true
 

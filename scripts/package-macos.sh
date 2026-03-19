@@ -11,6 +11,10 @@ Builds a macOS app bundle and release artifacts:
 
 Defaults:
   --release, build if needed, output to ./dist
+
+Environment:
+  GITCOMET_MACOS_X86_RELEASE_LTO=thin|fat|false|off|inherit
+    Overrides release LTO for Intel macOS builds. Default: thin.
 USAGE
 }
 
@@ -98,10 +102,18 @@ bin_src="${repo_root}/target/${mode}/gitcomet"
 
 if [[ $build -eq 1 && ! -x "$bin_src" ]]; then
   cargo_mode_flag=()
+  cargo_config_flag=()
+  cargo_config_output=""
   if [[ "$mode" == "release" ]]; then
     cargo_mode_flag=(--release)
   fi
-  (cd "$repo_root" && cargo build -p gitcomet "${cargo_mode_flag[@]}" --locked --features ui-gpui,gix --bins)
+  cargo_config_output="$("${repo_root}/scripts/macos-cargo-config.sh" "$arch" "$mode")"
+  if [[ -n "$cargo_config_output" ]]; then
+    while IFS= read -r arg; do
+      cargo_config_flag+=("$arg")
+    done <<<"$cargo_config_output"
+  fi
+  (cd "$repo_root" && cargo build "${cargo_config_flag[@]}" -p gitcomet "${cargo_mode_flag[@]}" --locked --features ui-gpui,gix --bins)
 fi
 
 if [[ ! -x "$bin_src" ]]; then
