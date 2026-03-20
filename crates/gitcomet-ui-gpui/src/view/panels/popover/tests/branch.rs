@@ -234,6 +234,43 @@ fn unique_temp_dir(label: &str) -> PathBuf {
     path
 }
 
+fn normalize_store_workdir(path: &Path) -> PathBuf {
+    let path = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    strip_windows_verbatim_prefix(path)
+}
+
+#[cfg(windows)]
+fn strip_windows_verbatim_prefix(path: PathBuf) -> PathBuf {
+    use std::path::{Component, Prefix};
+
+    let mut components = path.components();
+    let Some(Component::Prefix(prefix)) = components.next() else {
+        return path;
+    };
+
+    let mut out = match prefix.kind() {
+        Prefix::VerbatimDisk(letter) => PathBuf::from(format!("{}:", char::from(letter))),
+        Prefix::VerbatimUNC(server, share) => {
+            let mut out = PathBuf::from(r"\\");
+            out.push(server);
+            out.push(share);
+            out
+        }
+        Prefix::Verbatim(raw) => PathBuf::from(raw),
+        _ => return path,
+    };
+
+    for component in components {
+        out.push(component.as_os_str());
+    }
+    out
+}
+
+#[cfg(not(windows))]
+fn strip_windows_verbatim_prefix(path: PathBuf) -> PathBuf {
+    path
+}
+
 pub(super) fn wait_until(description: &str, ready: impl Fn() -> bool) {
     let deadline = Instant::now() + Duration::from_secs(3);
     loop {
@@ -256,6 +293,7 @@ pub(super) fn create_tracking_store(
     PathBuf,
 ) {
     let workdir = unique_temp_dir(label);
+    let expected_workdir = normalize_store_workdir(&workdir);
     let repo = Arc::new(TrackingRepo::new(workdir.clone()));
     let (store, events) = AppStore::new(Arc::new(TrackingBackend {
         repo: Arc::clone(&repo),
@@ -263,9 +301,17 @@ pub(super) fn create_tracking_store(
     store.dispatch(Msg::OpenRepo(workdir.clone()));
     wait_until("tracked test repo to open", || {
         let snapshot = store.snapshot();
-        snapshot.active_repo.is_some()
-            && snapshot.repos.iter().any(|repo_state| {
-                repo_state.spec.workdir == workdir && matches!(repo_state.open, Loadable::Ready(()))
+        snapshot
+            .active_repo
+            .and_then(|repo_id| {
+                snapshot
+                    .repos
+                    .iter()
+                    .find(|repo_state| repo_state.id == repo_id)
+            })
+            .is_some_and(|repo_state| {
+                repo_state.spec.workdir == expected_workdir
+                    && matches!(repo_state.open, Loadable::Ready(()))
             })
     });
     (store, events, repo, workdir)

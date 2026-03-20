@@ -21,6 +21,7 @@ mod clone;
 mod context_shortcuts;
 mod file_actions;
 mod picker;
+mod recent_repo_picker;
 mod refs;
 mod stash;
 mod status;
