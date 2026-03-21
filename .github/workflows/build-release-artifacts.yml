@@ -188,11 +188,39 @@ jobs:
           $ErrorActionPreference = "Stop"
           choco install wixtoolset --version "${env:WIXTOOLSET_VERSION}" --yes --no-progress
           cargo install cargo-wix --version "${env:CARGO_WIX_VERSION}" --locked
+
+          # Chocolatey updates machine-level env vars, but the current pwsh session does not pick them up automatically.
+          $wixRoot = [Environment]::GetEnvironmentVariable("WIX", "Machine")
+          if ([string]::IsNullOrWhiteSpace($wixRoot)) {
+            $candidateRoots = @()
+            if (${env:ProgramFiles(x86)}) {
+              $candidateRoots += (Join-Path ${env:ProgramFiles(x86)} "WiX Toolset v3.14")
+            }
+            if ($env:ProgramFiles) {
+              $candidateRoots += (Join-Path $env:ProgramFiles "WiX Toolset v3.14")
+            }
+            $wixRoot = $candidateRoots |
+              Where-Object { Test-Path (Join-Path $_ "bin\candle.exe") } |
+              Select-Object -First 1
+          }
+          if ([string]::IsNullOrWhiteSpace($wixRoot)) {
+            throw "Unable to locate the WiX Toolset installation after Chocolatey install."
+          }
+          $wixBin = $wixRoot
+          if (!(Test-Path (Join-Path $wixBin "candle.exe"))) {
+            $wixBin = Join-Path $wixRoot "bin"
+          }
+          if (!(Test-Path (Join-Path $wixBin "candle.exe"))) {
+            throw "WiX Toolset bin directory '$wixBin' does not contain candle.exe."
+          }
+          $env:WIX = Split-Path $wixBin -Parent
+          $env:PATH = "$wixBin;$env:PATH"
+
           if (!(Test-Path "crates\gitcomet\wix\main.wxs")) {
             cargo wix init --package gitcomet
           }
           $msiName = "gitcomet-v${env:VERSION}-windows-${env:ARTIFACT_ARCH}.msi"
-          cargo wix --package gitcomet --profile release --nocapture --no-build --output "dist\$msiName"
+          cargo wix --package gitcomet --profile release --nocapture --no-build --bin-path "$wixBin" --output "dist\$msiName"
 
       - name: Upload Windows artifacts
         uses: actions/upload-artifact@v7
