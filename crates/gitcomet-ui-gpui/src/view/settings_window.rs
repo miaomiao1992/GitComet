@@ -196,6 +196,7 @@ impl SettingsWindowView {
             window_height: None,
             sidebar_width: None,
             details_width: None,
+            repo_sidebar_collapsed_items: None,
             theme_mode: Some(self.theme_mode.key().to_string()),
             date_time_format: Some(self.date_time_format.key().to_string()),
             timezone: Some(self.timezone.key()),
@@ -1175,7 +1176,17 @@ impl Render for SettingsWindowView {
                     .relative()
                     .flex_1()
                     .min_h(px(0.0))
-                    .child(div().flex_1().h_full().min_h(px(0.0)).child(list))
+                    .child(
+                        div()
+                            .flex_1()
+                            .h_full()
+                            .min_h(px(0.0))
+                            .pr(components::Scrollbar::visible_gutter(
+                                self.open_source_licenses_scroll.clone(),
+                                components::ScrollbarAxis::Vertical,
+                            ))
+                            .child(list),
+                    )
                     .child(
                         {
                             let scrollbar = components::Scrollbar::new(
