@@ -17,6 +17,8 @@ Options:
   --metric NAME         Metric to compare. Repeatable.
                         Default:
                           mean_ns
+                          avg_cpu_pct
+                          rss_delta_kib
                           alloc_bytes
                           net_alloc_bytes
                           first_paint_alloc_bytes
@@ -32,14 +34,14 @@ Options:
                         Default: lower
   --sort FIELD          Sort rows by: regression, delta, abs_delta, name
                         Default: regression
-  --limit N             Max rows per metric section. Default: 40
+  --limit N             Max rows. Default: 40
   --only-regressions    Show only worsening rows according to --direction
   -h, --help            Show this help.
 
 Examples:
-  scripts/compare-perf-runs.sh 20260331-010000Z 20260331-020000Z
-  scripts/compare-perf-runs.sh --metric avg_cpu_pct --kind idle base-run new-run
-  scripts/compare-perf-runs.sh --metric mean_ns --metric rss_delta_kib --only-regressions base new
+  scripts/compare-perf-runs.sh linux-before linux-after
+  scripts/compare-perf-runs.sh --kind idle linux-before linux-after
+  scripts/compare-perf-runs.sh --metric mean_ns --metric avg_cpu_pct --metric alloc_bytes linux-before linux-after
 EOF
 }
 
@@ -64,16 +66,6 @@ format_number() {
   }'
 }
 
-format_percent() {
-  awk -v value="$1" 'BEGIN {
-    if (value == "" || value == "null") {
-      printf "n/a";
-    } else {
-      printf "%.2f%%", value;
-    }
-  }'
-}
-
 format_bytes() {
   awk -v value="$1" 'BEGIN {
     abs = value;
@@ -81,11 +73,11 @@ format_bytes() {
     if (value == "" || value == "null") {
       printf "n/a";
     } else if (abs >= 1073741824) {
-      printf "%.3f GiB", value / 1073741824;
+      printf "%.2f GiB", value / 1073741824;
     } else if (abs >= 1048576) {
-      printf "%.3f MiB", value / 1048576;
+      printf "%.2f MiB", value / 1048576;
     } else if (abs >= 1024) {
-      printf "%.3f KiB", value / 1024;
+      printf "%.2f KiB", value / 1024;
     } else {
       printf "%.0f B", value;
     }
@@ -109,16 +101,16 @@ format_kib() {
     if (value == "" || value == "null") {
       printf "n/a";
     } else if (abs >= 1048576) {
-      printf "%.3f GiB", value / 1048576;
+      printf "%.2f GiB", value / 1048576;
     } else if (abs >= 1024) {
-      printf "%.3f MiB", value / 1024;
+      printf "%.2f MiB", value / 1024;
     } else {
       printf "%.0f KiB", value;
     }
   }'
 }
 
-format_pct() {
+format_pct_value() {
   awk -v value="$1" 'BEGIN {
     if (value == "" || value == "null") {
       printf "n/a";
@@ -162,40 +154,49 @@ metric_key() {
   esac
 }
 
-metric_label() {
+metric_column_stem() {
   case "$1" in
     criterion.mean_ns)
-      printf 'criterion mean\n'
+      printf 'time\n'
       ;;
     criterion.mean_upper_ns)
-      printf 'criterion mean 95%% upper\n'
+      printf 'time95\n'
       ;;
     criterion.median_ns)
-      printf 'criterion median\n'
+      printf 'median\n'
       ;;
     criterion.std_dev_ns)
-      printf 'criterion std dev\n'
+      printf 'stdev\n'
+      ;;
+    sidecar:avg_cpu_pct)
+      printf 'cpu\n'
+      ;;
+    sidecar:peak_cpu_pct)
+      printf 'cpu_peak\n'
+      ;;
+    sidecar:rss_delta_kib)
+      printf 'rss\n'
+      ;;
+    sidecar:alloc_bytes)
+      printf 'alloc\n'
+      ;;
+    sidecar:net_alloc_bytes)
+      printf 'net_alloc\n'
+      ;;
+    sidecar:first_paint_alloc_bytes)
+      printf 'fp_alloc\n'
+      ;;
+    sidecar:first_interactive_alloc_bytes)
+      printf 'fi_alloc\n'
+      ;;
+    sidecar:first_paint_ms)
+      printf 'fp_ms\n'
+      ;;
+    sidecar:first_interactive_ms)
+      printf 'fi_ms\n'
       ;;
     sidecar:*)
-      printf 'sidecar %s\n' "${1#sidecar:}"
-      ;;
-  esac
-}
-
-metric_is_duration_ns() {
-  [[ "$1" == criterion.*_ns || "$1" == criterion.mean_ns || "$1" == criterion.median_ns ]]
-}
-
-metric_pretty_direction() {
-  case "$1" in
-    lower)
-      printf 'lower is better\n'
-      ;;
-    higher)
-      printf 'higher is better\n'
-      ;;
-    *)
-      printf 'change only\n'
+      printf '%s\n' "${1#sidecar:}"
       ;;
   esac
 }
@@ -204,19 +205,58 @@ format_metric_value() {
   local metric="$1"
   local value="$2"
 
-  if metric_is_duration_ns "${metric}"; then
-    format_duration_ns "${value}"
-  elif [[ "${metric}" == sidecar:*_bytes ]]; then
-    format_bytes "${value}"
-  elif [[ "${metric}" == sidecar:*_kib ]]; then
-    format_kib "${value}"
-  elif [[ "${metric}" == sidecar:*_ms ]]; then
-    format_ms "${value}"
-  elif [[ "${metric}" == sidecar:*_pct ]]; then
-    format_pct "${value}"
-  else
-    format_number "${value}"
-  fi
+  case "$metric" in
+    criterion.*_ns|criterion.mean_ns|criterion.median_ns)
+      format_duration_ns "${value}"
+      ;;
+    sidecar:*_bytes)
+      format_bytes "${value}"
+      ;;
+    sidecar:*_kib)
+      format_kib "${value}"
+      ;;
+    sidecar:*_ms)
+      format_ms "${value}"
+      ;;
+    sidecar:*_pct)
+      format_pct_value "${value}"
+      ;;
+    *)
+      format_number "${value}"
+      ;;
+  esac
+}
+
+format_change_cell() {
+  local status="$1"
+  local delta_pct="$2"
+
+  case "$status" in
+    ""|null)
+      printf -- '-'
+      ;;
+    unchanged)
+      printf 'same'
+      ;;
+    improved)
+      awk -v v="${delta_pct}" 'BEGIN {
+        if (v < 0) v = -v;
+        printf "imp %.2f%%", v;
+      }'
+      ;;
+    regressed)
+      awk -v v="${delta_pct}" 'BEGIN {
+        if (v < 0) v = -v;
+        printf "reg %.2f%%", v;
+      }'
+      ;;
+    *)
+      awk -v v="${delta_pct}" 'BEGIN {
+        if (v < 0) v = -v;
+        printf "chg %.2f%%", v;
+      }'
+      ;;
+  esac
 }
 
 metadata_get() {
@@ -259,11 +299,11 @@ resolve_run() {
 
   if [[ ! -f "${jsonl_path}" ]]; then
     echo "Missing benchmark metrics file: ${jsonl_path}" >&2
-    exit 1
+    return 1
   fi
   if [[ ! -f "${metadata_path}" ]]; then
     echo "Missing metadata file: ${metadata_path}" >&2
-    exit 1
+    return 1
   fi
 
   printf '%s|%s|%s\n' "${run_dir}" "${jsonl_path}" "${metadata_path}"
@@ -292,22 +332,34 @@ print_run_summary() {
   echo "  real_repo_root: ${real_repo_root:-<unset>}"
 }
 
-compare_metric() {
-  local metric="$1"
-  local metric_jq="$2"
+compare_metrics_table() {
   local tmp_file
-  local matched_rows
-  local total_rows
   local only_regressions_json="false"
+  local metrics_json="["
+  local metric=""
+  local metric_jq=""
+  local metric_count=0
+  local group_count=0
+  local group_index=0
 
   tmp_file="$(mktemp)"
   if [[ ${only_regressions} -eq 1 ]]; then
     only_regressions_json="true"
   fi
 
+  for metric in "${metrics[@]}"; do
+    metric_jq="$(metric_key "${metric}")"
+    if [[ ${metric_count} -gt 0 ]]; then
+      metrics_json+=", "
+    fi
+    metrics_json+="\"${metric_jq}\""
+    metric_count=$((metric_count + 1))
+  done
+  metrics_json+="]"
+
   jq -s \
     --slurpfile cand "${candidate_jsonl}" \
-    --arg metric "${metric_jq}" \
+    --argjson metrics "${metrics_json}" \
     --arg kind "${kind_filter}" \
     --arg direction "${direction}" \
     --arg sort_by "${sort_by}" \
@@ -336,10 +388,37 @@ compare_metric() {
           "changed"
         end;
 
-      def is_regression($direction; $delta):
-        ($direction == "lower" and $delta > 0) or
-        ($direction == "higher" and $delta < 0) or
-        ($direction == "neutral" and $delta != 0);
+      def metric_entry($old; $new; $metric; $direction):
+        (metric_value($old; $metric)) as $before
+        | (metric_value($new; $metric)) as $after
+        | if $before == null or $after == null then
+            {
+              metric: $metric,
+              before: null,
+              after: null,
+              delta_pct: null,
+              status: null
+            }
+          else
+            (($after - $before)) as $delta
+            | (
+                if $before == 0 and $after == 0 then
+                  0
+                elif $before == 0 then
+                  null
+                else
+                  (($delta / $before) * 100)
+                end
+              ) as $delta_pct
+            | (status_for($direction; $delta)) as $status
+            | {
+                metric: $metric,
+                before: $before,
+                after: $after,
+                delta_pct: $delta_pct,
+                status: $status
+              }
+          end;
 
       . as $base
       | (idx($base)) as $base_idx
@@ -351,32 +430,49 @@ compare_metric() {
           | ($base_idx[.]) as $old
           | ($cand_idx[.]) as $new
           | select($kind == "all" or $old.kind == $kind)
-          | (metric_value($old; $metric)) as $before
-          | (metric_value($new; $metric)) as $after
-          | select($before != null and $after != null)
           | {
-              bench: $old.bench,
               kind: $old.kind,
-              before: $before,
-              after: $after,
-              delta: ($after - $before),
-              delta_pct: (if $before == 0 then null else (($after - $before) / $before * 100) end),
-              status: status_for($direction; ($after - $before))
+              bench: $old.bench,
+              metrics: [ $metrics[] as $metric | metric_entry($old; $new; $metric; $direction) ]
+            }
+          | . + {
+              comparable_count: ([ .metrics[] | select(.status != null) ] | length),
+              improved_count: ([ .metrics[] | select(.status == "improved") ] | length),
+              regressed_count: ([ .metrics[] | select(.status == "regressed") ] | length),
+              changed_count: ([ .metrics[] | select(.status == "changed") ] | length),
+              first_delta_pct: ([ .metrics[] | select(.delta_pct != null) | .delta_pct ][0] // null),
+              max_regression_score: (
+                [ .metrics[]
+                  | select(.status == "regressed" and .delta_pct != null)
+                  | (if .delta_pct < 0 then -.delta_pct else .delta_pct end)
+                ] | max // 0
+              ),
+              max_abs_delta_score: (
+                [ .metrics[]
+                  | select(.delta_pct != null)
+                  | (if .delta_pct < 0 then -.delta_pct else .delta_pct end)
+                ] | max // 0
+              )
+            }
+          | select(.comparable_count > 0)
+          | . + {
+              status: (
+                if .improved_count > 0 and .regressed_count == 0 and .changed_count == 0 then
+                  "improved"
+                elif .regressed_count > 0 and .improved_count == 0 and .changed_count == 0 then
+                  "regressed"
+                elif .improved_count == 0 and .regressed_count == 0 and .changed_count == 0 then
+                  "unchanged"
+                else
+                  "mixed"
+                end
+              )
             }
         ] as $rows
       | ($rows | length) as $matched
-      | {
-          improved: ([ $rows[] | select(.status == "improved") ] | length),
-          regressed: ([ $rows[] | select(.status == "regressed") ] | length),
-          unchanged: ([ $rows[] | select(.status == "unchanged") ] | length),
-          changed: ([ $rows[] | select(.status == "changed") ] | length)
-        } as $summary
       | (
           if $only_regressions then
-            [
-              $rows[]
-              | select(is_regression($direction; .delta))
-            ]
+            [ $rows[] | select(.max_regression_score > 0) ]
           else
             $rows
           end
@@ -385,92 +481,106 @@ compare_metric() {
           if $sort_by == "name" then
             ($filtered | sort_by(.bench, .kind))
           elif $sort_by == "delta" then
-            ($filtered
-             | map(. + {
-                 score: (
-                   if $direction == "higher" then -(.delta)
-                   elif $direction == "neutral" then (.delta | if . < 0 then -. else . end)
-                   else .delta
-                   end
-                 )
-               })
-             | sort_by(.score, .bench, .kind)
-             | reverse
-             | map(del(.score)))
+            ($filtered | sort_by(.first_delta_pct // -1e308, .bench, .kind) | reverse)
           elif $sort_by == "abs_delta" then
-            ($filtered
-             | map(. + { score: (.delta | if . < 0 then -. else . end) })
-             | sort_by(.score, .bench, .kind)
-             | reverse
-             | map(del(.score)))
+            ($filtered | sort_by(.max_abs_delta_score, .bench, .kind) | reverse)
           else
-            ($filtered
-             | map(. + {
-                 score: (
-                   if .delta_pct == null then
-                     -1e308
-                   elif $direction == "higher" then
-                     -(.delta_pct)
-                   elif $direction == "neutral" then
-                     (.delta_pct | if . < 0 then -. else . end)
-                   else
-                     .delta_pct
-                   end
-                 )
-               })
-             | sort_by(.score, .bench, .kind)
-             | reverse
-             | map(del(.score)))
+            ($filtered | sort_by(.max_regression_score, .bench, .kind) | reverse)
           end
         ) as $sorted
       | {
           matched: $matched,
-          summary: $summary,
-          shown: (($sorted | length) | if . > $limit then $limit else . end),
-          rows: ($sorted[:$limit])
+          groups: (
+            [
+              "criterion",
+              "idle",
+              "launch"
+            ]
+            | map(
+                . as $kind_name
+                | ($sorted[:$limit] | map(select(.kind == $kind_name))) as $kind_rows
+                | select(($kind_rows | length) > 0)
+                | {
+                    kind: $kind_name,
+                    metrics: [
+                      $metrics[] as $metric
+                      | select(any($kind_rows[]; any(.metrics[]; .metric == $metric and .status != null)))
+                      | $metric
+                    ],
+                    rows: $kind_rows
+                  }
+              )
+          )
         }
     ' "${base_jsonl}" > "${tmp_file}"
 
-  matched_rows="$(jq -r '.matched' "${tmp_file}")"
-  total_rows="$(jq -r '.shown' "${tmp_file}")"
-
-  echo
-  echo "Metric: $(metric_label "${metric_jq}")"
-  echo "  interpretation: $(metric_pretty_direction "${direction}")"
-  echo "  matched benchmarks: ${matched_rows}"
-  echo "  shown rows: ${total_rows}"
-
-  if [[ "${matched_rows}" == "0" ]]; then
-    echo "  no comparable benchmarks found"
+  if [[ "$(jq -r '.matched' "${tmp_file}")" == "0" ]]; then
     rm -f "${tmp_file}"
     return 0
   fi
 
-  echo "  summary: improved=$(jq -r '.summary.improved' "${tmp_file}") regressed=$(jq -r '.summary.regressed' "${tmp_file}") unchanged=$(jq -r '.summary.unchanged' "${tmp_file}") changed=$(jq -r '.summary.changed' "${tmp_file}")"
+  group_count="$(jq -r '.groups | length' "${tmp_file}")"
+  for ((group_index = 0; group_index < group_count; group_index++)); do
+    local kind_name
+    local row_tsv_filter=""
+    local -a group_metrics=()
+    local -a header=()
+    local -a separator=()
 
-  printf '%-12s  %-46s  %-11s  %-16s  %-16s  %-16s  %-10s\n' "kind" "bench" "status" "before" "after" "delta" "delta %"
-  printf '%-12s  %-46s  %-11s  %-16s  %-16s  %-16s  %-10s\n' "------------" "----------------------------------------------" "-----------" "----------------" "----------------" "----------------" "----------"
+    kind_name="$(jq -r ".groups[${group_index}].kind" "${tmp_file}")"
+    mapfile -t group_metrics < <(jq -r ".groups[${group_index}].metrics[]" "${tmp_file}")
 
-  while IFS=$'\t' read -r row_kind row_bench row_status row_before row_after row_delta row_delta_pct; do
-    local before_fmt
-    local after_fmt
-    local delta_fmt
+    echo
+    echo "${kind_name}"
 
-    before_fmt="$(format_metric_value "${metric_jq}" "${row_before}")"
-    after_fmt="$(format_metric_value "${metric_jq}" "${row_after}")"
-    delta_fmt="$(format_metric_value "${metric_jq}" "${row_delta}")"
+    header=("bench" "status")
+    separator=("----------------------------------------------" "-----------")
+    for metric_jq in "${group_metrics[@]}"; do
+      header+=("$(metric_column_stem "${metric_jq}")_base")
+      header+=("$(metric_column_stem "${metric_jq}")_cand")
+      header+=("$(metric_column_stem "${metric_jq}")%")
+      separator+=("--------------")
+      separator+=("--------------")
+      separator+=("------------")
+    done
 
-    printf '%-12s  %-46s  %-11s  %-16s  %-16s  %-16s  %-10s\n' \
-      "${row_kind}" \
-      "${row_bench:0:46}" \
-      "${row_status}" \
-      "${before_fmt}" \
-      "${after_fmt}" \
-      "${delta_fmt}" \
-      "$(format_percent "${row_delta_pct}")"
-  done < <(
-    jq -r '.rows[] | [.kind, .bench, .status, (.before|tostring), (.after|tostring), (.delta|tostring), ((.delta_pct // "null")|tostring)] | @tsv' "${tmp_file}"
-  )
+    printf '%-46s  %-11s' "${header[0]}" "${header[1]}"
+    for ((i = 2; i < ${#header[@]}; i++)); do
+      printf '  %-14s' "${header[$i]}"
+    done
+    printf '\n'
+
+    printf '%-46s  %-11s' "${separator[0]}" "${separator[1]}"
+    for ((i = 2; i < ${#separator[@]}; i++)); do
+      printf '  %-14s' "${separator[$i]}"
+    done
+    printf '\n'
+
+    row_tsv_filter=".groups[${group_index}] as \$g | \$g.rows[] | . as \$row | [\$row.bench, \$row.status]"
+    for metric_jq in "${group_metrics[@]}"; do
+      row_tsv_filter+=" + [((\$row.metrics[] | select(.metric == \"${metric_jq}\") | (.before // \"null\")) | tostring)]"
+      row_tsv_filter+=" + [((\$row.metrics[] | select(.metric == \"${metric_jq}\") | (.after // \"null\")) | tostring)]"
+      row_tsv_filter+=" + [((\$row.metrics[] | select(.metric == \"${metric_jq}\") | (.delta_pct // \"null\")) | tostring)]"
+      row_tsv_filter+=" + [((\$row.metrics[] | select(.metric == \"${metric_jq}\") | (.status // \"\")) | tostring)]"
+    done
+    row_tsv_filter+=" | @tsv"
+
+    while IFS=$'\t' read -r -a fields; do
+      local field_index=2
+      printf '%-46s  %-11s' "${fields[0]:0:46}" "${fields[1]}"
+      for metric_jq in "${group_metrics[@]}"; do
+        local before_raw="${fields[$field_index]}"
+        local after_raw="${fields[$((field_index + 1))]}"
+        local delta_pct_raw="${fields[$((field_index + 2))]}"
+        local status_raw="${fields[$((field_index + 3))]}"
+        printf '  %-14s' "$(format_metric_value "${metric_jq}" "${before_raw}")"
+        printf '  %-14s' "$(format_metric_value "${metric_jq}" "${after_raw}")"
+        printf '  %-14s' "$(format_change_cell "${status_raw}" "${delta_pct_raw}")"
+        field_index=$((field_index + 4))
+      done
+      printf '\n'
+    done < <(jq -r "${row_tsv_filter}" "${tmp_file}")
+  done
 
   rm -f "${tmp_file}"
 }
@@ -528,8 +638,12 @@ done
 if [[ ${#metrics[@]} -eq 0 ]]; then
   metrics=(
     "mean_ns"
+    "avg_cpu_pct"
+    "rss_delta_kib"
     "alloc_bytes"
     "net_alloc_bytes"
+    "first_paint_ms"
+    "first_interactive_ms"
     "first_paint_alloc_bytes"
     "first_interactive_alloc_bytes"
   )
@@ -574,8 +688,12 @@ fi
 
 require_jq
 
-IFS='|' read -r base_run_dir base_jsonl base_metadata <<< "$(resolve_run "${positionals[0]}")"
-IFS='|' read -r candidate_run_dir candidate_jsonl candidate_metadata <<< "$(resolve_run "${positionals[1]}")"
+if ! IFS='|' read -r base_run_dir base_jsonl base_metadata <<< "$(resolve_run "${positionals[0]}")"; then
+  exit 1
+fi
+if ! IFS='|' read -r candidate_run_dir candidate_jsonl candidate_metadata <<< "$(resolve_run "${positionals[1]}")"; then
+  exit 1
+fi
 
 echo "Comparing archived performance runs"
 print_run_summary "base" "${base_run_dir}" "${base_metadata}"
@@ -599,6 +717,5 @@ if [[ "${base_real_repo_root}" != "${candidate_real_repo_root}" ]]; then
   echo "warning: real_repo_root differs between runs"
 fi
 
-for metric in "${metrics[@]}"; do
-  compare_metric "${metric}" "$(metric_key "${metric}")"
-done
+echo
+compare_metrics_table
