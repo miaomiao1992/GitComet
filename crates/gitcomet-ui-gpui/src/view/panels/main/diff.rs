@@ -12,6 +12,8 @@ fn image_diff_ready_shows_processing(has_file: bool, cache_active: bool) -> bool
     has_file && !cache_active
 }
 
+const PDF_VIEWER_CARD_MAX_WIDTH_PX: f32 = 420.0;
+
 impl MainPaneView {
     pub(in crate::view) fn conflict_resolver_strategy(
         conflict: Option<gitcomet_core::domain::FileConflictKind>,
@@ -28,14 +30,35 @@ impl MainPaneView {
         cx: &mut gpui::Context<Self>,
     ) -> AnyElement {
         let editor_font_family = crate::font_preferences::current_editor_font_family(cx);
-        let (wants_image, wants_markdown_preview, rendered_preview_kind) = self
+        let (wants_image, wants_markdown_preview, wants_pdf_preview, rendered_preview_kind) = self
             .active_repo()
             .map(|repo| {
                 let rendered_preview_kind = crate::view::diff_target_rendered_preview_kind(
                     repo.diff_state.diff_target.as_ref(),
                 );
-                let has_image = !matches!(repo.diff_state.diff_file_image, Loadable::NotLoaded);
-                let wants_image = has_image
+                let binary_preview_kind =
+                    repo.diff_state
+                        .diff_target
+                        .as_ref()
+                        .and_then(|target| match target {
+                            DiffTarget::WorkingTree { path, .. } => {
+                                crate::view::diff_utils::binary_preview_kind_for_path(path)
+                            }
+                            DiffTarget::Commit {
+                                path: Some(path), ..
+                            } => crate::view::diff_utils::binary_preview_kind_for_path(path),
+                            DiffTarget::Commit { path: None, .. } => None,
+                        });
+                let has_binary_preview =
+                    !matches!(repo.diff_state.diff_file_image, Loadable::NotLoaded);
+                let wants_image = has_binary_preview
+                    && matches!(
+                        binary_preview_kind,
+                        Some(
+                            crate::view::diff_utils::BinaryPreviewKind::Image(_)
+                                | crate::view::diff_utils::BinaryPreviewKind::Ico
+                        )
+                    )
                     && (!matches!(rendered_preview_kind, Some(RenderedPreviewKind::Svg))
                         || self.rendered_preview_modes.get(RenderedPreviewKind::Svg)
                             == RenderedPreviewMode::Rendered);
@@ -45,9 +68,18 @@ impl MainPaneView {
                         .rendered_preview_modes
                         .get(RenderedPreviewKind::Markdown)
                         == RenderedPreviewMode::Rendered;
-                (wants_image, wants_markdown_preview, rendered_preview_kind)
+                let wants_pdf_preview = has_binary_preview
+                    && rendered_preview_kind == Some(RenderedPreviewKind::Pdf)
+                    && self.rendered_preview_modes.get(RenderedPreviewKind::Pdf)
+                        == RenderedPreviewMode::Rendered;
+                (
+                    wants_image,
+                    wants_markdown_preview,
+                    wants_pdf_preview,
+                    rendered_preview_kind,
+                )
             })
-            .unwrap_or((false, false, None));
+            .unwrap_or((false, false, false, None));
 
         if wants_image {
             enum DiffFileImageState {
@@ -116,7 +148,7 @@ impl MainPaneView {
                         }
 
                         let old = self
-                            .file_image_diff_cache_old_svg_path
+                            .file_image_diff_cache_old_preview_path
                             .clone()
                             .map(CachedDiffImageSource::Path)
                             .or_else(|| {
@@ -125,7 +157,7 @@ impl MainPaneView {
                                     .map(CachedDiffImageSource::Render)
                             });
                         let new = self
-                            .file_image_diff_cache_new_svg_path
+                            .file_image_diff_cache_new_preview_path
                             .clone()
                             .map(CachedDiffImageSource::Path)
                             .or_else(|| {
@@ -229,6 +261,70 @@ impl MainPaneView {
                     }
                 }
             }
+        } else if wants_pdf_preview {
+            enum DiffFilePdfState {
+                NotLoaded,
+                Loading,
+                Error(String),
+                Ready { has_file: bool },
+            }
+
+            let diff_file_state = match self
+                .active_repo()
+                .map(|repo| &repo.diff_state.diff_file_image)
+            {
+                None => {
+                    return components::empty_state(theme, "Preview", "No repository.")
+                        .into_any_element();
+                }
+                Some(Loadable::NotLoaded) => DiffFilePdfState::NotLoaded,
+                Some(Loadable::Loading) => DiffFilePdfState::Loading,
+                Some(Loadable::Error(error)) => DiffFilePdfState::Error(error.clone()),
+                Some(Loadable::Ready(file)) => DiffFilePdfState::Ready {
+                    has_file: file.is_some(),
+                },
+            };
+
+            match diff_file_state {
+                DiffFilePdfState::NotLoaded => {
+                    components::empty_state(theme, "Preview", "Select a file.").into_any_element()
+                }
+                DiffFilePdfState::Loading => {
+                    components::empty_state(theme, "Preview", "Loading").into_any_element()
+                }
+                DiffFilePdfState::Error(error) => {
+                    components::empty_state(theme, "Preview", error).into_any_element()
+                }
+                DiffFilePdfState::Ready { has_file } => {
+                    if !has_file {
+                        components::empty_state(theme, "Preview", "No PDF contents available.")
+                            .into_any_element()
+                    } else {
+                        self.ensure_file_pdf_preview_cache(cx);
+                        match self.file_pdf_preview.clone() {
+                            Loadable::NotLoaded | Loadable::Loading => {
+                                components::empty_state(theme, "Preview", "Preparing PDF...")
+                                    .into_any_element()
+                            }
+                            Loadable::Error(error) => {
+                                components::empty_state(theme, "Preview", error).into_any_element()
+                            }
+                            Loadable::Ready(preview) => {
+                                if preview.is_empty() {
+                                    components::empty_state(
+                                        theme,
+                                        "Preview",
+                                        "No PDF contents available.",
+                                    )
+                                    .into_any_element()
+                                } else {
+                                    self.render_pdf_diff_preview(theme, preview.as_ref(), cx)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         } else {
             enum DiffFileState {
                 NotLoaded,
@@ -257,8 +353,19 @@ impl MainPaneView {
                 return components::empty_state(theme, "Diff", "SVG code view is not available.")
                     .into_any_element();
             }
+            if !wants_markdown_preview
+                && rendered_preview_kind == Some(RenderedPreviewKind::Pdf)
+                && matches!(diff_file_state, DiffFileState::NotLoaded)
+            {
+                return components::empty_state(
+                    theme,
+                    "Binary",
+                    "PDF binary view is not available.",
+                )
+                .into_any_element();
+            }
 
-            if !wants_markdown_preview {
+            if !wants_markdown_preview && rendered_preview_kind != Some(RenderedPreviewKind::Pdf) {
                 self.ensure_file_diff_cache(cx);
             }
 
@@ -937,6 +1044,278 @@ impl MainPaneView {
                 .render(theme),
             )
             .into_any_element()
+    }
+
+    fn open_pdf_document_in_system_viewer(
+        &mut self,
+        pdf_path: std::path::PathBuf,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        if let Err(error) = crate::view::platform_open::open_path(&pdf_path) {
+            self.push_root_toast(
+                components::ToastKind::Error,
+                format!("Failed to open PDF viewer: {error}"),
+                cx,
+            );
+        }
+    }
+
+    fn render_pdf_diff_preview(
+        &mut self,
+        theme: AppTheme,
+        preview: &PdfDiffPreview,
+        cx: &mut gpui::Context<Self>,
+    ) -> AnyElement {
+        if matches!(preview.old, PdfPreviewContent::Missing) && preview.new.document().is_some() {
+            return self.render_single_pdf_preview(theme, &preview.new, "diff_pdf_single_open", cx);
+        }
+        if matches!(preview.new, PdfPreviewContent::Missing) && preview.old.document().is_some() {
+            return self.render_single_pdf_preview(theme, &preview.old, "diff_pdf_single_open", cx);
+        }
+
+        self.sync_diff_split_vertical_scroll();
+        let left_handle = self.diff_scroll.0.borrow().base_handle.clone();
+        let right_handle = self.diff_split_right_scroll.0.borrow().base_handle.clone();
+        let scrollbar_gutter = components::Scrollbar::visible_gutter(
+            left_handle.clone(),
+            components::ScrollbarAxis::Vertical,
+        );
+
+        div()
+            .id("diff_pdf_container")
+            .debug_selector(|| "diff_pdf_container".to_string())
+            .relative()
+            .h_full()
+            .min_h(px(0.0))
+            .flex()
+            .flex_col()
+            .bg(theme.colors.window_bg)
+            .child(components::split_columns_header(
+                theme,
+                "A (before)",
+                "B (after)",
+            ))
+            .child(
+                div()
+                    .pr(scrollbar_gutter)
+                    .flex_1()
+                    .min_h(px(0.0))
+                    .flex()
+                    .child(self.render_pdf_preview_column(
+                        theme,
+                        "diff_pdf_left",
+                        "diff_pdf_left_scroll",
+                        "diff_pdf_left_hscrollbar",
+                        "diff_pdf_left_open",
+                        left_handle.clone(),
+                        &preview.old,
+                        cx,
+                    ))
+                    .child(div().w(px(1.0)).h_full().bg(theme.colors.border))
+                    .child(self.render_pdf_preview_column(
+                        theme,
+                        "diff_pdf_right",
+                        "diff_pdf_right_scroll",
+                        "diff_pdf_right_hscrollbar",
+                        "diff_pdf_right_open",
+                        right_handle,
+                        &preview.new,
+                        cx,
+                    )),
+            )
+            .child(
+                components::Scrollbar::new("diff_pdf_scrollbar", left_handle)
+                    .always_visible()
+                    .render(theme),
+            )
+            .into_any_element()
+    }
+
+    fn render_single_pdf_preview(
+        &mut self,
+        theme: AppTheme,
+        content: &PdfPreviewContent,
+        open_button_id: &'static str,
+        cx: &mut gpui::Context<Self>,
+    ) -> AnyElement {
+        let scroll_handle = self.diff_scroll.0.borrow().base_handle.clone();
+        let scrollbar_gutter = components::Scrollbar::visible_gutter(
+            scroll_handle.clone(),
+            components::ScrollbarAxis::Vertical,
+        );
+
+        div()
+            .id("diff_pdf_single_container")
+            .debug_selector(|| "diff_pdf_single_container".to_string())
+            .relative()
+            .h_full()
+            .min_h(px(0.0))
+            .bg(theme.colors.window_bg)
+            .child(
+                div().h_full().min_h(px(0.0)).pr(scrollbar_gutter).child(
+                    div()
+                        .id("diff_pdf_single_scroll")
+                        .h_full()
+                        .min_h(px(0.0))
+                        .overflow_x_scroll()
+                        .overflow_y_scroll()
+                        .track_scroll(&scroll_handle)
+                        .bg(theme.colors.window_bg)
+                        .child(self.render_pdf_preview_status_content(
+                            theme,
+                            content,
+                            open_button_id,
+                            cx,
+                        )),
+                ),
+            )
+            .child(
+                components::Scrollbar::new("diff_pdf_single_scrollbar", scroll_handle.clone())
+                    .always_visible()
+                    .render(theme),
+            )
+            .child(
+                components::Scrollbar::horizontal("diff_pdf_single_hscrollbar", scroll_handle)
+                    .always_visible()
+                    .render(theme),
+            )
+            .into_any_element()
+    }
+
+    fn render_pdf_preview_column(
+        &mut self,
+        theme: AppTheme,
+        id: &'static str,
+        scroll_id: &'static str,
+        hscrollbar_id: &'static str,
+        open_button_id: &'static str,
+        scroll_handle: ScrollHandle,
+        content: &PdfPreviewContent,
+        cx: &mut gpui::Context<Self>,
+    ) -> AnyElement {
+        div()
+            .id(id)
+            .relative()
+            .flex_1()
+            .min_w(px(0.0))
+            .h_full()
+            .child(
+                div()
+                    .id(scroll_id)
+                    .h_full()
+                    .min_h(px(0.0))
+                    .overflow_x_scroll()
+                    .overflow_y_scroll()
+                    .track_scroll(&scroll_handle)
+                    .bg(theme.colors.window_bg)
+                    .child(self.render_pdf_preview_status_content(
+                        theme,
+                        content,
+                        open_button_id,
+                        cx,
+                    )),
+            )
+            .child(
+                components::Scrollbar::horizontal(hscrollbar_id, scroll_handle)
+                    .always_visible()
+                    .render(theme),
+            )
+            .into_any_element()
+    }
+
+    fn render_pdf_preview_status_content(
+        &mut self,
+        theme: AppTheme,
+        content: &PdfPreviewContent,
+        open_button_id: &'static str,
+        cx: &mut gpui::Context<Self>,
+    ) -> AnyElement {
+        let muted = theme.colors.text_muted;
+        match content {
+            PdfPreviewContent::Ready(document) => {
+                let pdf_path = document.pdf_path.clone();
+                div()
+                    .min_w_full()
+                    .p_4()
+                    .flex()
+                    .justify_center()
+                    .child(
+                        div()
+                            .w_full()
+                            .max_w(px(PDF_VIEWER_CARD_MAX_WIDTH_PX))
+                            .p_5()
+                            .flex()
+                            .flex_col()
+                            .items_center()
+                            .gap_3()
+                            .text_center()
+                            .bg(theme.colors.surface_bg_elevated)
+                            .border_1()
+                            .border_color(theme.colors.border)
+                            .rounded(px(theme.radii.panel))
+                            .shadow_sm()
+                            .child(svg_icon(
+                                "icons/open_external.svg",
+                                theme.colors.accent,
+                                px(20.0),
+                            ))
+                            .child(div().text_sm().child("Open the real PDF document."))
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(muted)
+                                    .child("Uses your default PDF viewer instead of page PNGs."),
+                            )
+                            .child(
+                                div()
+                                    .debug_selector(move || open_button_id.to_string())
+                                    .child(
+                                        components::Button::new(
+                                            format!("{open_button_id}_button"),
+                                            "Open PDF",
+                                        )
+                                        .style(components::ButtonStyle::Solid)
+                                        .start_slot(svg_icon(
+                                            "icons/open_external.svg",
+                                            theme.colors.accent,
+                                            px(14.0),
+                                        ))
+                                        .on_click(
+                                            theme,
+                                            cx,
+                                            move |this, _e, _w, cx| {
+                                                this.open_pdf_document_in_system_viewer(
+                                                    pdf_path.clone(),
+                                                    cx,
+                                                );
+                                            },
+                                        ),
+                                    ),
+                            ),
+                    )
+                    .into_any_element()
+            }
+            PdfPreviewContent::Missing => div()
+                .min_w_full()
+                .h_full()
+                .flex()
+                .items_center()
+                .justify_center()
+                .text_sm()
+                .text_color(muted)
+                .child("No PDF")
+                .into_any_element(),
+            PdfPreviewContent::Error(error) => div()
+                .min_w_full()
+                .h_full()
+                .flex()
+                .items_center()
+                .justify_center()
+                .text_sm()
+                .text_color(muted)
+                .child(error.clone())
+                .into_any_element(),
+        }
     }
 }
 

@@ -75,11 +75,7 @@ pub(super) fn is_svg_path(path: &std::path::Path) -> bool {
 }
 
 pub(super) fn should_bypass_text_file_preview_for_path(path: &std::path::Path) -> bool {
-    image_format_for_path(path).is_some()
-        || path
-            .extension()
-            .and_then(|s| s.to_str())
-            .is_some_and(|ext| ext.eq_ignore_ascii_case("ico"))
+    crate::view::diff_utils::binary_preview_kind_for_path(path).is_some()
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -130,6 +126,7 @@ pub(super) enum DiffViewMode {
 pub(super) enum RenderedPreviewKind {
     Svg,
     Markdown,
+    Pdf,
 }
 
 impl RenderedPreviewKind {
@@ -137,6 +134,7 @@ impl RenderedPreviewKind {
         match self {
             Self::Svg => "Image",
             Self::Markdown => "Preview",
+            Self::Pdf => "Viewer",
         }
     }
 
@@ -144,6 +142,7 @@ impl RenderedPreviewKind {
         match self {
             Self::Svg => "Code",
             Self::Markdown => "Text",
+            Self::Pdf => "Binary",
         }
     }
 
@@ -151,6 +150,7 @@ impl RenderedPreviewKind {
         match self {
             Self::Svg => "svg_diff_view_image",
             Self::Markdown => "markdown_diff_view_preview",
+            Self::Pdf => "pdf_diff_view_preview",
         }
     }
 
@@ -158,6 +158,7 @@ impl RenderedPreviewKind {
         match self {
             Self::Svg => "svg_diff_view_toggle",
             Self::Markdown => "markdown_diff_view_toggle",
+            Self::Pdf => "pdf_diff_view_toggle",
         }
     }
 
@@ -165,6 +166,7 @@ impl RenderedPreviewKind {
         match self {
             Self::Svg => "svg_diff_view_code",
             Self::Markdown => "markdown_diff_view_text",
+            Self::Pdf => "pdf_diff_view_binary",
         }
     }
 }
@@ -179,6 +181,7 @@ pub(super) enum RenderedPreviewMode {
 pub(super) struct RenderedPreviewModes {
     pub(super) svg: RenderedPreviewMode,
     pub(super) markdown: RenderedPreviewMode,
+    pub(super) pdf: RenderedPreviewMode,
 }
 
 impl Default for RenderedPreviewModes {
@@ -186,6 +189,7 @@ impl Default for RenderedPreviewModes {
         Self {
             svg: RenderedPreviewMode::Rendered,
             markdown: RenderedPreviewMode::Rendered,
+            pdf: RenderedPreviewMode::Rendered,
         }
     }
 }
@@ -195,6 +199,7 @@ impl RenderedPreviewModes {
         match kind {
             RenderedPreviewKind::Svg => self.svg,
             RenderedPreviewKind::Markdown => self.markdown,
+            RenderedPreviewKind::Pdf => self.pdf,
         }
     }
 
@@ -202,6 +207,7 @@ impl RenderedPreviewModes {
         match kind {
             RenderedPreviewKind::Svg => self.svg = mode,
             RenderedPreviewKind::Markdown => self.markdown = mode,
+            RenderedPreviewKind::Pdf => self.pdf = mode,
         }
     }
 }
@@ -236,8 +242,24 @@ pub(super) fn preview_path_rendered_kind(path: &std::path::Path) -> Option<Rende
         Some(RenderedPreviewKind::Svg)
     } else if is_markdown_path(path) {
         Some(RenderedPreviewKind::Markdown)
+    } else if path
+        .extension()
+        .and_then(|s| s.to_str())
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("pdf"))
+    {
+        Some(RenderedPreviewKind::Pdf)
     } else {
         None
+    }
+}
+
+pub(super) fn conflict_preview_rendered_kind(
+    path: &std::path::Path,
+) -> Option<RenderedPreviewKind> {
+    match preview_path_rendered_kind(path)? {
+        RenderedPreviewKind::Svg => Some(RenderedPreviewKind::Svg),
+        RenderedPreviewKind::Markdown => Some(RenderedPreviewKind::Markdown),
+        RenderedPreviewKind::Pdf => None,
     }
 }
 
@@ -264,6 +286,7 @@ pub(super) fn main_diff_rendered_preview_toggle_kind(
         RenderedPreviewKind::Markdown if wants_file_diff || is_file_preview => {
             Some(RenderedPreviewKind::Markdown)
         }
+        RenderedPreviewKind::Pdf if wants_file_diff => Some(RenderedPreviewKind::Pdf),
         _ => None,
     }
 }
@@ -785,6 +808,46 @@ pub(super) type LoadableMarkdownDoc =
 
 pub(super) type LoadableMarkdownDiff =
     Loadable<Arc<crate::view::markdown_preview::MarkdownPreviewDiff>>;
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct PdfDocumentPreview {
+    pub(super) pdf_path: std::path::PathBuf,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub(super) enum PdfPreviewContent {
+    #[default]
+    Missing,
+    Ready(Arc<PdfDocumentPreview>),
+    Error(SharedString),
+}
+
+impl PdfPreviewContent {
+    pub(super) fn is_missing(&self) -> bool {
+        matches!(self, Self::Missing)
+    }
+
+    pub(super) fn document(&self) -> Option<&PdfDocumentPreview> {
+        match self {
+            Self::Ready(document) => Some(document.as_ref()),
+            Self::Missing | Self::Error(_) => None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub(super) struct PdfDiffPreview {
+    pub(super) old: PdfPreviewContent,
+    pub(super) new: PdfPreviewContent,
+}
+
+impl PdfDiffPreview {
+    pub(super) fn is_empty(&self) -> bool {
+        self.old.is_missing() && self.new.is_missing()
+    }
+}
+
+pub(super) type LoadablePdfDiff = Loadable<Arc<PdfDiffPreview>>;
 
 pub(super) type LoadableImagePreview = Loadable<Option<Arc<gpui::Image>>>;
 

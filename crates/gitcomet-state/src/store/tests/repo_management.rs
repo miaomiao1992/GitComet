@@ -979,6 +979,57 @@ fn set_active_repo_png_diff_enqueues_image_preview_only() {
 }
 
 #[test]
+fn set_active_repo_pdf_diff_enqueues_image_preview_only() {
+    let mut repos: HashMap<RepoId, Arc<dyn GitRepository>> = HashMap::default();
+    let id_alloc = AtomicU64::new(1);
+    let mut state = AppState::default();
+
+    reduce(
+        &mut repos,
+        &id_alloc,
+        &mut state,
+        Msg::OpenRepo(PathBuf::from("/tmp/repo1")),
+    );
+    reduce(
+        &mut repos,
+        &id_alloc,
+        &mut state,
+        Msg::OpenRepo(PathBuf::from("/tmp/repo2")),
+    );
+
+    let repo1 = RepoId(1);
+    let repo1_state = state
+        .repos
+        .iter_mut()
+        .find(|r| r.id == repo1)
+        .expect("repo1 exists");
+    repo1_state.diff_state.diff_target = Some(DiffTarget::WorkingTree {
+        path: PathBuf::from("document.pdf"),
+        area: gitcomet_core::domain::DiffArea::Unstaged,
+    });
+
+    let effects = reduce(
+        &mut repos,
+        &id_alloc,
+        &mut state,
+        Msg::SetActiveRepo { repo_id: repo1 },
+    );
+
+    assert!(
+        effects.iter().any(|e| matches!(
+            e,
+            Effect::LoadSelectedDiff {
+                repo_id,
+                load_file_text: false,
+                load_file_image: true,
+                ..
+            } if *repo_id == repo1
+        )),
+        "expected combined selected-diff reload with image preview only for pdf target"
+    );
+}
+
+#[test]
 fn set_active_repo_svg_diff_enqueues_image_and_text_previews() {
     let mut repos: HashMap<RepoId, Arc<dyn GitRepository>> = HashMap::default();
     let id_alloc = AtomicU64::new(1);

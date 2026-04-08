@@ -387,7 +387,7 @@ pub(super) fn image_diff_svg_fixture(width: u32, height: u32, fill: &str) -> Vec
 
 pub(super) fn file_image_diff_cache_debug_snapshot(pane: &MainPaneView) -> String {
     format!(
-        "seq={} inflight={:?} repo_id={:?} cache_rev={} signature={:?} cache_target={:?} cache_path={:?} old_ready={} new_ready={} old_svg={:?} new_svg={:?} active_diff_file_rev={:?} active_diff_target={:?} active={}",
+        "seq={} inflight={:?} repo_id={:?} cache_rev={} signature={:?} cache_target={:?} cache_path={:?} old_ready={} new_ready={} old_path={:?} new_path={:?} active_diff_file_rev={:?} active_diff_target={:?} active={}",
         pane.file_image_diff_cache_seq,
         pane.file_image_diff_cache_inflight,
         pane.file_image_diff_cache_repo_id,
@@ -397,12 +397,35 @@ pub(super) fn file_image_diff_cache_debug_snapshot(pane: &MainPaneView) -> Strin
         pane.file_image_diff_cache_path,
         pane.file_image_diff_cache_old.is_some(),
         pane.file_image_diff_cache_new.is_some(),
-        pane.file_image_diff_cache_old_svg_path,
-        pane.file_image_diff_cache_new_svg_path,
+        pane.file_image_diff_cache_old_preview_path,
+        pane.file_image_diff_cache_new_preview_path,
         pane.active_repo().map(|repo| repo.diff_state.diff_file_rev),
         pane.active_repo()
             .and_then(|repo| repo.diff_state.diff_target.clone()),
         pane.is_file_image_diff_view_active(),
+    )
+}
+
+pub(super) fn file_pdf_preview_cache_debug_snapshot(pane: &MainPaneView) -> String {
+    let is_active = pane.active_repo().is_some_and(|repo| {
+        pane.file_pdf_preview_cache_repo_id == Some(repo.id)
+            && pane.file_pdf_preview_cache_rev == repo.diff_state.diff_file_rev
+            && pane.file_pdf_preview_cache_target == repo.diff_state.diff_target
+            && matches!(pane.file_pdf_preview, Loadable::Ready(_))
+    });
+    format!(
+        "seq={} inflight={:?} repo_id={:?} cache_rev={} signature={:?} cache_target={:?} loadable_ready={} active_diff_file_rev={:?} active_diff_target={:?} active={}",
+        pane.file_pdf_preview_seq,
+        pane.file_pdf_preview_inflight,
+        pane.file_pdf_preview_cache_repo_id,
+        pane.file_pdf_preview_cache_rev,
+        pane.file_pdf_preview_cache_content_signature,
+        pane.file_pdf_preview_cache_target,
+        matches!(pane.file_pdf_preview, Loadable::Ready(_)),
+        pane.active_repo().map(|repo| repo.diff_state.diff_file_rev),
+        pane.active_repo()
+            .and_then(|repo| repo.diff_state.diff_target.clone()),
+        is_active,
     )
 }
 
@@ -857,6 +880,31 @@ pub(super) fn wait_for_file_image_diff_cache<Ready>(
                 && is_ready(pane)
         },
         file_image_diff_cache_debug_snapshot,
+    );
+}
+
+pub(super) fn wait_for_file_pdf_preview_cache<Ready>(
+    cx: &mut gpui::VisualTestContext,
+    view: &gpui::Entity<super::super::GitCometView>,
+    description: &str,
+    is_ready: Ready,
+) where
+    Ready: Fn(&MainPaneView) -> bool,
+{
+    wait_for_main_pane_condition(
+        cx,
+        view,
+        description,
+        |pane| {
+            let is_active = pane.active_repo().is_some_and(|repo| {
+                pane.file_pdf_preview_cache_repo_id == Some(repo.id)
+                    && pane.file_pdf_preview_cache_rev == repo.diff_state.diff_file_rev
+                    && pane.file_pdf_preview_cache_target == repo.diff_state.diff_target
+                    && matches!(pane.file_pdf_preview, Loadable::Ready(_))
+            });
+            pane.file_pdf_preview_inflight.is_none() && is_active && is_ready(pane)
+        },
+        file_pdf_preview_cache_debug_snapshot,
     );
 }
 

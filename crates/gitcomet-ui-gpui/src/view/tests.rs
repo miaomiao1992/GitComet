@@ -1330,7 +1330,7 @@ fn is_markdown_path_rejects_non_markdown() {
 }
 
 #[test]
-fn should_bypass_text_file_preview_for_path_detects_supported_image_types() {
+fn should_bypass_text_file_preview_for_path_detects_supported_binary_preview_types() {
     use std::path::Path;
 
     for path in [
@@ -1343,6 +1343,7 @@ fn should_bypass_text_file_preview_for_path_detects_supported_image_types() {
         "image.svg",
         "image.tif",
         "image.tiff",
+        "document.PDF",
     ] {
         assert!(
             should_bypass_text_file_preview_for_path(Path::new(path)),
@@ -1356,6 +1357,11 @@ fn should_bypass_text_file_preview_for_path_detects_supported_image_types() {
             "did not expect {path} to bypass text file preview"
         );
     }
+
+    assert!(matches!(
+        crate::view::diff_utils::binary_preview_kind_for_path(Path::new("document.pdf")),
+        Some(crate::view::diff_utils::BinaryPreviewKind::Pdf)
+    ));
 }
 
 #[test]
@@ -1369,6 +1375,10 @@ fn preview_path_rendered_kind_detects_supported_preview_kinds() {
     assert_eq!(
         preview_path_rendered_kind(Path::new("README.md")),
         Some(RenderedPreviewKind::Markdown)
+    );
+    assert_eq!(
+        preview_path_rendered_kind(Path::new("guide.pdf")),
+        Some(RenderedPreviewKind::Pdf)
     );
     assert_eq!(preview_path_rendered_kind(Path::new("notes.txt")), None);
 }
@@ -1391,6 +1401,15 @@ fn diff_target_rendered_preview_kind_reads_diff_target_paths() {
     assert_eq!(
         diff_target_rendered_preview_kind(Some(&markdown_target)),
         Some(RenderedPreviewKind::Markdown)
+    );
+
+    let pdf_target = DiffTarget::WorkingTree {
+        path: PathBuf::from("guide.pdf"),
+        area: DiffArea::Unstaged,
+    };
+    assert_eq!(
+        diff_target_rendered_preview_kind(Some(&pdf_target)),
+        Some(RenderedPreviewKind::Pdf)
     );
 
     let no_path_target = DiffTarget::Commit {
@@ -1417,6 +1436,10 @@ fn main_diff_rendered_preview_toggle_kind_matches_supported_modes() {
         main_diff_rendered_preview_toggle_kind(false, true, Some(RenderedPreviewKind::Markdown),),
         Some(RenderedPreviewKind::Markdown)
     );
+    assert_eq!(
+        main_diff_rendered_preview_toggle_kind(true, false, Some(RenderedPreviewKind::Pdf),),
+        Some(RenderedPreviewKind::Pdf)
+    );
 }
 
 #[test]
@@ -1431,9 +1454,14 @@ fn rendered_preview_modes_track_each_kind_independently() {
         modes.get(RenderedPreviewKind::Markdown),
         RenderedPreviewMode::Rendered
     );
+    assert_eq!(
+        modes.get(RenderedPreviewKind::Pdf),
+        RenderedPreviewMode::Rendered
+    );
 
     modes.set(RenderedPreviewKind::Svg, RenderedPreviewMode::Source);
     modes.set(RenderedPreviewKind::Markdown, RenderedPreviewMode::Source);
+    modes.set(RenderedPreviewKind::Pdf, RenderedPreviewMode::Source);
 
     assert_eq!(
         modes.get(RenderedPreviewKind::Svg),
@@ -1441,6 +1469,10 @@ fn rendered_preview_modes_track_each_kind_independently() {
     );
     assert_eq!(
         modes.get(RenderedPreviewKind::Markdown),
+        RenderedPreviewMode::Source
+    );
+    assert_eq!(
+        modes.get(RenderedPreviewKind::Pdf),
         RenderedPreviewMode::Source
     );
 }

@@ -128,6 +128,9 @@ impl MainPaneView {
             is_file_preview,
             rendered_preview_kind,
         );
+        let is_pdf_preview_view = rendered_view_toggle_kind == Some(RenderedPreviewKind::Pdf)
+            && self.rendered_preview_modes.get(RenderedPreviewKind::Pdf)
+                == RenderedPreviewMode::Rendered;
         let is_markdown_preview_view = rendered_view_toggle_kind
             == Some(RenderedPreviewKind::Markdown)
             && self
@@ -138,9 +141,15 @@ impl MainPaneView {
             .is_some_and(|repo| !matches!(repo.diff_state.diff_file_image, Loadable::NotLoaded));
         let is_image_diff_view = wants_file_diff
             && is_image_diff_loaded
-            && (!matches!(rendered_preview_kind, Some(RenderedPreviewKind::Svg))
-                || self.rendered_preview_modes.get(RenderedPreviewKind::Svg)
-                    == RenderedPreviewMode::Rendered);
+            && match rendered_preview_kind {
+                Some(RenderedPreviewKind::Svg) => {
+                    self.rendered_preview_modes.get(RenderedPreviewKind::Svg)
+                        == RenderedPreviewMode::Rendered
+                }
+                Some(RenderedPreviewKind::Pdf) => false,
+                Some(RenderedPreviewKind::Markdown) | None => true,
+            };
+        let is_binary_document_preview_view = is_image_diff_view || is_pdf_preview_view;
 
         let (prev_file_btn, next_file_btn) = self.diff_prev_next_file_buttons(repo_id, theme, cx);
 
@@ -317,7 +326,7 @@ impl MainPaneView {
         } else if !is_file_preview {
             controls = controls.when_some(prev_file_btn, |d, btn| d.child(btn));
 
-            if !is_image_diff_view {
+            if !is_binary_document_preview_view {
                 let nav_entries = self.diff_nav_entries();
                 let current_nav_ix = self.diff_selection_anchor.unwrap_or(0);
                 let can_nav_prev =
@@ -1120,7 +1129,7 @@ impl MainPaneView {
                                     )
                                 });
 
-                            let preview_kind = super::super::preview_path_rendered_kind(&path);
+                            let preview_kind = super::super::conflict_preview_rendered_kind(&path);
                             let show_preview_toggle = preview_kind.is_some();
                             let preview_mode = self.conflict_resolver.resolver_preview_mode;
                             let is_rendered_preview_active =
@@ -1554,6 +1563,12 @@ impl MainPaneView {
                                         .render_conflict_resolver_svg_preview(theme, cx),
                                     Some(RenderedPreviewKind::Markdown) => self
                                         .render_conflict_resolver_markdown_preview(theme, cx),
+                                    Some(RenderedPreviewKind::Pdf) => components::empty_state(
+                                        theme,
+                                        "Preview",
+                                        "PDF preview is not available while resolving conflicts.",
+                                    )
+                                    .into_any_element(),
                                     None => components::empty_state(
                                         theme,
                                         "Preview",

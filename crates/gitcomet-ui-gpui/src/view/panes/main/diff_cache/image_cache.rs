@@ -1,5 +1,7 @@
 use super::*;
+#[cfg(test)]
 use crate::view::diff_utils::image_format_for_path;
+use crate::view::diff_utils::{BinaryPreviewKind, binary_preview_kind_for_path};
 use std::hash::Hash;
 use std::hash::Hasher;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -28,7 +30,7 @@ fn cleanup_image_diff_cache_startup_once() {
     IMAGE_DIFF_CACHE_STARTUP_CLEANUP.call_once(cleanup_image_diff_cache_now);
 }
 
-fn maybe_cleanup_image_diff_cache_on_write() {
+pub(super) fn maybe_cleanup_image_diff_cache_on_write() {
     let write_count = IMAGE_DIFF_CACHE_WRITE_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
     if write_count.is_multiple_of(IMAGE_DIFF_CACHE_CLEANUP_WRITE_INTERVAL) {
         cleanup_image_diff_cache_now();
@@ -237,11 +239,11 @@ fn render_raster_image_diff_preview(
 }
 
 fn decode_file_image_diff_preview_side(
-    format: gpui::ImageFormat,
+    preview_kind: BinaryPreviewKind,
     bytes: &[u8],
 ) -> DecodedImageDiffPreview {
-    match format {
-        gpui::ImageFormat::Svg => {
+    match preview_kind {
+        BinaryPreviewKind::Image(gpui::ImageFormat::Svg) => {
             if let Some(render) = render_svg_image_diff_preview(bytes) {
                 return DecodedImageDiffPreview {
                     render: Some(render),
@@ -253,10 +255,15 @@ fn decode_file_image_diff_preview_side(
                 cached_path: cached_image_diff_path(bytes, "svg"),
             }
         }
-        _ => DecodedImageDiffPreview {
+        BinaryPreviewKind::Image(format) => DecodedImageDiffPreview {
             render: render_raster_image_diff_preview(format, bytes),
             cached_path: None,
         },
+        BinaryPreviewKind::Ico => DecodedImageDiffPreview {
+            render: None,
+            cached_path: cached_image_diff_path(bytes, "ico"),
+        },
+        BinaryPreviewKind::Pdf => DecodedImageDiffPreview::default(),
     }
 }
 
@@ -268,7 +275,7 @@ fn file_image_diff_signature(file: &gitcomet_core::domain::FileDiffImage) -> u64
     hasher.finish()
 }
 
-fn cached_image_diff_path(bytes: &[u8], extension: &str) -> Option<std::path::PathBuf> {
+pub(super) fn cached_image_diff_path(bytes: &[u8], extension: &str) -> Option<std::path::PathBuf> {
     use std::io::Write;
 
     cleanup_image_diff_cache_startup_once();
@@ -303,47 +310,33 @@ fn cached_image_diff_path(bytes: &[u8], extension: &str) -> Option<std::path::Pa
     }
 }
 
-fn cached_image_diff_path_pair(
-    old: Option<&[u8]>,
-    new: Option<&[u8]>,
-    extension: &str,
-) -> (Option<std::path::PathBuf>, Option<std::path::PathBuf>) {
-    if old.is_some() && old == new {
-        let path = old.and_then(|bytes| cached_image_diff_path(bytes, extension));
-        return (path.clone(), path);
-    }
-
-    (
-        old.and_then(|bytes| cached_image_diff_path(bytes, extension)),
-        new.and_then(|bytes| cached_image_diff_path(bytes, extension)),
-    )
-}
-
 struct ImageDiffCacheRebuild {
     file_path: Option<std::path::PathBuf>,
     old: Option<Arc<gpui::RenderImage>>,
     new: Option<Arc<gpui::RenderImage>>,
-    old_svg_path: Option<std::path::PathBuf>,
-    new_svg_path: Option<std::path::PathBuf>,
+    old_preview_path: Option<std::path::PathBuf>,
+    new_preview_path: Option<std::path::PathBuf>,
 }
 
 fn decode_file_image_diff_preview_pair(
-    format: gpui::ImageFormat,
+    preview_kind: BinaryPreviewKind,
     old: Option<&[u8]>,
     new: Option<&[u8]>,
 ) -> (DecodedImageDiffPreview, DecodedImageDiffPreview) {
     if old.is_some() && old == new {
         let preview = old
-            .map(|bytes| decode_file_image_diff_preview_side(format, bytes))
+            .map(|bytes| decode_file_image_diff_preview_side(preview_kind, bytes))
             .unwrap_or_default();
         return (preview.clone(), preview);
     }
 
     std::thread::scope(|scope| {
-        let old_task = old
-            .map(|bytes| scope.spawn(move || decode_file_image_diff_preview_side(format, bytes)));
-        let new_task = new
-            .map(|bytes| scope.spawn(move || decode_file_image_diff_preview_side(format, bytes)));
+        let old_task = old.map(|bytes| {
+            scope.spawn(move || decode_file_image_diff_preview_side(preview_kind, bytes))
+        });
+        let new_task = new.map(|bytes| {
+            scope.spawn(move || decode_file_image_diff_preview_side(preview_kind, bytes))
+        });
 
         let old_preview = old_task.map_or_else(DecodedImageDiffPreview::default, |task| {
             task.join().unwrap_or_default()
@@ -359,48 +352,31 @@ fn build_file_image_diff_cache_rebuild(
     file: &gitcomet_core::domain::FileDiffImage,
     workdir: &std::path::Path,
 ) -> ImageDiffCacheRebuild {
-    let format = image_format_for_path(&file.path);
-    let is_ico = file
-        .path
-        .extension()
-        .and_then(|s| s.to_str())
-        .is_some_and(|ext| ext.eq_ignore_ascii_case("ico"));
+    let preview_kind = binary_preview_kind_for_path(&file.path);
     let file_path = Some(if file.path.is_absolute() {
         file.path.to_path_buf()
     } else {
         workdir.join(&file.path)
     });
 
-    if is_ico {
-        let (old_svg_path, new_svg_path) =
-            cached_image_diff_path_pair(file.old.as_deref(), file.new.as_deref(), "ico");
+    let Some(preview_kind) = preview_kind else {
         return ImageDiffCacheRebuild {
             file_path,
             old: None,
             new: None,
-            old_svg_path,
-            new_svg_path,
-        };
-    }
-
-    let Some(format) = format else {
-        return ImageDiffCacheRebuild {
-            file_path,
-            old: None,
-            new: None,
-            old_svg_path: None,
-            new_svg_path: None,
+            old_preview_path: None,
+            new_preview_path: None,
         };
     };
 
     let (old_preview, new_preview) =
-        decode_file_image_diff_preview_pair(format, file.old.as_deref(), file.new.as_deref());
+        decode_file_image_diff_preview_pair(preview_kind, file.old.as_deref(), file.new.as_deref());
     ImageDiffCacheRebuild {
         file_path,
         old: old_preview.render,
         new: new_preview.render,
-        old_svg_path: old_preview.cached_path,
-        new_svg_path: new_preview.cached_path,
+        old_preview_path: old_preview.cached_path,
+        new_preview_path: new_preview.cached_path,
     }
 }
 
@@ -411,8 +387,8 @@ impl MainPaneView {
         self.file_image_diff_cache_path = None;
         self.file_image_diff_cache_old = None;
         self.file_image_diff_cache_new = None;
-        self.file_image_diff_cache_old_svg_path = None;
-        self.file_image_diff_cache_new_svg_path = None;
+        self.file_image_diff_cache_old_preview_path = None;
+        self.file_image_diff_cache_new_preview_path = None;
     }
 
     pub(in crate::view) fn ensure_file_image_diff_cache(&mut self, cx: &mut gpui::Context<Self>) {
@@ -441,6 +417,21 @@ impl MainPaneView {
             self.reset_file_image_diff_cache_data();
             return;
         };
+
+        let preview_kind = diff_target.as_ref().and_then(|target| match target {
+            DiffTarget::WorkingTree { path, .. } => binary_preview_kind_for_path(path),
+            DiffTarget::Commit {
+                path: Some(path), ..
+            } => binary_preview_kind_for_path(path),
+            DiffTarget::Commit { path: None, .. } => None,
+        });
+        if preview_kind == Some(BinaryPreviewKind::Pdf) {
+            self.file_image_diff_cache_repo_id = None;
+            self.file_image_diff_cache_target = None;
+            self.file_image_diff_cache_rev = 0;
+            self.reset_file_image_diff_cache_data();
+            return;
+        }
 
         let diff_target_for_task = diff_target.clone();
         let file_content_signature = file
@@ -501,8 +492,8 @@ impl MainPaneView {
                     this.file_image_diff_cache_path = rebuild.file_path;
                     this.file_image_diff_cache_old = rebuild.old;
                     this.file_image_diff_cache_new = rebuild.new;
-                    this.file_image_diff_cache_old_svg_path = rebuild.old_svg_path;
-                    this.file_image_diff_cache_new_svg_path = rebuild.new_svg_path;
+                    this.file_image_diff_cache_old_preview_path = rebuild.old_preview_path;
+                    this.file_image_diff_cache_new_preview_path = rebuild.new_preview_path;
                     cx.notify();
                 });
             },
@@ -580,8 +571,10 @@ mod tests {
             .write_to(&mut encoded, image::ImageFormat::Png)
             .expect("encode png");
 
-        let preview =
-            decode_file_image_diff_preview_side(gpui::ImageFormat::Png, &encoded.into_inner());
+        let preview = decode_file_image_diff_preview_side(
+            BinaryPreviewKind::Image(gpui::ImageFormat::Png),
+            &encoded.into_inner(),
+        );
         let render = preview.render.expect("preview render image");
         let size = render.size(0);
         assert_eq!(size.width.0, IMAGE_DIFF_RASTER_PREVIEW_MAX_EDGE_PX as i32);
@@ -595,7 +588,10 @@ mod tests {
     #[test]
     fn decode_file_image_diff_preview_side_rasterizes_svg_without_path_fallback() {
         let svg = solid_rect_svg(4096, 2048);
-        let preview = decode_file_image_diff_preview_side(gpui::ImageFormat::Svg, &svg);
+        let preview = decode_file_image_diff_preview_side(
+            BinaryPreviewKind::Image(gpui::ImageFormat::Svg),
+            &svg,
+        );
         let render = preview.render.expect("svg render image");
         let size = render.size(0);
         assert_eq!(size.width.0, IMAGE_DIFF_SVG_PREVIEW_MAX_EDGE_PX as i32);
@@ -609,7 +605,10 @@ mod tests {
     #[test]
     fn decode_file_image_diff_preview_side_upscales_small_svg_to_target_width() {
         let svg = solid_rect_svg(32, 16);
-        let preview = decode_file_image_diff_preview_side(gpui::ImageFormat::Svg, &svg);
+        let preview = decode_file_image_diff_preview_side(
+            BinaryPreviewKind::Image(gpui::ImageFormat::Svg),
+            &svg,
+        );
         let render = preview.render.expect("svg render image");
         let size = render.size(0);
         assert_eq!(size.width.0, IMAGE_DIFF_SVG_PREVIEW_TARGET_WIDTH_PX as i32);
@@ -622,8 +621,10 @@ mod tests {
 
     #[test]
     fn decode_file_image_diff_preview_side_keeps_svg_path_fallback_for_invalid_svg() {
-        let preview =
-            decode_file_image_diff_preview_side(gpui::ImageFormat::Svg, b"<not-valid-svg>");
+        let preview = decode_file_image_diff_preview_side(
+            BinaryPreviewKind::Image(gpui::ImageFormat::Svg),
+            b"<not-valid-svg>",
+        );
         assert!(preview.render.is_none());
         assert!(preview.cached_path.is_some());
         assert!(preview.cached_path.unwrap().exists());
@@ -667,8 +668,8 @@ mod tests {
         let old = rebuild.old.expect("old preview");
         let new = rebuild.new.expect("new preview");
         assert!(Arc::ptr_eq(&old, &new));
-        assert!(rebuild.old_svg_path.is_none());
-        assert!(rebuild.new_svg_path.is_none());
+        assert!(rebuild.old_preview_path.is_none());
+        assert!(rebuild.new_preview_path.is_none());
     }
 
     #[test]
@@ -698,8 +699,8 @@ mod tests {
             new.size(0).height.0,
             IMAGE_DIFF_SVG_PREVIEW_MAX_EDGE_PX as i32
         );
-        assert!(rebuild.old_svg_path.is_none());
-        assert!(rebuild.new_svg_path.is_none());
+        assert!(rebuild.old_preview_path.is_none());
+        assert!(rebuild.new_preview_path.is_none());
     }
 
     #[test]
@@ -715,13 +716,13 @@ mod tests {
         assert!(rebuild.new.is_none());
         assert!(
             rebuild
-                .old_svg_path
+                .old_preview_path
                 .as_ref()
                 .is_some_and(|path| path.exists())
         );
         assert!(
             rebuild
-                .new_svg_path
+                .new_preview_path
                 .as_ref()
                 .is_some_and(|path| path.exists())
         );
@@ -759,6 +760,7 @@ mod tests {
     fn image_format_for_path_returns_none_for_unknown_or_missing_extension() {
         assert_eq!(image_format_for_path(Path::new("x.heic")), None);
         assert_eq!(image_format_for_path(Path::new("x.ico")), None);
+        assert_eq!(image_format_for_path(Path::new("x.pdf")), None);
         assert_eq!(image_format_for_path(Path::new("x")), None);
     }
 

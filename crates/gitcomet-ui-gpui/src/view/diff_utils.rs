@@ -128,6 +128,32 @@ pub(super) fn image_format_for_path(path: &std::path::Path) -> Option<gpui::Imag
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum BinaryPreviewKind {
+    Image(gpui::ImageFormat),
+    Ico,
+    Pdf,
+}
+
+fn is_ico_path(path: &std::path::Path) -> bool {
+    path.extension()
+        .and_then(|s| s.to_str())
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("ico"))
+}
+
+fn is_pdf_path(path: &std::path::Path) -> bool {
+    path.extension()
+        .and_then(|s| s.to_str())
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("pdf"))
+}
+
+pub(super) fn binary_preview_kind_for_path(path: &std::path::Path) -> Option<BinaryPreviewKind> {
+    image_format_for_path(path)
+        .map(BinaryPreviewKind::Image)
+        .or_else(|| is_ico_path(path).then_some(BinaryPreviewKind::Ico))
+        .or_else(|| is_pdf_path(path).then_some(BinaryPreviewKind::Pdf))
+}
+
 const SVG_PREVIEW_MIN_RASTER_WIDTH_PX: f32 = 1024.0;
 const SVG_PREVIEW_MAX_RASTER_EDGE_PX: f32 = 4096.0;
 static SVG_PREVIEW_USVG_OPTIONS: std::sync::LazyLock<resvg::usvg::Options<'static>> =

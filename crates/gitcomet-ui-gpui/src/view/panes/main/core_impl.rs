@@ -888,6 +888,13 @@ impl MainPaneView {
             file_markdown_preview: Loadable::NotLoaded,
             file_markdown_preview_seq: 0,
             file_markdown_preview_inflight: None,
+            file_pdf_preview_cache_repo_id: None,
+            file_pdf_preview_cache_rev: 0,
+            file_pdf_preview_cache_content_signature: None,
+            file_pdf_preview_cache_target: None,
+            file_pdf_preview: Loadable::NotLoaded,
+            file_pdf_preview_seq: 0,
+            file_pdf_preview_inflight: None,
             file_image_diff_cache_repo_id: None,
             file_image_diff_cache_rev: 0,
             file_image_diff_cache_content_signature: None,
@@ -897,8 +904,8 @@ impl MainPaneView {
             file_image_diff_cache_path: None,
             file_image_diff_cache_old: None,
             file_image_diff_cache_new: None,
-            file_image_diff_cache_old_svg_path: None,
-            file_image_diff_cache_new_svg_path: None,
+            file_image_diff_cache_old_preview_path: None,
+            file_image_diff_cache_new_preview_path: None,
             worktree_preview_path: None,
             worktree_preview: Loadable::NotLoaded,
             worktree_preview_text: SharedString::default(),
@@ -2522,6 +2529,17 @@ impl MainPaneView {
         });
     }
 
+    pub(in crate::view) fn push_root_toast(
+        &mut self,
+        kind: components::ToastKind,
+        message: String,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        let _ = self.root_view.update(cx, move |root, cx| {
+            root.push_toast(kind, message, cx);
+        });
+    }
+
     pub(in crate::view) fn active_change_tracking_view(
         &self,
         cx: &mut gpui::Context<Self>,
@@ -2601,6 +2619,12 @@ impl MainPaneView {
             self.diff_selection_anchor = None;
             self.diff_selection_range = None;
             self.diff_autoscroll_pending = next_diff_target.is_some();
+            self.file_pdf_preview_cache_repo_id = None;
+            self.file_pdf_preview_cache_rev = 0;
+            self.file_pdf_preview_cache_content_signature = None;
+            self.file_pdf_preview_cache_target = None;
+            self.file_pdf_preview = Loadable::NotLoaded;
+            self.file_pdf_preview_inflight = None;
             self.worktree_preview_path = None;
             self.worktree_preview = Loadable::NotLoaded;
             self.worktree_preview_content_rev = 0;
@@ -2850,8 +2874,8 @@ impl MainPaneView {
             && self.file_image_diff_cache_path.is_some()
             && (self.file_image_diff_cache_old.is_some()
                 || self.file_image_diff_cache_new.is_some()
-                || self.file_image_diff_cache_old_svg_path.is_some()
-                || self.file_image_diff_cache_new_svg_path.is_some())
+                || self.file_image_diff_cache_old_preview_path.is_some()
+                || self.file_image_diff_cache_new_preview_path.is_some())
     }
 
     pub(in crate::view) fn consume_suppress_click_after_drag(&mut self) -> bool {

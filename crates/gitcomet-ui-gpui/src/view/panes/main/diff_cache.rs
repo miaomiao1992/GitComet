@@ -8,6 +8,7 @@ use gitcomet_core::domain::DiffRowProvider;
 mod file_diff;
 mod image_cache;
 mod patch_diff;
+mod pdf_cache;
 
 #[cfg(feature = "benchmarks")]
 pub(in crate::view) use self::file_diff::bench_build_file_diff_providers;

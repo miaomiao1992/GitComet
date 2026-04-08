@@ -41,6 +41,7 @@ gitcomet-core = { workspace = true }
 gitcomet-git-gix = { workspace = true, optional = true }
 gitcomet-state = { workspace = true }
 gpui = { workspace = true }
+hayro = { workspace = true }
 image = { workspace = true }
 lru = { workspace = true }
 memchr = { workspace = true }

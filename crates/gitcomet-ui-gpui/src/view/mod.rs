@@ -98,9 +98,8 @@ use diff_utils::{
     build_unified_patch_for_hunks, build_unified_patch_for_selected_lines_across_hunks,
     build_unified_patch_for_selected_lines_across_hunks_for_worktree_discard,
     compute_diff_file_for_src_ix, compute_diff_file_stats,
-    context_menu_selection_range_from_diff_text, diff_content_text, image_format_for_path,
-    parse_diff_git_header_path, parse_unified_hunk_header_for_display,
-    scrollbar_markers_from_flags,
+    context_menu_selection_range_from_diff_text, diff_content_text, parse_diff_git_header_path,
+    parse_unified_hunk_header_for_display, scrollbar_markers_from_flags,
 };
 use mod_helpers::*;
 pub use mod_helpers::{

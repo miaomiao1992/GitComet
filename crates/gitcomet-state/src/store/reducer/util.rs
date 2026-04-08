@@ -70,6 +70,7 @@ fn path_preview_flags(path: &Path) -> DiffTargetPreviewFlags {
                 is_svg: true,
             },
             (b'p', b'n', b'g')
+            | (b'p', b'd', b'f')
             | (b'j', b'p', b'g')
             | (b'g', b'i', b'f')
             | (b'b', b'm', b'p')
@@ -1165,7 +1166,7 @@ mod tests {
     }
 
     #[test]
-    fn diff_reload_effects_cover_image_svg_and_non_file_targets() {
+    fn diff_reload_effects_cover_image_pdf_svg_and_non_file_targets() {
         let repo_id = RepoId(7);
         let png = DiffTarget::WorkingTree {
             path: PathBuf::from("img.PNG"),
@@ -1177,6 +1178,17 @@ mod tests {
         assert_eq!(png_effects.len(), 2);
         assert!(matches!(png_effects[0], Effect::LoadDiff { .. }));
         assert!(matches!(png_effects[1], Effect::LoadDiffFileImage { .. }));
+
+        let pdf = DiffTarget::WorkingTree {
+            path: PathBuf::from("guide.PDF"),
+            area: DiffArea::Unstaged,
+        };
+        let pdf_effects = diff_reload_effects(repo_id, pdf.clone());
+        assert!(diff_target_wants_image_preview(&pdf));
+        assert!(!diff_target_is_svg(&pdf));
+        assert_eq!(pdf_effects.len(), 2);
+        assert!(matches!(pdf_effects[0], Effect::LoadDiff { .. }));
+        assert!(matches!(pdf_effects[1], Effect::LoadDiffFileImage { .. }));
 
         let svg = DiffTarget::WorkingTree {
             path: PathBuf::from("diagram.svg"),

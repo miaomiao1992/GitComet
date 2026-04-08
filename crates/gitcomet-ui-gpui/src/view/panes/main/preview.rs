@@ -186,7 +186,7 @@ impl MainPaneView {
 
     pub(in crate::view) fn is_conflict_rendered_preview_active(&self) -> bool {
         self.conflict_resolver.path.as_ref().is_some_and(|path| {
-            crate::view::preview_path_rendered_kind(path).is_some()
+            crate::view::conflict_preview_rendered_kind(path).is_some()
                 && self.conflict_resolver.resolver_preview_mode
                     == ConflictResolverPreviewMode::Preview
         })

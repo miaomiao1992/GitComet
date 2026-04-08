@@ -3502,8 +3502,8 @@ fn file_image_diff_cache_keeps_valid_svg_on_render_fast_path_across_rev_refreshe
     wait_for_file_image_diff_cache(cx, &view, "initial svg image diff cache build", |pane| {
         pane.file_image_diff_cache_old.is_some()
             && pane.file_image_diff_cache_new.is_some()
-            && pane.file_image_diff_cache_old_svg_path.is_none()
-            && pane.file_image_diff_cache_new_svg_path.is_none()
+            && pane.file_image_diff_cache_old_preview_path.is_none()
+            && pane.file_image_diff_cache_new_preview_path.is_none()
     });
 
     let baseline_seq =
@@ -3541,8 +3541,8 @@ fn file_image_diff_cache_keeps_valid_svg_on_render_fast_path_across_rev_refreshe
                 "valid svg payload should stay on the rasterized render-image path"
             );
             assert!(
-                pane.file_image_diff_cache_old_svg_path.is_none()
-                    && pane.file_image_diff_cache_new_svg_path.is_none(),
+                pane.file_image_diff_cache_old_preview_path.is_none()
+                    && pane.file_image_diff_cache_new_preview_path.is_none(),
                 "valid svg payload should not fall back to cached svg file paths"
             );
             assert!(
@@ -3589,8 +3589,8 @@ fn file_image_diff_cache_keeps_distinct_valid_svg_sides_on_render_fast_path(
         |pane| {
             pane.file_image_diff_cache_old.is_some()
                 && pane.file_image_diff_cache_new.is_some()
-                && pane.file_image_diff_cache_old_svg_path.is_none()
-                && pane.file_image_diff_cache_new_svg_path.is_none()
+                && pane.file_image_diff_cache_old_preview_path.is_none()
+                && pane.file_image_diff_cache_new_preview_path.is_none()
         },
     );
 
@@ -3645,24 +3645,102 @@ fn file_image_diff_cache_falls_back_to_cached_svg_paths_for_invalid_svg_payloads
         |pane| {
             pane.file_image_diff_cache_old.is_none()
                 && pane.file_image_diff_cache_new.is_none()
-                && pane.file_image_diff_cache_old_svg_path.is_some()
-                && pane.file_image_diff_cache_new_svg_path.is_some()
+                && pane.file_image_diff_cache_old_preview_path.is_some()
+                && pane.file_image_diff_cache_new_preview_path.is_some()
         },
     );
 
     cx.update(|_window, app| {
         let pane = view.read(app).main_pane.read(app);
         assert!(
-            pane.file_image_diff_cache_old_svg_path
+            pane.file_image_diff_cache_old_preview_path
                 .as_ref()
                 .is_some_and(|path| path.exists())
         );
         assert!(
-            pane.file_image_diff_cache_new_svg_path
+            pane.file_image_diff_cache_new_preview_path
                 .as_ref()
                 .is_some_and(|path| path.exists())
         );
     });
+}
+
+#[gpui::test]
+fn file_pdf_preview_cache_persists_pdf_payloads_for_external_viewers(
+    cx: &mut gpui::TestAppContext,
+) {
+    let (store, events) = AppStore::new(Arc::new(TestBackend));
+    let (view, cx) = cx.add_window_view(|window, cx| {
+        super::super::GitCometView::new(store, events, None, window, cx)
+    });
+    disable_view_poller_for_test(cx, &view);
+
+    let repo_id = gitcomet_state::model::RepoId(151);
+    let workdir = std::env::temp_dir().join(format!(
+        "gitcomet_ui_test_{}_pdf_image_diff_invalid",
+        std::process::id()
+    ));
+    let path = std::path::PathBuf::from("docs/spec.pdf");
+    let pdf_bytes = b"%PDF-1.7\nnot-a-real-pdf\n";
+
+    seed_file_image_diff_state_with_rev(
+        cx,
+        &view,
+        repo_id,
+        &workdir,
+        &path,
+        1,
+        Some(pdf_bytes.as_slice()),
+        Some(pdf_bytes.as_slice()),
+    );
+    wait_for_file_pdf_preview_cache(cx, &view, "pdf viewer payload cache build", |pane| {
+        matches!(
+            pane.file_pdf_preview,
+            Loadable::Ready(ref preview)
+                if preview
+                    .old
+                    .document()
+                    .is_some_and(|document| document.pdf_path.exists())
+                    && preview
+                        .new
+                        .document()
+                        .is_some_and(|document| document.pdf_path.exists())
+        )
+    });
+
+    cx.update(|_window, app| {
+        let pane = view.read(app).main_pane.read(app);
+        assert!(
+            pane.active_repo().is_some_and(|repo| {
+                pane.file_pdf_preview_cache_repo_id == Some(repo.id)
+                    && pane.file_pdf_preview_cache_rev == repo.diff_state.diff_file_rev
+                    && pane.file_pdf_preview_cache_target == repo.diff_state.diff_target
+                    && matches!(pane.file_pdf_preview, Loadable::Ready(_))
+            }),
+            "pdf preview should become active once the rendered preview cache is ready"
+        );
+        assert!(
+            !pane.is_file_image_diff_view_active(),
+            "pdf previews should no longer route through the image diff view"
+        );
+    });
+
+    assert!(
+        cx.debug_bounds("pdf_diff_view_toggle").is_some(),
+        "expected the dedicated PDF preview toggle to render"
+    );
+    assert!(
+        cx.debug_bounds("diff_pdf_container").is_some(),
+        "expected the PDF preview container to render for PDF viewer launch actions"
+    );
+    assert!(
+        cx.debug_bounds("diff_pdf_left_open").is_some(),
+        "expected the left PDF open action to render"
+    );
+    assert!(
+        cx.debug_bounds("diff_pdf_right_open").is_some(),
+        "expected the right PDF open action to render"
+    );
 }
 
 #[gpui::test]
