@@ -43,7 +43,10 @@ fn selected_conflict_file_path(
 }
 
 fn effect_requires_available_git(effect: &Effect) -> bool {
-    !matches!(effect, Effect::PersistSession { .. })
+    !matches!(
+        effect,
+        Effect::PersistSession { .. } | Effect::AbortCloneRepo { .. }
+    )
 }
 
 fn git_unavailable_error(runtime: &GitRuntimeState) -> Error {
@@ -338,6 +341,7 @@ fn send_unavailable_git_effect_result(
                 result: Err(git_unavailable_error(runtime)),
             }))
         }
+        Effect::AbortCloneRepo { dest } => clone::schedule_abort_clone_repo(msg_tx.clone(), dest),
         Effect::ExportPatch {
             repo_id,
             commit_id,
@@ -1150,5 +1154,17 @@ pub(super) fn schedule_effect(
         Effect::DropStash { repo_id, index } => {
             repo_actions::schedule_drop_stash(executor, repos, msg_tx, repo_id, index);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn abort_clone_repo_does_not_require_available_git() {
+        assert!(!effect_requires_available_git(&Effect::AbortCloneRepo {
+            dest: std::path::PathBuf::from("/tmp/example"),
+        }));
     }
 }

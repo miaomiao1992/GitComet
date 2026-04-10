@@ -1,9 +1,11 @@
+use super::super::branch_sidebar::BranchSection;
 use super::super::caches::{
     BranchSidebarFingerprint, branch_sidebar_cache_lookup,
     branch_sidebar_cache_lookup_by_cached_source, branch_sidebar_cache_lookup_by_source,
     branch_sidebar_cache_store,
 };
 use super::super::*;
+use gitcomet_core::domain::LogScope;
 use rustc_hash::FxHasher;
 use std::collections::{BTreeMap, BTreeSet};
 use std::hash::{Hash, Hasher};
@@ -22,6 +24,7 @@ pub(in super::super) struct SidebarPaneView {
     tooltip_host: WeakEntity<TooltipHost>,
     notify_fingerprint: SidebarNotifyFingerprint,
     pub(in super::super) active_context_menu_invoker: Option<SharedString>,
+    selected_branch: Option<SelectedBranch>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -100,6 +103,7 @@ impl SidebarPaneView {
             tooltip_host,
             notify_fingerprint: initial_fingerprint,
             active_context_menu_invoker: None,
+            selected_branch: None,
         }
     }
 
@@ -118,6 +122,29 @@ impl SidebarPaneView {
         }
         self.active_context_menu_invoker = next;
         cx.notify();
+    }
+
+    pub(in super::super) fn set_selected_branch(
+        &mut self,
+        repo_id: RepoId,
+        section: BranchSection,
+        name: &str,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        let next = Some(SelectedBranch {
+            repo_id,
+            section,
+            name: name.to_string(),
+        });
+        if self.selected_branch.as_ref() == next.as_ref() {
+            return;
+        }
+        self.selected_branch = next;
+        cx.notify();
+    }
+
+    pub(in super::super) fn selected_branch(&self) -> Option<&SelectedBranch> {
+        self.selected_branch.as_ref()
     }
 
     pub(in super::super) fn active_repo_id(&self) -> Option<RepoId> {
@@ -292,7 +319,7 @@ impl SidebarPaneView {
         )
         .h_full()
         .min_h(px(0.0))
-        .track_scroll(self.branches_scroll.clone());
+        .track_scroll(&self.branches_scroll);
         let scrollbar_gutter = components::Scrollbar::visible_gutter(
             self.branches_scroll.clone(),
             components::ScrollbarAxis::Vertical,
@@ -379,6 +406,30 @@ impl SidebarPaneView {
             root.main_pane.update(cx, |pane, cx| {
                 pane.rebuild_diff_cache(cx);
                 cx.notify();
+            });
+        });
+    }
+
+    pub(in super::super) fn reveal_branch_commit_in_history(
+        &mut self,
+        repo_id: RepoId,
+        section: BranchSection,
+        branch_name: &str,
+        commit_id: CommitId,
+        desired_scope: LogScope,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        let branch_name = branch_name.to_string();
+        let _ = self.root_view.update(cx, |root, cx| {
+            root.main_pane.update(cx, |pane, cx| {
+                pane.reveal_history_branch_commit(
+                    repo_id,
+                    section,
+                    &branch_name,
+                    commit_id,
+                    desired_scope,
+                    cx,
+                );
             });
         });
     }
@@ -543,8 +594,10 @@ mod tests {
 
     #[test]
     fn sidebar_notify_fingerprint_tracks_open_repo_workdirs() {
-        let mut state = AppState::default();
-        state.active_repo = Some(RepoId(1));
+        let mut state = AppState {
+            active_repo: Some(RepoId(1)),
+            ..AppState::default()
+        };
         state.repos.push(repo_state(RepoId(1), "/tmp/repo"));
 
         let initial = SidebarNotifyFingerprint::from_state(&state);
@@ -634,13 +687,17 @@ mod tests {
 
     #[test]
     fn sidebar_notify_fingerprint_ignores_repo_tab_order() {
-        let mut state_a = AppState::default();
-        state_a.active_repo = Some(RepoId(1));
+        let mut state_a = AppState {
+            active_repo: Some(RepoId(1)),
+            ..AppState::default()
+        };
         state_a.repos.push(repo_state(RepoId(1), "/tmp/repo"));
         state_a.repos.push(repo_state(RepoId(2), "/tmp/repo-wt"));
 
-        let mut state_b = AppState::default();
-        state_b.active_repo = Some(RepoId(1));
+        let mut state_b = AppState {
+            active_repo: Some(RepoId(1)),
+            ..AppState::default()
+        };
         state_b.repos.push(repo_state(RepoId(2), "/tmp/repo-wt"));
         state_b.repos.push(repo_state(RepoId(1), "/tmp/repo"));
 

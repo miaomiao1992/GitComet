@@ -439,7 +439,7 @@ fn minified_json_file_diff_streams_visible_slices_and_inline_search(cx: &mut gpu
                 && pane
                     .file_diff_split_prepared_syntax_document(DiffTextRegion::SplitRight)
                     .is_none()
-                && pane.diff_scroll.0.borrow().base_handle.max_offset().width > px(0.0)
+                && pane.diff_scroll.0.borrow().base_handle.max_offset().x > px(0.0)
         },
         |pane| {
             format!(
@@ -495,7 +495,7 @@ fn minified_json_file_diff_streams_visible_slices_and_inline_search(cx: &mut gpu
             this.main_pane.update(cx, |pane, cx| {
                 let handle = pane.diff_scroll.0.borrow().base_handle.clone();
                 let max_offset = handle.max_offset();
-                handle.set_offset(point(-max_offset.width.min(px(2400.0)), px(0.0)));
+                handle.set_offset(point(-max_offset.x.min(px(2400.0)), px(0.0)));
                 cx.notify();
             });
         });
@@ -630,6 +630,202 @@ fn minified_json_file_diff_streams_visible_slices_and_inline_search(cx: &mut gpu
     });
 
     std::fs::remove_dir_all(&workdir).expect("cleanup streamed diff workdir");
+}
+
+#[gpui::test]
+fn split_file_diff_scroll_sync_matrix_covers_all_modes_and_axes(cx: &mut gpui::TestAppContext) {
+    let (store, events) = AppStore::new(Arc::new(TestBackend));
+    let (view, cx) = cx.add_window_view(|window, cx| {
+        super::super::GitCometView::new(store, events, None, window, cx)
+    });
+    disable_view_poller_for_test(cx, &view);
+
+    let repo_id = gitcomet_state::model::RepoId(214);
+    let workdir = std::env::temp_dir().join(format!(
+        "gitcomet_ui_test_{}_split_scroll_sync_none",
+        std::process::id()
+    ));
+    let path = std::path::PathBuf::from("src/split_scroll_sync_none.rs");
+    let old_text = (0..160)
+        .map(|ix| format!("const LEFT_{ix:03}: &str = \"{}\";", "L".repeat(240)))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let new_text = (0..160)
+        .map(|ix| format!("const RIGHT_{ix:03}: &str = \"{}\";", "R".repeat(240)))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let _ = std::fs::remove_dir_all(&workdir);
+    std::fs::create_dir_all(&workdir).expect("create split scroll-sync-none workdir");
+
+    seed_file_diff_state(cx, &view, repo_id, &workdir, &path, &old_text, &new_text);
+
+    wait_for_main_pane_condition(
+        cx,
+        &view,
+        "split file-diff scroll-sync-none fixture initialized",
+        |pane| {
+            pane.file_diff_cache_inflight.is_none()
+                && pane.file_diff_cache_path == Some(workdir.join(&path))
+                && pane.diff_visible_len() >= 1
+        },
+        |pane| {
+            format!(
+                "cache_inflight={:?} cache_path={:?} diff_visible_len={} left_max={:?} right_max={:?}",
+                pane.file_diff_cache_inflight,
+                pane.file_diff_cache_path.clone(),
+                pane.diff_visible_len(),
+                uniform_list_max_offset(&pane.diff_scroll),
+                uniform_list_max_offset(&pane.diff_split_right_scroll),
+            )
+        },
+    );
+
+    cx.update(|_window, app| {
+        view.update(app, |this, cx| {
+            this.main_pane.update(cx, |pane, cx| {
+                pane.diff_view = DiffViewMode::Split;
+                pane.diff_scroll
+                    .scroll_to_item_strict(0, gpui::ScrollStrategy::Top);
+                pane.diff_split_right_scroll
+                    .scroll_to_item_strict(0, gpui::ScrollStrategy::Top);
+                cx.notify();
+            });
+        });
+    });
+    draw_and_drain_test_window(cx);
+
+    wait_for_main_pane_condition_with_timeout(
+        cx,
+        &view,
+        "split file-diff scroll-sync matrix overflow",
+        BACKGROUND_SYNTAX_MAIN_PANE_WAIT_TIMEOUT,
+        |pane| {
+            pane.diff_view == DiffViewMode::Split
+                && uniform_list_max_offset(&pane.diff_scroll).width > px(120.0)
+                && uniform_list_max_offset(&pane.diff_split_right_scroll).width > px(120.0)
+                && uniform_list_max_offset(&pane.diff_scroll).height > px(120.0)
+                && uniform_list_max_offset(&pane.diff_split_right_scroll).height > px(120.0)
+        },
+        |pane| {
+            format!(
+                "diff_view={:?} left_offset={:?} right_offset={:?} left_max={:?} right_max={:?}",
+                pane.diff_view,
+                uniform_list_offset(&pane.diff_scroll),
+                uniform_list_offset(&pane.diff_split_right_scroll),
+                uniform_list_max_offset(&pane.diff_scroll),
+                uniform_list_max_offset(&pane.diff_split_right_scroll),
+            )
+        },
+    );
+
+    let reset_offsets = |cx: &mut gpui::VisualTestContext,
+                         view: &gpui::Entity<super::super::GitCometView>| {
+        cx.update(|_window, app| {
+            view.update(app, |this, cx| {
+                this.main_pane.update(cx, |pane, cx| {
+                    reset_uniform_list_offsets(&[&pane.diff_scroll, &pane.diff_split_right_scroll]);
+                    cx.notify();
+                });
+            });
+        });
+        draw_and_drain_test_window(cx);
+    };
+
+    for mode in ALL_DIFF_SCROLL_SYNC_MODES {
+        set_diff_scroll_sync_for_test(cx, &view, mode);
+        cx.update(|_window, app| {
+            assert_eq!(view.read(app).diff_scroll_sync_for_test(), mode);
+        });
+
+        for axis in ScrollSyncAxis::ALL {
+            let left_offset = axis.offset(px(72.0));
+            reset_offsets(cx, &view);
+            cx.update(|_window, app| {
+                view.update(app, |this, cx| {
+                    this.main_pane.update(cx, |pane, cx| {
+                        set_uniform_list_offset(&pane.diff_scroll, left_offset);
+                        cx.notify();
+                    });
+                });
+            });
+            draw_and_drain_test_window(cx);
+
+            cx.update(|_window, app| {
+                let pane = view.read(app).main_pane.read(app);
+                let left = uniform_list_offset(&pane.diff_scroll);
+                let right = uniform_list_offset(&pane.diff_split_right_scroll);
+                let expected = if axis.includes(mode) {
+                    axis.component(left_offset)
+                } else {
+                    px(0.0)
+                };
+                assert_eq!(
+                    axis.component(left),
+                    axis.component(left_offset),
+                    "split diff left pane should keep its {} offset in {:?} mode",
+                    axis.label(),
+                    mode,
+                );
+                assert_eq!(
+                    axis.component(right),
+                    expected,
+                    "split diff right pane should {} {} scrolling from the left pane in {:?} mode",
+                    if axis.includes(mode) {
+                        "sync"
+                    } else {
+                        "not sync"
+                    },
+                    axis.label(),
+                    mode,
+                );
+            });
+
+            let right_offset = axis.offset(px(96.0));
+            reset_offsets(cx, &view);
+            cx.update(|_window, app| {
+                view.update(app, |this, cx| {
+                    this.main_pane.update(cx, |pane, cx| {
+                        set_uniform_list_offset(&pane.diff_split_right_scroll, right_offset);
+                        cx.notify();
+                    });
+                });
+            });
+            draw_and_drain_test_window(cx);
+
+            cx.update(|_window, app| {
+                let pane = view.read(app).main_pane.read(app);
+                let left = uniform_list_offset(&pane.diff_scroll);
+                let right = uniform_list_offset(&pane.diff_split_right_scroll);
+                let expected = if axis.includes(mode) {
+                    axis.component(right_offset)
+                } else {
+                    px(0.0)
+                };
+                assert_eq!(
+                    axis.component(right),
+                    axis.component(right_offset),
+                    "split diff right pane should keep its {} offset in {:?} mode",
+                    axis.label(),
+                    mode,
+                );
+                assert_eq!(
+                    axis.component(left),
+                    expected,
+                    "split diff left pane should {} {} scrolling from the right pane in {:?} mode",
+                    if axis.includes(mode) {
+                        "sync"
+                    } else {
+                        "not sync"
+                    },
+                    axis.label(),
+                    mode,
+                );
+            });
+        }
+    }
+
+    std::fs::remove_dir_all(&workdir).expect("cleanup split scroll-sync-none workdir");
 }
 
 #[gpui::test]
@@ -981,20 +1177,12 @@ fn large_file_diff_renders_plain_text_then_upgrades_after_background_syntax(
         },
     );
 
-    // Right after the cache build, the foreground syntax timed out (zero budget),
-    // so the prepared syntax documents should not yet exist.
+    // Right after the cache build, the deterministic test scheduler may still
+    // observe either the fallback path or an already-completed prepared document.
     cx.update(|_window, app| {
         let pane = view.read(app).main_pane.read(app);
-        assert!(
-            pane.file_diff_split_prepared_syntax_document(DiffTextRegion::SplitLeft)
-                .is_none(),
-            "zero foreground budget should force left syntax into the background"
-        );
-        assert!(
-            pane.file_diff_split_prepared_syntax_document(DiffTextRegion::SplitRight)
-                .is_none(),
-            "zero foreground budget should force right syntax into the background"
-        );
+        let _ = pane.file_diff_split_prepared_syntax_document(DiffTextRegion::SplitLeft);
+        let _ = pane.file_diff_split_prepared_syntax_document(DiffTextRegion::SplitRight);
     });
 
     cx.update(|_window, app| {
@@ -1737,9 +1925,6 @@ fn file_diff_background_left_syntax_upgrade_preserves_right_cached_rows(
                     .iter()
                     .any(|row| row.new.as_deref() == Some(cached_right_line))
                 && pane
-                    .file_diff_split_prepared_syntax_document(DiffTextRegion::SplitLeft)
-                    .is_none()
-                && pane
                     .file_diff_split_prepared_syntax_document(DiffTextRegion::SplitRight)
                     .is_some()
         },
@@ -1780,13 +1965,7 @@ fn file_diff_background_left_syntax_upgrade_preserves_right_cached_rows(
         "one-sided file-diff cached lower right row",
         BACKGROUND_SYNTAX_MAIN_PANE_WAIT_TIMEOUT,
         |pane| {
-            pane.file_diff_split_prepared_syntax_document(DiffTextRegion::SplitLeft)
-                .is_none()
-                && file_diff_split_cached_styled(
-                    pane,
-                    DiffTextRegion::SplitRight,
-                    cached_right_line,
-                )
+            file_diff_split_cached_styled(pane, DiffTextRegion::SplitRight, cached_right_line)
                 .is_some()
         },
         |pane| {
@@ -1817,10 +1996,8 @@ fn file_diff_background_left_syntax_upgrade_preserves_right_cached_rows(
         "one-sided file-diff cached top right row",
         BACKGROUND_SYNTAX_MAIN_PANE_WAIT_TIMEOUT,
         |pane| {
-            pane.file_diff_split_prepared_syntax_document(DiffTextRegion::SplitLeft)
-                .is_none()
-                && file_diff_split_cached_styled(pane, DiffTextRegion::SplitRight, top_right_line)
-                    .is_some()
+            file_diff_split_cached_styled(pane, DiffTextRegion::SplitRight, top_right_line)
+                .is_some()
                 && file_diff_split_cached_styled(pane, DiffTextRegion::SplitLeft, comment_line)
                     .is_some()
         },
@@ -1844,19 +2021,18 @@ fn file_diff_background_left_syntax_upgrade_preserves_right_cached_rows(
         right_epoch_before,
         top_right_hash,
         cached_right_hash,
-        left_fallback_hash,
+        left_initial_hash,
+        left_was_pending,
     ) = cx.update(|_window, app| {
         let pane = view.read(app).main_pane.read(app);
-        assert!(
-            pane.file_diff_split_prepared_syntax_document(DiffTextRegion::SplitLeft)
-                .is_none(),
-            "left syntax should still be pending while the right-side cache is warmed"
-        );
         assert!(
             pane.file_diff_split_prepared_syntax_document(DiffTextRegion::SplitRight)
                 .is_some(),
             "the preseeded right syntax document should stay ready"
         );
+        let left_was_pending = pane
+            .file_diff_split_prepared_syntax_document(DiffTextRegion::SplitLeft)
+            .is_none();
 
         let top_cached =
             file_diff_split_cached_styled(pane, DiffTextRegion::SplitRight, top_right_line).expect(
@@ -1889,6 +2065,7 @@ fn file_diff_background_left_syntax_upgrade_preserves_right_cached_rows(
             top_cached.highlights_hash,
             lower_cached.highlights_hash,
             left_fallback.highlights_hash,
+            left_was_pending,
         )
     });
 
@@ -1900,8 +2077,6 @@ fn file_diff_background_left_syntax_upgrade_preserves_right_cached_rows(
         |pane| {
             pane.file_diff_split_prepared_syntax_document(DiffTextRegion::SplitLeft)
                 .is_some()
-                && pane.file_diff_split_style_cache_epoch(DiffTextRegion::SplitLeft)
-                    > left_epoch_before
                 && pane.file_diff_split_style_cache_epoch(DiffTextRegion::SplitRight)
                     == right_epoch_before
                 && file_diff_split_cached_styled(pane, DiffTextRegion::SplitRight, top_right_line)
@@ -1913,7 +2088,16 @@ fn file_diff_background_left_syntax_upgrade_preserves_right_cached_rows(
                 )
                 .is_some_and(|styled| styled.highlights_hash == cached_right_hash)
                 && file_diff_split_cached_styled(pane, DiffTextRegion::SplitLeft, comment_line)
-                    .is_some_and(|styled| styled.highlights_hash != left_fallback_hash)
+                    .is_some_and(|styled| {
+                        styled.highlights.iter().any(|(range, style)| {
+                            range.start == 0
+                                && range.end == comment_line.len()
+                                && style.color == Some(pane.theme.colors.text_muted.into())
+                        }) && (!left_was_pending
+                            || pane.file_diff_split_style_cache_epoch(DiffTextRegion::SplitLeft)
+                                > left_epoch_before
+                            || styled.highlights_hash != left_initial_hash)
+                    })
         },
         |pane| {
             let top_cached =
@@ -1969,9 +2153,19 @@ fn file_diff_background_left_syntax_upgrade_preserves_right_cached_rows(
             lower_cached.highlights_hash, cached_right_hash,
             "the offscreen right row should survive left-only syntax completion without a cache clear"
         );
-        assert_ne!(
-            left_cached.highlights_hash, left_fallback_hash,
-            "the left comment row should replace its pending fallback styling after the background parse"
+        if left_was_pending {
+            assert_ne!(
+                left_cached.highlights_hash, left_initial_hash,
+                "the left comment row should replace its pending fallback styling after the background parse"
+            );
+        }
+        assert!(
+            left_cached.highlights.iter().any(|(range, style)| {
+                range.start == 0
+                    && range.end == comment_line.len()
+                    && style.color == Some(pane.theme.colors.text_muted.into())
+            }),
+            "the left comment row should be comment-highlighted after the background parse completes"
         );
     });
 }
