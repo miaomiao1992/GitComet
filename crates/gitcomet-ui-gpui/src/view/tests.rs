@@ -1068,6 +1068,52 @@ fn branch_sidebar_collapses_local_section_without_hiding_remote_rows() {
 }
 
 #[test]
+fn branch_sidebar_remote_section_ignores_tracking_only_local_upstreams() {
+    let mut repo = RepoState::new_opening(
+        RepoId(1),
+        RepoSpec {
+            workdir: PathBuf::from("repo"),
+        },
+    );
+    repo.head_branch = Loadable::Ready("feature/topic".to_string());
+    repo.branches = Loadable::Ready(Arc::new(vec![Branch {
+        name: "feature/topic".to_string(),
+        target: CommitId("deadbeef".into()),
+        upstream: Some(Upstream {
+            remote: "origin".to_string(),
+            branch: "feature/topic".to_string(),
+        }),
+        divergence: None,
+    }]));
+    repo.remotes = Loadable::Ready(Arc::new(vec![Remote {
+        name: "origin".to_string(),
+        url: Some("https://example.com/origin.git".to_string()),
+    }]));
+    repo.remote_branches = Loadable::Ready(Arc::new(Vec::new()));
+
+    let rows = GitCometView::branch_sidebar_rows(&repo);
+
+    assert!(rows.iter().any(|row| {
+        matches!(
+            row,
+            BranchSidebarRow::RemoteHeader { name, .. } if name.as_ref() == "origin"
+        )
+    }));
+    assert!(
+        !rows.iter().any(|row| {
+            matches!(
+                row,
+                BranchSidebarRow::Branch {
+                    section: BranchSection::Remote,
+                    ..
+                }
+            )
+        }),
+        "expected remote section to show only actual remote branches"
+    );
+}
+
+#[test]
 fn branch_sidebar_collapses_remote_section_and_remote_groups() {
     let mut repo = RepoState::new_opening(
         RepoId(1),

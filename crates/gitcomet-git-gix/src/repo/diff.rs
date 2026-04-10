@@ -25,6 +25,9 @@ impl GixRepo {
         match target {
             DiffTarget::WorkingTree { path, area } => {
                 cmd.arg("diff").arg("--no-ext-diff");
+                if should_ignore_cr_at_eol_for_target(target) {
+                    cmd.arg("--ignore-cr-at-eol");
+                }
                 if matches!(area, DiffArea::Staged) {
                     cmd.arg("--cached");
                 }
@@ -112,7 +115,11 @@ impl GixRepo {
                             }
                         };
                         let new = read_worktree_file_utf8_optional(&self.spec.workdir, path)?;
-                        (old, new)
+                        if should_ignore_cr_at_eol_for_target(target) {
+                            (normalize_crlf_to_lf(old), normalize_crlf_to_lf(new))
+                        } else {
+                            (old, new)
+                        }
                     }
                     DiffArea::Staged => {
                         let old = decode_utf8_bytes_optional(
@@ -455,6 +462,21 @@ impl GixRepo {
             &blob,
         )))
     }
+}
+
+fn should_ignore_cr_at_eol_for_target(target: &DiffTarget) -> bool {
+    cfg!(windows)
+        && matches!(
+            target,
+            DiffTarget::WorkingTree {
+                area: DiffArea::Unstaged,
+                ..
+            }
+        )
+}
+
+fn normalize_crlf_to_lf(text: Option<String>) -> Option<String> {
+    text.map(|text| text.replace("\r\n", "\n"))
 }
 
 fn conflict_file_stages_from_stage_data(

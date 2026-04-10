@@ -700,16 +700,10 @@ pub(super) fn branch_sidebar_rows(
     let approx_rows = 16 + visible_rows + visible_rows / 8;
     let mut rows = Vec::with_capacity(approx_rows);
     let mut head_upstream_full = None;
-    let mut local_upstreams: SmallVec<[(&str, &str); 4]> = SmallVec::new();
 
     if local_collapsed && let Loadable::Ready(branches) = &repo.branches {
         for branch in branches.iter() {
-            record_local_branch_sidebar_metadata(
-                branch,
-                head,
-                &mut local_upstreams,
-                &mut head_upstream_full,
-            );
+            record_local_branch_sidebar_metadata(branch, head, &mut head_upstream_full);
         }
     }
 
@@ -732,12 +726,7 @@ pub(super) fn branch_sidebar_rows(
                 let mut tree = SlashTree::default();
                 let mut local_leaf_meta = Vec::with_capacity(branches.len());
                 for branch in branches.iter() {
-                    record_local_branch_sidebar_metadata(
-                        branch,
-                        head,
-                        &mut local_upstreams,
-                        &mut head_upstream_full,
-                    );
+                    record_local_branch_sidebar_metadata(branch, head, &mut head_upstream_full);
                     local_leaf_meta.push(SlashTreeLeafMeta {
                         divergence: branch.divergence,
                         is_head: head.is_some_and(|current| current == branch.name.as_str()),
@@ -833,12 +822,6 @@ pub(super) fn branch_sidebar_rows(
         }
 
         if !remote_section_is_loading_or_error {
-            for (remote, branch) in local_upstreams.iter().copied() {
-                if push_remote_group_branch(&mut remotes, &mut remote_indexes, remote, branch) {
-                    remote_names_need_sort |= slash_tree_label_needs_sort(remote);
-                }
-            }
-
             if let Loadable::Ready(known) = &repo.remotes {
                 for remote in known.iter() {
                     remote_names_need_sort |= slash_tree_label_needs_sort(remote.name.as_str());
@@ -1233,17 +1216,15 @@ fn slash_tree_leaf_after_chain<'a>(name: &'a str, chain_segments: &[&str]) -> Op
     Some(&name[leaf_start..leaf_end])
 }
 
-fn record_local_branch_sidebar_metadata<'a>(
-    branch: &'a Branch,
+fn record_local_branch_sidebar_metadata(
+    branch: &Branch,
     head: Option<&str>,
-    local_upstreams: &mut SmallVec<[(&'a str, &'a str); 4]>,
     head_upstream_full: &mut Option<String>,
 ) {
     let Some(upstream) = branch.upstream.as_ref() else {
         return;
     };
 
-    local_upstreams.push((upstream.remote.as_str(), upstream.branch.as_str()));
     if head_upstream_full.is_none() && head.is_some_and(|current| current == branch.name.as_str()) {
         let mut full = String::with_capacity(upstream.remote.len() + 1 + upstream.branch.len());
         full.push_str(&upstream.remote);
