@@ -3349,6 +3349,33 @@ mod tests {
         );
     }
 
+    #[test]
+    fn normalize_non_overlapping_tokens_trims_partial_overlap_to_suffix() {
+        let tokens = normalize_non_overlapping_tokens(vec![
+            SyntaxToken {
+                range: 0..8,
+                kind: SyntaxTokenKind::Comment,
+            },
+            SyntaxToken {
+                range: 5..12,
+                kind: SyntaxTokenKind::DiffMinus,
+            },
+        ]);
+        assert_eq!(
+            tokens,
+            vec![
+                SyntaxToken {
+                    range: 0..8,
+                    kind: SyntaxTokenKind::Comment,
+                },
+                SyntaxToken {
+                    range: 8..12,
+                    kind: SyntaxTokenKind::DiffMinus,
+                },
+            ]
+        );
+    }
+
     #[cfg(any(test, feature = "syntax-rust"))]
     #[test]
     fn vendored_rust_query_compiles() {
@@ -4087,6 +4114,45 @@ mod tests {
         );
     }
 
+    #[cfg(any(test, feature = "syntax-web"))]
+    #[test]
+    fn javascript_treesitter_captures_constructor_and_constant_builtin() {
+        let constructor_tokens = syntax_tokens_for_line(
+            "class Example { constructor() {} }",
+            DiffSyntaxLanguage::JavaScript,
+            DiffSyntaxMode::Auto,
+        );
+        assert!(
+            constructor_tokens
+                .iter()
+                .any(|t| t.kind == SyntaxTokenKind::Constructor),
+            "JavaScript constructor should produce Constructor token, got: {constructor_tokens:?}"
+        );
+
+        let builtin_tokens = syntax_tokens_for_line(
+            "const value = undefined;",
+            DiffSyntaxLanguage::JavaScript,
+            DiffSyntaxMode::Auto,
+        );
+        assert!(
+            builtin_tokens
+                .iter()
+                .any(|t| t.kind == SyntaxTokenKind::ConstantBuiltin),
+            "JavaScript builtins should produce ConstantBuiltin token, got: {builtin_tokens:?}"
+        );
+    }
+
+    #[cfg(any(test, feature = "syntax-go"))]
+    #[test]
+    fn go_treesitter_captures_namespace_package_identifier() {
+        let tokens =
+            syntax_tokens_for_line("package main", DiffSyntaxLanguage::Go, DiffSyntaxMode::Auto);
+        assert!(
+            tokens.iter().any(|t| t.kind == SyntaxTokenKind::Namespace),
+            "Go package identifier should produce Namespace token, got: {tokens:?}"
+        );
+    }
+
     #[cfg(any(test, feature = "syntax-extra"))]
     #[test]
     fn lua_and_c_treesitter_capture_preprocessor_and_label() {
@@ -4177,6 +4243,116 @@ mod tests {
                 .iter()
                 .any(|t| t.kind == SyntaxTokenKind::TextLiteral),
             "XML CDATA should produce TextLiteral token, got: {literal:?}"
+        );
+    }
+
+    #[cfg(any(test, feature = "syntax-repo"))]
+    #[test]
+    fn markdown_inline_treesitter_captures_text_literal_and_markup_link() {
+        let text = "[link](https://example.com) `code`";
+        let tokens = syntax_tokens_for_line(
+            text,
+            DiffSyntaxLanguage::MarkdownInline,
+            DiffSyntaxMode::Auto,
+        );
+        assert!(
+            tokens.iter().any(|t| t.kind == SyntaxTokenKind::MarkupLink),
+            "Markdown inline link destination should produce MarkupLink token, got: {tokens:?}"
+        );
+        assert!(
+            tokens
+                .iter()
+                .any(|t| t.kind == SyntaxTokenKind::TextLiteral),
+            "Markdown inline code span should produce TextLiteral token, got: {tokens:?}"
+        );
+    }
+
+    #[cfg(any(test, feature = "syntax-repo"))]
+    #[test]
+    fn markdown_prepared_document_captures_heading_marker_as_punctuation_special() {
+        let document = prepare_test_document(DiffSyntaxLanguage::Markdown, "# Heading");
+        let tokens = syntax_tokens_for_prepared_document_line(document, 0)
+            .expect("markdown heading line should have prepared tokens");
+        assert!(
+            tokens
+                .iter()
+                .any(|t| t.kind == SyntaxTokenKind::PunctuationSpecial),
+            "Markdown heading marker should remain PunctuationSpecial, got: {tokens:?}"
+        );
+    }
+
+    #[cfg(any(test, feature = "syntax-extra"))]
+    #[test]
+    fn ruby_and_swift_treesitter_capture_regex_aliases() {
+        let cases = [
+            (DiffSyntaxLanguage::Ruby, "value = /foo+/"),
+            (DiffSyntaxLanguage::Swift, "let pattern = /foo+/"),
+        ];
+
+        for (language, text) in cases {
+            let tokens = syntax_tokens_for_line(text, language, DiffSyntaxMode::Auto);
+            assert!(
+                tokens
+                    .iter()
+                    .any(|token| token.kind == SyntaxTokenKind::StringRegex),
+                "{language:?} regex literal should produce StringRegex token, got: {tokens:?}"
+            );
+        }
+    }
+
+    #[cfg(any(test, feature = "syntax-repo"))]
+    #[test]
+    fn gitcommit_prepared_document_captures_path_symbol_and_trailer_tokens() {
+        let text = [
+            "Subject",
+            "",
+            "closes #123",
+            "Signed-off-by: me@example.com",
+            "# On branch feature/demo",
+            "# Changes to be committed:",
+            "# renamed: src/old.rs -> src/new.rs",
+        ]
+        .join("\n");
+        let document = prepare_test_document(DiffSyntaxLanguage::GitCommit, &text);
+
+        let trailer = syntax_tokens_for_prepared_document_line(document, 3)
+            .expect("gitcommit trailer line should have prepared tokens");
+        assert!(
+            trailer.iter().any(|t| t.kind == SyntaxTokenKind::Property),
+            "gitcommit trailer key should produce Property token, got: {trailer:?}"
+        );
+
+        let branch = syntax_tokens_for_prepared_document_line(document, 4)
+            .expect("gitcommit branch line should have prepared tokens");
+        assert!(
+            branch
+                .iter()
+                .any(|t| t.kind == SyntaxTokenKind::StringSpecial),
+            "gitcommit branch line should produce StringSpecial token, got: {branch:?}"
+        );
+
+        let renamed = syntax_tokens_for_prepared_document_line(document, 6)
+            .expect("gitcommit renamed file line should have prepared tokens");
+        assert!(
+            renamed.iter().any(|t| t.kind == SyntaxTokenKind::DiffDelta),
+            "gitcommit renamed file line should produce DiffDelta token, got: {renamed:?}"
+        );
+        assert!(
+            renamed
+                .iter()
+                .any(|t| t.kind == SyntaxTokenKind::StringSpecial),
+            "gitcommit renamed file path should produce StringSpecial token, got: {renamed:?}"
+        );
+    }
+
+    #[cfg(any(test, feature = "syntax-xml"))]
+    #[test]
+    fn xml_treesitter_captures_markup_link_via_system_literal() {
+        let text = "<!DOCTYPE root SYSTEM \"https://example.com/schema.dtd\">";
+        let tokens = syntax_tokens_for_line(text, DiffSyntaxLanguage::Xml, DiffSyntaxMode::Auto);
+        assert!(
+            tokens.iter().any(|t| t.kind == SyntaxTokenKind::MarkupLink),
+            "XML system literal should produce MarkupLink token, got: {tokens:?}"
         );
     }
 

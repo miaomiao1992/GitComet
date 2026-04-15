@@ -1004,9 +1004,9 @@ pub(crate) fn with_alpha(mut color: Rgba, alpha: f32) -> Rgba {
 #[cfg(test)]
 mod tests {
     use super::{
-        AppTheme, DEFAULT_DARK_THEME_KEY, DEFAULT_LIGHT_THEME_KEY, GRAPH_LANE_PALETTE_SIZE, Rgba,
-        available_themes, derived_syntax_color, has_theme_key, load_theme_specs_from_json,
-        merged_theme_options, theme_label, with_alpha,
+        AppTheme, DEFAULT_DARK_THEME_KEY, DEFAULT_LIGHT_THEME_KEY, EMBEDDED_THEME_FILES,
+        GRAPH_LANE_PALETTE_SIZE, Rgba, available_themes, derived_syntax_color, has_theme_key,
+        load_theme_specs_from_json, merged_theme_options, theme_label, with_alpha,
     };
     use std::fs;
     use tempfile::tempdir;
