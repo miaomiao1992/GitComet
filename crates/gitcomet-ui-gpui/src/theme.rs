@@ -73,27 +73,43 @@ pub struct SyntaxColors {
     pub comment_doc: Rgba,
     pub string: Rgba,
     pub string_escape: Rgba,
+    pub string_regex: Rgba,
+    pub string_special: Rgba,
     pub keyword: Rgba,
     pub keyword_control: Rgba,
+    pub preproc: Rgba,
     pub number: Rgba,
     pub boolean: Rgba,
     pub function: Rgba,
     pub function_method: Rgba,
     pub function_special: Rgba,
+    pub constructor: Rgba,
     pub type_name: Rgba,
     pub type_builtin: Rgba,
     pub type_interface: Rgba,
+    pub namespace: Rgba,
     pub variable: Option<Rgba>,
     pub variable_parameter: Rgba,
     pub variable_special: Rgba,
+    pub variable_builtin: Rgba,
     pub property: Rgba,
+    pub label: Option<Rgba>,
     pub constant: Rgba,
+    pub constant_builtin: Rgba,
     pub operator: Rgba,
     pub punctuation: Rgba,
     pub punctuation_bracket: Rgba,
     pub punctuation_delimiter: Rgba,
+    pub punctuation_special: Rgba,
+    pub punctuation_list_marker: Rgba,
     pub tag: Rgba,
     pub attribute: Rgba,
+    pub markup_heading: Rgba,
+    pub markup_link: Rgba,
+    pub text_literal: Rgba,
+    pub diff_plus: Rgba,
+    pub diff_minus: Rgba,
+    pub diff_delta: Rgba,
     pub lifetime: Rgba,
 }
 
@@ -453,9 +469,15 @@ struct ThemeFileSyntaxColors {
     #[serde(default)]
     string_escape: Option<ThemeColor>,
     #[serde(default)]
+    string_regex: Option<ThemeColor>,
+    #[serde(default)]
+    string_special: Option<ThemeColor>,
+    #[serde(default)]
     keyword: Option<ThemeColor>,
     #[serde(default)]
     keyword_control: Option<ThemeColor>,
+    #[serde(default)]
+    preproc: Option<ThemeColor>,
     #[serde(default)]
     number: Option<ThemeColor>,
     #[serde(default)]
@@ -466,6 +488,8 @@ struct ThemeFileSyntaxColors {
     function_method: Option<ThemeColor>,
     #[serde(default)]
     function_special: Option<ThemeColor>,
+    #[serde(default)]
+    constructor: Option<ThemeColor>,
     #[serde(rename = "type", default)]
     type_name: Option<ThemeColor>,
     #[serde(default)]
@@ -473,15 +497,23 @@ struct ThemeFileSyntaxColors {
     #[serde(default)]
     type_interface: Option<ThemeColor>,
     #[serde(default)]
+    namespace: Option<ThemeColor>,
+    #[serde(default)]
     variable: Option<ThemeColor>,
     #[serde(default)]
     variable_parameter: Option<ThemeColor>,
     #[serde(default)]
     variable_special: Option<ThemeColor>,
     #[serde(default)]
+    variable_builtin: Option<ThemeColor>,
+    #[serde(default)]
     property: Option<ThemeColor>,
     #[serde(default)]
+    label: Option<ThemeColor>,
+    #[serde(default)]
     constant: Option<ThemeColor>,
+    #[serde(default)]
+    constant_builtin: Option<ThemeColor>,
     #[serde(default)]
     operator: Option<ThemeColor>,
     #[serde(default)]
@@ -491,9 +523,25 @@ struct ThemeFileSyntaxColors {
     #[serde(default)]
     punctuation_delimiter: Option<ThemeColor>,
     #[serde(default)]
+    punctuation_special: Option<ThemeColor>,
+    #[serde(default)]
+    punctuation_list_marker: Option<ThemeColor>,
+    #[serde(default)]
     tag: Option<ThemeColor>,
     #[serde(default)]
     attribute: Option<ThemeColor>,
+    #[serde(default)]
+    markup_heading: Option<ThemeColor>,
+    #[serde(default)]
+    markup_link: Option<ThemeColor>,
+    #[serde(default)]
+    text_literal: Option<ThemeColor>,
+    #[serde(default)]
+    diff_plus: Option<ThemeColor>,
+    #[serde(default)]
+    diff_minus: Option<ThemeColor>,
+    #[serde(default)]
+    diff_delta: Option<ThemeColor>,
     #[serde(default)]
     lifetime: Option<ThemeColor>,
 }
@@ -653,21 +701,51 @@ fn resolve_syntax_colors(
         comment_doc: resolve_syntax_color(overrides.comment_doc, colors.text_muted),
         string: resolve_syntax_color(overrides.string, warning),
         string_escape: resolve_syntax_color(overrides.string_escape, success),
+        string_regex: resolve_syntax_color(
+            overrides.string_regex,
+            resolve_syntax_color(overrides.string, warning),
+        ),
+        string_special: resolve_syntax_color(
+            overrides.string_special,
+            resolve_syntax_color(overrides.string, warning),
+        ),
         keyword: resolve_syntax_color(overrides.keyword, accent),
         keyword_control: resolve_syntax_color(overrides.keyword_control, accent),
+        preproc: resolve_syntax_color(
+            overrides.preproc,
+            resolve_syntax_color(overrides.keyword, accent),
+        ),
         number: resolve_syntax_color(overrides.number, success),
         boolean: resolve_syntax_color(overrides.boolean, success),
         function: resolve_syntax_color(overrides.function, accent),
         function_method: resolve_syntax_color(overrides.function_method, accent),
         function_special: resolve_syntax_color(overrides.function_special, accent),
+        constructor: resolve_syntax_color(
+            overrides.constructor,
+            resolve_syntax_color(overrides.function, accent),
+        ),
         type_name: resolve_syntax_color(overrides.type_name, warning),
         type_builtin: resolve_syntax_color(overrides.type_builtin, warning),
         type_interface: resolve_syntax_color(overrides.type_interface, warning),
+        namespace: resolve_syntax_color(
+            overrides.namespace,
+            resolve_syntax_color(overrides.type_name, warning),
+        ),
         variable: resolve_optional_syntax_color(overrides.variable),
         variable_parameter: resolve_syntax_color(overrides.variable_parameter, colors.text_muted),
         variable_special: resolve_syntax_color(overrides.variable_special, accent),
+        variable_builtin: resolve_syntax_color(
+            overrides.variable_builtin,
+            resolve_syntax_color(overrides.variable_special, accent),
+        ),
         property: resolve_syntax_color(overrides.property, accent),
+        label: resolve_optional_syntax_color(overrides.label)
+            .or(resolve_optional_syntax_color(overrides.variable)),
         constant: resolve_syntax_color(overrides.constant, success),
+        constant_builtin: resolve_syntax_color(
+            overrides.constant_builtin,
+            resolve_syntax_color(overrides.constant, success),
+        ),
         operator: resolve_syntax_color(overrides.operator, colors.text_muted),
         punctuation: resolve_syntax_color(overrides.punctuation, colors.text_muted),
         punctuation_bracket: resolve_syntax_color(overrides.punctuation_bracket, colors.text_muted),
@@ -675,8 +753,40 @@ fn resolve_syntax_colors(
             overrides.punctuation_delimiter,
             colors.text_muted,
         ),
+        punctuation_special: resolve_syntax_color(
+            overrides.punctuation_special,
+            resolve_syntax_color(overrides.punctuation, colors.text_muted),
+        ),
+        punctuation_list_marker: resolve_syntax_color(
+            overrides.punctuation_list_marker,
+            resolve_syntax_color(overrides.punctuation, colors.text_muted),
+        ),
         tag: resolve_syntax_color(overrides.tag, warning),
         attribute: resolve_syntax_color(overrides.attribute, accent),
+        markup_heading: resolve_syntax_color(
+            overrides.markup_heading,
+            resolve_syntax_color(overrides.keyword, accent),
+        ),
+        markup_link: resolve_syntax_color(
+            overrides.markup_link,
+            resolve_syntax_color(overrides.string, warning),
+        ),
+        text_literal: resolve_syntax_color(
+            overrides.text_literal,
+            resolve_syntax_color(overrides.string, warning),
+        ),
+        diff_plus: resolve_syntax_color(
+            overrides.diff_plus,
+            resolve_syntax_color(overrides.string, warning),
+        ),
+        diff_minus: resolve_syntax_color(
+            overrides.diff_minus,
+            resolve_syntax_color(overrides.keyword, accent),
+        ),
+        diff_delta: resolve_syntax_color(
+            overrides.diff_delta,
+            resolve_syntax_color(overrides.type_name, warning),
+        ),
         lifetime: resolve_syntax_color(overrides.lifetime, accent),
     }
 }
@@ -1034,7 +1144,9 @@ mod tests {
                     "syntax": {
                         "keyword": "#112233ff",
                         "variable": "#445566ff",
-                        "comment_doc": "#778899ff"
+                        "comment_doc": "#778899ff",
+                        "diff_plus": "#aabbccff",
+                        "label": "#998877ff"
                     },
                     "radii": {
                         "panel": 2.0,
@@ -1050,11 +1162,163 @@ mod tests {
         assert_eq!(theme.syntax.keyword, gpui::rgba(0x112233ff));
         assert_eq!(theme.syntax.variable, Some(gpui::rgba(0x445566ff)));
         assert_eq!(theme.syntax.comment_doc, gpui::rgba(0x778899ff));
+        assert_eq!(theme.syntax.diff_plus, gpui::rgba(0xaabbccff));
+        assert_eq!(theme.syntax.label, Some(gpui::rgba(0x998877ff)));
         assert_eq!(theme.syntax.comment, theme.colors.text_muted);
         assert_eq!(
             theme.syntax.string,
             derived_syntax_color(theme.is_dark, &theme.colors, theme.colors.warning)
         );
+    }
+
+    #[test]
+    fn new_syntax_categories_fallback_to_legacy_buckets() {
+        let json = r##"{
+            "name": "Fixture",
+            "themes": [
+                {
+                    "key": "fixture",
+                    "name": "Fixture",
+                    "appearance": "light",
+                    "colors": {
+                        "window_bg": "#fafafaff",
+                        "surface_bg": "#ebebecff",
+                        "surface_bg_elevated": "#ebebecff",
+                        "active_section": "#fafafaff",
+                        "border": "#dfdfe0ff",
+                        "text": "#242529ff",
+                        "text_muted": "#58585aff",
+                        "accent": "#5c78e2ff",
+                        "hover": "#dfdfe0ff",
+                        "active": { "hex": "#dfdfe0ff", "alpha": 0.88 },
+                        "focus_ring": { "hex": "#5c78e2ff", "alpha": 0.52 },
+                        "focus_ring_bg": { "hex": "#5c78e2ff", "alpha": 0.12 },
+                        "scrollbar_thumb": { "hex": "#58585aff", "alpha": 0.26 },
+                        "scrollbar_thumb_hover": { "hex": "#58585aff", "alpha": 0.36 },
+                        "scrollbar_thumb_active": { "hex": "#58585aff", "alpha": 0.46 },
+                        "danger": "#de3e35ff",
+                        "warning": "#d2b67cff",
+                        "success": "#3f953aff"
+                    },
+                    "syntax": {
+                        "string": "#112233ff",
+                        "keyword": "#223344ff",
+                        "type": "#334455ff",
+                        "variable": "#445566ff",
+                        "variable_special": "#556677ff",
+                        "constant": "#667788ff",
+                        "punctuation": "#778899ff"
+                    },
+                    "radii": {
+                        "panel": 2.0,
+                        "pill": 2.0,
+                        "row": 2.0
+                    }
+                }
+            ]
+        }"##;
+
+        let theme = AppTheme::from_json_str(json).expect("theme JSON should parse");
+
+        assert_eq!(theme.syntax.string_regex, gpui::rgba(0x112233ff));
+        assert_eq!(theme.syntax.string_special, gpui::rgba(0x112233ff));
+        assert_eq!(theme.syntax.preproc, gpui::rgba(0x223344ff));
+        assert_eq!(theme.syntax.namespace, gpui::rgba(0x334455ff));
+        assert_eq!(theme.syntax.label, Some(gpui::rgba(0x445566ff)));
+        assert_eq!(theme.syntax.variable_builtin, gpui::rgba(0x556677ff));
+        assert_eq!(theme.syntax.constant_builtin, gpui::rgba(0x667788ff));
+        assert_eq!(theme.syntax.punctuation_special, gpui::rgba(0x778899ff));
+        assert_eq!(theme.syntax.punctuation_list_marker, gpui::rgba(0x778899ff));
+        assert_eq!(theme.syntax.markup_heading, gpui::rgba(0x223344ff));
+        assert_eq!(theme.syntax.markup_link, gpui::rgba(0x112233ff));
+        assert_eq!(theme.syntax.text_literal, gpui::rgba(0x112233ff));
+        assert_eq!(theme.syntax.diff_plus, gpui::rgba(0x112233ff));
+        assert_eq!(theme.syntax.diff_minus, gpui::rgba(0x223344ff));
+        assert_eq!(theme.syntax.diff_delta, gpui::rgba(0x334455ff));
+    }
+
+    #[test]
+    fn explicit_new_syntax_overrides_beat_legacy_fallbacks() {
+        let json = r##"{
+            "name": "Fixture",
+            "themes": [
+                {
+                    "key": "fixture",
+                    "name": "Fixture",
+                    "appearance": "dark",
+                    "colors": {
+                        "window_bg": "#0d1016ff",
+                        "surface_bg": "#1f2127ff",
+                        "surface_bg_elevated": "#1f2127ff",
+                        "active_section": "#2d2f34ff",
+                        "border": "#2d2f34ff",
+                        "text": "#bfbdb6ff",
+                        "text_muted": "#8a8986ff",
+                        "accent": "#5ac1feff",
+                        "hover": "#2d2f34ff",
+                        "active": { "hex": "#2d2f34ff", "alpha": 0.78 },
+                        "focus_ring": { "hex": "#5ac1feff", "alpha": 0.60 },
+                        "focus_ring_bg": { "hex": "#5ac1feff", "alpha": 0.16 },
+                        "scrollbar_thumb": { "hex": "#8a8986ff", "alpha": 0.30 },
+                        "scrollbar_thumb_hover": { "hex": "#8a8986ff", "alpha": 0.42 },
+                        "scrollbar_thumb_active": { "hex": "#8a8986ff", "alpha": 0.52 },
+                        "danger": "#ef7177ff",
+                        "warning": "#feb454ff",
+                        "success": "#aad84cff"
+                    },
+                    "syntax": {
+                        "string": "#111111ff",
+                        "keyword": "#222222ff",
+                        "type": "#333333ff",
+                        "variable": "#444444ff",
+                        "variable_special": "#555555ff",
+                        "constant": "#666666ff",
+                        "punctuation": "#777777ff",
+                        "function": "#888888ff",
+                        "string_regex": "#010101ff",
+                        "string_special": "#020202ff",
+                        "preproc": "#030303ff",
+                        "constructor": "#040404ff",
+                        "namespace": "#050505ff",
+                        "variable_builtin": "#060606ff",
+                        "label": "#070707ff",
+                        "constant_builtin": "#080808ff",
+                        "punctuation_special": "#090909ff",
+                        "punctuation_list_marker": "#0a0a0aff",
+                        "markup_heading": "#0b0b0bff",
+                        "markup_link": "#0c0c0cff",
+                        "text_literal": "#0d0d0dff",
+                        "diff_plus": "#0e0e0eff",
+                        "diff_minus": "#0f0f0fff",
+                        "diff_delta": "#101010ff"
+                    },
+                    "radii": {
+                        "panel": 2.0,
+                        "pill": 2.0,
+                        "row": 2.0
+                    }
+                }
+            ]
+        }"##;
+
+        let theme = AppTheme::from_json_str(json).expect("theme JSON should parse");
+
+        assert_eq!(theme.syntax.string_regex, gpui::rgba(0x010101ff));
+        assert_eq!(theme.syntax.string_special, gpui::rgba(0x020202ff));
+        assert_eq!(theme.syntax.preproc, gpui::rgba(0x030303ff));
+        assert_eq!(theme.syntax.constructor, gpui::rgba(0x040404ff));
+        assert_eq!(theme.syntax.namespace, gpui::rgba(0x050505ff));
+        assert_eq!(theme.syntax.variable_builtin, gpui::rgba(0x060606ff));
+        assert_eq!(theme.syntax.label, Some(gpui::rgba(0x070707ff)));
+        assert_eq!(theme.syntax.constant_builtin, gpui::rgba(0x080808ff));
+        assert_eq!(theme.syntax.punctuation_special, gpui::rgba(0x090909ff));
+        assert_eq!(theme.syntax.punctuation_list_marker, gpui::rgba(0x0a0a0aff));
+        assert_eq!(theme.syntax.markup_heading, gpui::rgba(0x0b0b0bff));
+        assert_eq!(theme.syntax.markup_link, gpui::rgba(0x0c0c0cff));
+        assert_eq!(theme.syntax.text_literal, gpui::rgba(0x0d0d0dff));
+        assert_eq!(theme.syntax.diff_plus, gpui::rgba(0x0e0e0eff));
+        assert_eq!(theme.syntax.diff_minus, gpui::rgba(0x0f0f0fff));
+        assert_eq!(theme.syntax.diff_delta, gpui::rgba(0x101010ff));
     }
 
     #[test]
@@ -1227,6 +1491,9 @@ mod tests {
         assert_eq!(light.colors.accent_text, gpui::rgba(0xffffffff));
         assert_eq!(dark.colors.emphasis_text, gpui::rgba(0xffffffff));
         assert_eq!(light.colors.emphasis_text, gpui::rgba(0x000000ff));
+        assert_eq!(dark.syntax.diff_plus, gpui::rgba(0xbbf7d0ff));
+        assert_eq!(dark.syntax.diff_minus, gpui::rgba(0xfecacaff));
+        assert_eq!(light.syntax.markup_link, gpui::rgba(0x5c78e2ff));
         assert_eq!(
             dark.graph_lane_palette.as_slice().len(),
             GRAPH_LANE_PALETTE_SIZE
@@ -1242,6 +1509,8 @@ mod tests {
         assert_eq!(theme.colors.emphasis_text, gpui::rgba(0xffffffff));
         assert_eq!(theme.syntax.keyword, gpui::rgba(0xbb9af7ff));
         assert_eq!(theme.syntax.string, gpui::rgba(0x9ece6aff));
+        assert_eq!(theme.syntax.string_regex, gpui::rgba(0xff9e64ff));
+        assert_eq!(theme.syntax.diff_minus, gpui::rgba(0xf7768eff));
         assert_eq!(theme.syntax.variable, Some(gpui::rgba(0xc0caf5ff)));
     }
 
@@ -1254,8 +1523,43 @@ mod tests {
         assert_eq!(theme.colors.accent, gpui::rgba(0xa6632cff));
         assert_eq!(theme.colors.diff_add_text, gpui::rgba(0x2e7638ff));
         assert_eq!(theme.syntax.keyword, gpui::rgba(0x2f7b93ff));
+        assert_eq!(theme.syntax.markup_heading, gpui::rgba(0x3a86a0ff));
+        assert_eq!(theme.syntax.diff_plus, gpui::rgba(0x2e7638ff));
         assert_eq!(theme.syntax.variable, Some(gpui::rgba(0x2b241dff)));
         assert_eq!(theme_label("sunset_veil"), Some("Sunset Veil".to_string()));
+    }
+
+    #[test]
+    fn bundled_theme_assets_explicitly_define_new_syntax_keys() {
+        const REQUIRED_KEYS: &[&str] = &[
+            "\"string_regex\"",
+            "\"string_special\"",
+            "\"preproc\"",
+            "\"constructor\"",
+            "\"namespace\"",
+            "\"variable_builtin\"",
+            "\"label\"",
+            "\"constant_builtin\"",
+            "\"punctuation_special\"",
+            "\"punctuation_list_marker\"",
+            "\"markup_heading\"",
+            "\"markup_link\"",
+            "\"text_literal\"",
+            "\"diff_plus\"",
+            "\"diff_minus\"",
+            "\"diff_delta\"",
+        ];
+
+        for file in EMBEDDED_THEME_FILES {
+            for key in REQUIRED_KEYS {
+                assert!(
+                    file.json.contains(key),
+                    "embedded theme file {} should explicitly define {}",
+                    file.stem,
+                    key
+                );
+            }
+        }
     }
 
     #[test]

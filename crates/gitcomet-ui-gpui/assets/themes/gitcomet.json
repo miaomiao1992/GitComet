@@ -40,6 +40,24 @@
           0.24, 0.37, 0.50, 0.63, 0.76, 0.89, 0.02, 0.15, 0.28, 0.41, 0.54, 0.67, 0.80, 0.93, 0.06, 0.19
         ]
       },
+      "syntax": {
+        "string_regex": "#d2b67cff",
+        "string_special": "#d2b67cff",
+        "preproc": "#5c78e2ff",
+        "constructor": "#5c78e2ff",
+        "namespace": "#d2b67cff",
+        "variable_builtin": "#5c78e2ff",
+        "label": "#5c78e2ff",
+        "constant_builtin": "#3f953aff",
+        "punctuation_special": "#5c78e2ff",
+        "punctuation_list_marker": "#5c78e2ff",
+        "markup_heading": "#5c78e2ff",
+        "markup_link": "#5c78e2ff",
+        "text_literal": "#d2b67cff",
+        "diff_plus": "#22863aff",
+        "diff_minus": "#cb2431ff",
+        "diff_delta": "#5c78e2ff"
+      },
       "radii": {
         "panel": 2.0,
         "pill": 2.0,
@@ -84,6 +102,24 @@
           0.16, 0.29, 0.42, 0.55, 0.68, 0.81, 0.94, 0.07, 0.20, 0.33, 0.46, 0.59, 0.72, 0.85, 0.98, 0.11,
           0.24, 0.37, 0.50, 0.63, 0.76, 0.89, 0.02, 0.15, 0.28, 0.41, 0.54, 0.67, 0.80, 0.93, 0.06, 0.19
         ]
+      },
+      "syntax": {
+        "string_regex": "#feb454ff",
+        "string_special": "#feb454ff",
+        "preproc": "#5ac1feff",
+        "constructor": "#5ac1feff",
+        "namespace": "#feb454ff",
+        "variable_builtin": "#5ac1feff",
+        "label": "#5ac1feff",
+        "constant_builtin": "#aad84cff",
+        "punctuation_special": "#5ac1feff",
+        "punctuation_list_marker": "#5ac1feff",
+        "markup_heading": "#5ac1feff",
+        "markup_link": "#5ac1feff",
+        "text_literal": "#feb454ff",
+        "diff_plus": "#bbf7d0ff",
+        "diff_minus": "#fecacaff",
+        "diff_delta": "#5ac1feff"
       },
       "radii": {
         "panel": 2.0,

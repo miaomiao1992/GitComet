@@ -3095,12 +3095,20 @@ mod tests {
             Some(SyntaxTokenKind::FunctionSpecial)
         );
         assert_eq!(
+            syntax_kind_from_capture_name("constructor"),
+            Some(SyntaxTokenKind::Constructor)
+        );
+        assert_eq!(
             syntax_kind_from_capture_name("type.builtin"),
             Some(SyntaxTokenKind::TypeBuiltin)
         );
         assert_eq!(
             syntax_kind_from_capture_name("type.interface"),
             Some(SyntaxTokenKind::TypeInterface)
+        );
+        assert_eq!(
+            syntax_kind_from_capture_name("namespace"),
+            Some(SyntaxTokenKind::Namespace)
         );
         assert_eq!(
             syntax_kind_from_capture_name("variable"),
@@ -3115,6 +3123,14 @@ mod tests {
             Some(SyntaxTokenKind::VariableSpecial)
         );
         assert_eq!(
+            syntax_kind_from_capture_name("variable.builtin"),
+            Some(SyntaxTokenKind::VariableBuiltin)
+        );
+        assert_eq!(
+            syntax_kind_from_capture_name("label"),
+            Some(SyntaxTokenKind::Label)
+        );
+        assert_eq!(
             syntax_kind_from_capture_name("operator"),
             Some(SyntaxTokenKind::Operator)
         );
@@ -3125,6 +3141,18 @@ mod tests {
         assert_eq!(
             syntax_kind_from_capture_name("punctuation.delimiter"),
             Some(SyntaxTokenKind::PunctuationDelimiter)
+        );
+        assert_eq!(
+            syntax_kind_from_capture_name("punctuation.special"),
+            Some(SyntaxTokenKind::PunctuationSpecial)
+        );
+        assert_eq!(
+            syntax_kind_from_capture_name("punctuation.list_marker.markup"),
+            Some(SyntaxTokenKind::PunctuationListMarker)
+        );
+        assert_eq!(
+            syntax_kind_from_capture_name("punctuation.list_marker"),
+            Some(SyntaxTokenKind::PunctuationListMarker)
         );
         assert_eq!(
             syntax_kind_from_capture_name("tag"),
@@ -3141,6 +3169,74 @@ mod tests {
         assert_eq!(
             syntax_kind_from_capture_name("boolean"),
             Some(SyntaxTokenKind::Boolean)
+        );
+        assert_eq!(
+            syntax_kind_from_capture_name("preproc"),
+            Some(SyntaxTokenKind::Preproc)
+        );
+        assert_eq!(
+            syntax_kind_from_capture_name("string.regex"),
+            Some(SyntaxTokenKind::StringRegex)
+        );
+        assert_eq!(
+            syntax_kind_from_capture_name("string.regexp"),
+            Some(SyntaxTokenKind::StringRegex)
+        );
+        assert_eq!(
+            syntax_kind_from_capture_name("string.special.regex"),
+            Some(SyntaxTokenKind::StringRegex)
+        );
+        assert_eq!(
+            syntax_kind_from_capture_name("string.special.symbol"),
+            Some(SyntaxTokenKind::StringSpecial)
+        );
+        assert_eq!(
+            syntax_kind_from_capture_name("constant.builtin"),
+            Some(SyntaxTokenKind::ConstantBuiltin)
+        );
+        assert_eq!(
+            syntax_kind_from_capture_name("markup.heading"),
+            Some(SyntaxTokenKind::MarkupHeading)
+        );
+        assert_eq!(
+            syntax_kind_from_capture_name("title.markup"),
+            Some(SyntaxTokenKind::MarkupHeading)
+        );
+        assert_eq!(
+            syntax_kind_from_capture_name("markup.link.url"),
+            Some(SyntaxTokenKind::MarkupLink)
+        );
+        assert_eq!(
+            syntax_kind_from_capture_name("link_uri.markup"),
+            Some(SyntaxTokenKind::MarkupLink)
+        );
+        assert_eq!(
+            syntax_kind_from_capture_name("text.uri"),
+            Some(SyntaxTokenKind::MarkupLink)
+        );
+        assert_eq!(
+            syntax_kind_from_capture_name("text.literal.markup"),
+            Some(SyntaxTokenKind::TextLiteral)
+        );
+        assert_eq!(
+            syntax_kind_from_capture_name("text.literal"),
+            Some(SyntaxTokenKind::TextLiteral)
+        );
+        assert_eq!(
+            syntax_kind_from_capture_name("text.title"),
+            Some(SyntaxTokenKind::MarkupHeading)
+        );
+        assert_eq!(
+            syntax_kind_from_capture_name("diff.plus"),
+            Some(SyntaxTokenKind::DiffPlus)
+        );
+        assert_eq!(
+            syntax_kind_from_capture_name("diff.minus"),
+            Some(SyntaxTokenKind::DiffMinus)
+        );
+        assert_eq!(
+            syntax_kind_from_capture_name("diff.delta"),
+            Some(SyntaxTokenKind::DiffDelta)
         );
         assert_eq!(
             syntax_kind_from_capture_name("tag.jsx"),
@@ -3211,6 +3307,45 @@ mod tests {
                 range: 0..5,
                 kind: SyntaxTokenKind::Type,
             }]
+        );
+    }
+
+    #[test]
+    fn normalize_non_overlapping_tokens_splits_outer_token_for_inner_semantics() {
+        let tokens = normalize_non_overlapping_tokens(vec![
+            SyntaxToken {
+                range: 0..22,
+                kind: SyntaxTokenKind::Comment,
+            },
+            SyntaxToken {
+                range: 2..10,
+                kind: SyntaxTokenKind::DiffPlus,
+            },
+            SyntaxToken {
+                range: 12..22,
+                kind: SyntaxTokenKind::StringSpecial,
+            },
+        ]);
+        assert_eq!(
+            tokens,
+            vec![
+                SyntaxToken {
+                    range: 0..2,
+                    kind: SyntaxTokenKind::Comment,
+                },
+                SyntaxToken {
+                    range: 2..10,
+                    kind: SyntaxTokenKind::DiffPlus,
+                },
+                SyntaxToken {
+                    range: 10..12,
+                    kind: SyntaxTokenKind::Comment,
+                },
+                SyntaxToken {
+                    range: 12..22,
+                    kind: SyntaxTokenKind::StringSpecial,
+                },
+            ]
         );
     }
 
@@ -3840,7 +3975,7 @@ mod tests {
             (
                 DiffSyntaxLanguage::Ruby,
                 "class Example; def call(name) = 42 end",
-                SyntaxTokenKind::Function,
+                SyntaxTokenKind::FunctionMethod,
             ),
             (
                 DiffSyntaxLanguage::PowerShell,
@@ -3920,12 +4055,12 @@ mod tests {
             (
                 DiffSyntaxLanguage::Diff,
                 "diff --git a/src/lib.rs b/src/lib.rs",
-                SyntaxTokenKind::VariableSpecial,
+                SyntaxTokenKind::VariableBuiltin,
             ),
             (
                 DiffSyntaxLanguage::GitCommit,
                 "feat: widen syntax support",
-                SyntaxTokenKind::Keyword,
+                SyntaxTokenKind::MarkupHeading,
             ),
         ];
 
@@ -3936,6 +4071,113 @@ mod tests {
                 "{language:?} should capture {expected_kind:?}: {tokens:?}"
             );
         }
+    }
+
+    #[cfg(any(test, feature = "syntax-web"))]
+    #[test]
+    fn javascript_treesitter_captures_regex_literal() {
+        let text = "const re = /foo+/gi;";
+        let tokens =
+            syntax_tokens_for_line(text, DiffSyntaxLanguage::JavaScript, DiffSyntaxMode::Auto);
+        assert!(
+            tokens
+                .iter()
+                .any(|t| t.kind == SyntaxTokenKind::StringRegex),
+            "JavaScript regex literal should produce StringRegex token, got: {tokens:?}"
+        );
+    }
+
+    #[cfg(any(test, feature = "syntax-extra"))]
+    #[test]
+    fn lua_and_c_treesitter_capture_preprocessor_and_label() {
+        let preproc = syntax_tokens_for_line(
+            "#!/usr/bin/env lua",
+            DiffSyntaxLanguage::Lua,
+            DiffSyntaxMode::Auto,
+        );
+        assert!(
+            preproc.iter().any(|t| t.kind == SyntaxTokenKind::Preproc),
+            "Lua hash bang should produce Preproc token, got: {preproc:?}"
+        );
+
+        let label = syntax_tokens_for_line(
+            "start: return 0;",
+            DiffSyntaxLanguage::C,
+            DiffSyntaxMode::Auto,
+        );
+        assert!(
+            label.iter().any(|t| t.kind == SyntaxTokenKind::Label),
+            "C label should produce Label token, got: {label:?}"
+        );
+    }
+
+    #[cfg(any(test, feature = "syntax-repo"))]
+    #[test]
+    fn gitcommit_treesitter_captures_diff_change_kinds() {
+        let text = [
+            "Subject",
+            "",
+            "# Changes to be committed:",
+            "# new file: src/new.rs",
+            "# deleted: src/old.rs",
+            "# modified: src/lib.rs",
+        ]
+        .join("\n");
+        let document = prepare_test_document(DiffSyntaxLanguage::GitCommit, &text);
+
+        let plus = syntax_tokens_for_prepared_document_line(document, 3)
+            .expect("gitcommit added line should have prepared tokens");
+        assert!(
+            plus.iter().any(|t| t.kind == SyntaxTokenKind::DiffPlus),
+            "gitcommit additions should produce DiffPlus tokens, got: {plus:?}"
+        );
+
+        let minus = syntax_tokens_for_prepared_document_line(document, 4)
+            .expect("gitcommit removed line should have prepared tokens");
+        assert!(
+            minus.iter().any(|t| t.kind == SyntaxTokenKind::DiffMinus),
+            "gitcommit removals should produce DiffMinus tokens, got: {minus:?}"
+        );
+
+        let delta = syntax_tokens_for_prepared_document_line(document, 5)
+            .expect("gitcommit modified file line should have prepared tokens");
+        assert!(
+            delta.iter().any(|t| t.kind == SyntaxTokenKind::DiffDelta),
+            "gitcommit modified files should produce DiffDelta tokens, got: {delta:?}"
+        );
+    }
+
+    #[cfg(any(test, feature = "syntax-repo"))]
+    #[test]
+    fn prepared_documents_capture_markup_specific_tokens() {
+        let gitcommit =
+            prepare_test_document(DiffSyntaxLanguage::GitCommit, "Subject\n\ncloses #123");
+
+        let heading = syntax_tokens_for_prepared_document_line(gitcommit, 0)
+            .expect("gitcommit subject line should have prepared tokens");
+        assert!(
+            heading
+                .iter()
+                .any(|t| t.kind == SyntaxTokenKind::MarkupHeading),
+            "gitcommit subject should produce MarkupHeading token, got: {heading:?}"
+        );
+
+        let link = syntax_tokens_for_prepared_document_line(gitcommit, 2)
+            .expect("gitcommit body line should have prepared tokens");
+        assert!(
+            link.iter().any(|t| t.kind == SyntaxTokenKind::MarkupLink),
+            "gitcommit issue reference should produce MarkupLink token, got: {link:?}"
+        );
+
+        let xml = prepare_test_document(DiffSyntaxLanguage::Xml, "<root><![CDATA[code]]></root>");
+        let literal = syntax_tokens_for_prepared_document_line(xml, 0)
+            .expect("XML CDATA line should have prepared tokens");
+        assert!(
+            literal
+                .iter()
+                .any(|t| t.kind == SyntaxTokenKind::TextLiteral),
+            "XML CDATA should produce TextLiteral token, got: {literal:?}"
+        );
     }
 
     #[test]

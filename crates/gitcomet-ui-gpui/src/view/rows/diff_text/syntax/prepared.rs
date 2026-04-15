@@ -3455,7 +3455,7 @@ fn subtract_relative_range_from_line_tokens(
     *line_tokens = out;
 }
 
-pub(super) fn normalize_non_overlapping_tokens(mut tokens: Vec<SyntaxToken>) -> Vec<SyntaxToken> {
+pub(super) fn normalize_non_overlapping_tokens(tokens: Vec<SyntaxToken>) -> Vec<SyntaxToken> {
     if tokens.len() <= 1 {
         return tokens;
     }
@@ -3471,51 +3471,58 @@ pub(super) fn normalize_non_overlapping_tokens(mut tokens: Vec<SyntaxToken>) -> 
             .then(a.range.end.cmp(&b.range.end))
             .then(a_ix.cmp(b_ix))
     });
-    tokens = indexed_tokens.into_iter().map(|(_, token)| token).collect();
 
-    // Compact in-place: ensure non-overlapping tokens so the segment splitter
-    // can pick a single style per range.
-    // Tree-sitter queries follow "later pattern wins" semantics: when two patterns capture
-    // the same node, the more specific pattern (later in the query file) should take priority.
-    // Since captures() returns lower pattern indices first, later tokens at the same position
-    // should override earlier ones.
-    let mut write = 1usize;
-    for read in 1..tokens.len() {
-        let cur_start = tokens[read].range.start;
-        let cur_end = tokens[read].range.end;
-        let cur_kind = tokens[read].kind;
+    let mut normalized = Vec::with_capacity(indexed_tokens.len());
 
-        let prev_start = tokens[write - 1].range.start;
-        let prev_end = tokens[write - 1].range.end;
+    // Ensure non-overlapping tokens so the segment splitter can pick a single
+    // style per range. Exact same-range captures keep the later token.
+    // Contained inner captures split the outer token so semantic subranges stay
+    // visible instead of being swallowed by broader captures like comments.
+    for (_, token) in indexed_tokens {
+        let Some(previous) = normalized.last_mut() else {
+            normalized.push(token);
+            continue;
+        };
 
-        if cur_start < prev_end {
-            // Exact same range: later pattern wins (replace previous)
-            if cur_start == prev_start && cur_end == prev_end {
-                tokens[write - 1].kind = cur_kind;
-                continue;
+        if token.range.start >= previous.range.end {
+            normalized.push(token);
+            continue;
+        }
+
+        if token.range.start == previous.range.start && token.range.end == previous.range.end {
+            previous.kind = token.kind;
+            continue;
+        }
+
+        if token.range.end <= previous.range.end {
+            let previous = normalized
+                .pop()
+                .expect("normalized token list should contain the overlapping token");
+            let token_end = token.range.end;
+            if previous.range.start < token.range.start {
+                normalized.push(SyntaxToken {
+                    range: previous.range.start..token.range.start,
+                    kind: previous.kind,
+                });
             }
-            // Fully contained in previous: skip
-            if cur_end <= prev_end {
-                continue;
+            normalized.push(token);
+            if token_end < previous.range.end {
+                normalized.push(SyntaxToken {
+                    range: token_end..previous.range.end,
+                    kind: previous.kind,
+                });
             }
-            // Partial overlap: trim start to prev end
-            let new_start = prev_end;
-            if new_start >= cur_end {
-                continue;
-            }
-            tokens[write] = SyntaxToken {
-                range: new_start..cur_end,
-                kind: cur_kind,
-            };
-            write += 1;
-        } else {
-            tokens[write] = SyntaxToken {
-                range: cur_start..cur_end,
-                kind: cur_kind,
-            };
-            write += 1;
+            continue;
+        }
+
+        let new_start = previous.range.end;
+        if new_start < token.range.end {
+            normalized.push(SyntaxToken {
+                range: new_start..token.range.end,
+                kind: token.kind,
+            });
         }
     }
-    tokens.truncate(write);
-    tokens
+
+    normalized
 }
